@@ -1,0 +1,128 @@
+package com.coremasterkb.serving.application;
+
+import com.coremasterkb.serving.domain.*;
+import com.coremasterkb.serving.pipeline.*;
+import com.coremasterkb.serving.repository.AssetRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+
+/**
+ * Orchestrates the full retrieval pipeline.
+ * Translated from api/search.py.
+ *
+ * Pipeline:
+ *   normalize → plan → resolveScope → retrieve → fuse → rerank → assemble
+ */
+@Service
+public class SearchService {
+
+    private static final Logger log = LoggerFactory.getLogger(SearchService.class);
+
+    private static final String DEFAULT_CHANNEL = "default";
+
+    private final QueryNormalizer normalizer;
+    private final QueryPlanner planner;
+    private final AssetRepository assetRepo;
+    private final RetrieverManager retrieverManager;
+    private final IdentityFusion identityFusion;
+    private final RRFFusion rrfFusion;
+    private final ScoreReranker reranker;
+    private final ContextAssembler assembler;
+
+    public SearchService(
+            QueryNormalizer normalizer,
+            QueryPlanner planner,
+            AssetRepository assetRepo,
+            RetrieverManager retrieverManager,
+            IdentityFusion identityFusion,
+            RRFFusion rrfFusion,
+            ScoreReranker reranker,
+            ContextAssembler assembler
+    ) {
+        this.normalizer       = normalizer;
+        this.planner          = planner;
+        this.assetRepo        = assetRepo;
+        this.retrieverManager = retrieverManager;
+        this.identityFusion   = identityFusion;
+        this.rrfFusion        = rrfFusion;
+        this.reranker         = reranker;
+        this.assembler        = assembler;
+    }
+
+    /**
+     * Execute the full search pipeline and return a ContextPack.
+     *
+     * @throws IllegalArgumentException("no_active_release")       → caller maps to 503
+     * @throws IllegalArgumentException("multiple_active_releases") → caller maps to 500
+     */
+    public ContextPack search(SearchRequest request) {
+        String rawQuery = request.query();
+
+        // Step 1: Normalize
+        NormalizedQuery normalized = normalizer.normalize(rawQuery);
+
+        // Apply request-level scope and entity overrides
+        Map<String, Object> scopeOverride    = request.scope();
+        List<EntityRef>     entitiesOverride = request.entities();
+
+        // Step 2: Plan
+        QueryPlan plan = planner.plan(normalized, scopeOverride, entitiesOverride);
+
+        // Step 3: Resolve active scope (may throw IllegalArgumentException)
+        ActiveScope scope = assetRepo.resolveActiveScope(DEFAULT_CHANNEL);
+
+        // Step 4: Retrieve
+        List<RetrievalCandidate> candidates =
+                retrieverManager.retrieve(plan, scope.snapshotIds());
+
+        // Step 5: Fuse
+        FusionStrategy fusion = selectFusion(plan.retrieverConfig().fusionMethod());
+        List<RetrievalCandidate> fused = fusion.fuse(candidates, plan);
+
+        // Step 6: Rerank
+        List<RetrievalCandidate> reranked = reranker.rerank(fused, plan);
+
+        // Step 7: Assemble
+        ContextPack pack = assembler.assemble(rawQuery, normalized, plan, scope, reranked);
+
+        // Step 8: Attach debug info if requested
+        if (request.debug()) {
+            Map<String, Object> debug = new LinkedHashMap<>();
+            debug.put("intent", plan.intent());
+            debug.put("keywords", plan.keywords());
+            debug.put("scope_constraints", plan.scopeConstraints());
+            debug.put("fusion_method", plan.retrieverConfig().fusionMethod());
+            debug.put("candidate_count", reranked.size());
+            debug.put("snapshot_ids", scope.snapshotIds());
+            debug.put("release_id", scope.releaseId());
+            debug.put("build_id", scope.buildId());
+
+            // Re-assemble with debug field (records are immutable → build new)
+            pack = new ContextPack(
+                    pack.query(),
+                    pack.items(),
+                    pack.relations(),
+                    pack.sources(),
+                    pack.issues(),
+                    pack.suggestions(),
+                    debug
+            );
+        }
+
+        return pack;
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
+    private FusionStrategy selectFusion(String method) {
+        if ("rrf".equalsIgnoreCase(method)) {
+            return rrfFusion;
+        }
+        return identityFusion;
+    }
+}

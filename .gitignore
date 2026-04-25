@@ -11,3 +11,8 @@ dist/
 build/
 *.egg
 .env
+/.idea/.gitignore
+/.idea/KnowledgeBase.iml
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/vcs.xml

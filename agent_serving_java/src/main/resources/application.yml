@@ -1,0 +1,27 @@
+server:
+  port: 8000
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:coremasterkb}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 5000
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.coremasterkb.serving.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+serving:
+  llm-service:
+    base-url: ${LLM_SERVICE_BASE_URL:http://localhost:8900}
+    enabled: ${LLM_SERVICE_ENABLED:false}
+    timeout-ms: 3000
+  fts:
+    strategy: ${SERVING_FTS_STRATEGY:postgresql}
