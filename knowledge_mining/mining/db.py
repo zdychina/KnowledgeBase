@@ -607,6 +607,7 @@ class MiningRuntimeDB(_DB):
         finished_at: str | None = None,
         error_summary: str | None = None,
         build_id: str | None = None,
+        metadata_json: dict | None = None,
         **counters: int,
     ) -> None:
         parts = ["status = ?"]
@@ -620,6 +621,9 @@ class MiningRuntimeDB(_DB):
         if build_id is not None:
             parts.append("build_id = ?")
             params.append(build_id)
+        if metadata_json is not None:
+            parts.append("metadata_json = ?")
+            params.append(_json_dumps(metadata_json))
         for col in ("total_documents", "new_count", "updated_count", "skipped_count", "failed_count", "committed_count"):
             if col in counters:
                 parts.append(f"{col} = ?")

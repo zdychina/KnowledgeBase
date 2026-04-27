@@ -4,7 +4,70 @@ Templates must be pre-registered with llm_service before use.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
+
+# ---------- Schema definitions (JSON Schema, provider-agnostic) ----------
+
+_QUESTION_GEN_SCHEMA = json.dumps({
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "question": {"type": "string"},
+        },
+        "required": ["question"],
+        "additionalProperties": False,
+    },
+})
+
+_SEGMENT_UNDERSTANDING_SCHEMA = json.dumps({
+    "type": "object",
+    "properties": {
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string"},
+                    "name": {"type": "string"},
+                },
+                "required": ["type", "name"],
+                "additionalProperties": False,
+            },
+        },
+        "semantic_role": {"type": "string"},
+        "document_type": {"type": "string"},
+    },
+    "required": ["entities", "semantic_role", "document_type"],
+    "additionalProperties": False,
+})
+
+_DISCOURSE_RELATION_SCHEMA = json.dumps({
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "source": {"type": "integer"},
+            "target": {"type": "integer"},
+            "relation": {"type": "string"},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        },
+        "required": ["source", "target", "relation", "confidence"],
+        "additionalProperties": False,
+    },
+})
+
+_CONTEXTUAL_RETRIEVAL_SCHEMA = json.dumps({
+    "type": "object",
+    "properties": {
+        "context": {"type": "string"},
+    },
+    "required": ["context"],
+    "additionalProperties": False,
+})
+
+# ---------- Template list ----------
 
 TEMPLATES: list[dict[str, Any]] = [
     {
@@ -18,6 +81,7 @@ TEMPLATES: list[dict[str, Any]] = [
             "输出 JSON 数组，每个元素包含 question 字段。"
         ),
         "expected_output_type": "json_array",
+        "output_schema_json": _QUESTION_GEN_SCHEMA,
     },
     {
         "template_key": "mining-segment-understanding",
@@ -35,6 +99,7 @@ TEMPLATES: list[dict[str, Any]] = [
             "- document_type: 文档类型提示（command/feature/procedure/troubleshooting/alarm/constraint/checklist/reference/other）"
         ),
         "expected_output_type": "json_object",
+        "output_schema_json": _SEGMENT_UNDERSTANDING_SCHEMA,
     },
     {
         "template_key": "mining-discourse-relation",
@@ -66,6 +131,7 @@ TEMPLATES: list[dict[str, Any]] = [
             "只输出有明确关系的段落对，跳过 UNRELATED 的。"
         ),
         "expected_output_type": "json_array",
+        "output_schema_json": _DISCOURSE_RELATION_SCHEMA,
     },
     {
         "template_key": "mining-contextual-retrieval",
@@ -79,5 +145,6 @@ TEMPLATES: list[dict[str, Any]] = [
             "输出 JSON 对象，包含 context 字段。"
         ),
         "expected_output_type": "json_object",
+        "output_schema_json": _CONTEXTUAL_RETRIEVAL_SCHEMA,
     },
 ]

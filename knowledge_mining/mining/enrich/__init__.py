@@ -105,13 +105,11 @@ class LlmEnricher:
         *,
         base_url: str = "http://localhost:8900",
         fallback_enricher: RuleBasedEnricher | None = None,
-        timeout: int = 120,
         bypass_proxy: bool = False,
     ) -> None:
         from knowledge_mining.mining.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._fallback = fallback_enricher or RuleBasedEnricher()
-        self._timeout = timeout
 
     def enrich(
         self,
@@ -131,7 +129,7 @@ class LlmEnricher:
             return []
 
         # Phase 1: Submit all segments
-        seg_tasks: dict[int, str] = {}  # index -> task_id
+        seg_tasks: dict[str, str] = {}  # str(idx) -> task_id
         for idx, seg in enumerate(segments):
             task_id = self._client.submit_task(
                 template_key="mining-segment-understanding",
@@ -145,30 +143,21 @@ class LlmEnricher:
                 expected_output_type="json_object",
             )
             if task_id:
-                seg_tasks[idx] = task_id
+                seg_tasks[str(idx)] = task_id
 
-        # Phase 2: Poll results and merge
+        # Phase 2: Poll all tasks concurrently — collect whoever finishes first
+        llm_raw: dict[str, list[dict]] = self._client.poll_all(seg_tasks)
         llm_results: dict[int, dict[str, Any]] = {}
-        for idx, task_id in seg_tasks.items():
-            result = self._client.poll_result(task_id, timeout=self._timeout)
-            if result and isinstance(result, dict):
-                llm_results[idx] = result
+        for key, items in llm_raw.items():
+            if items and isinstance(items[0], dict):
+                llm_results[int(key)] = items[0]
 
         # Phase 3: Apply results, fallback for missing
-        result_segments: list[RawSegmentData] = []
         fallback_needed = [seg for idx, seg in enumerate(segments) if idx not in llm_results]
 
-        # Apply LLM results to segments that got them
-        for idx, seg in enumerate(segments):
-            if idx in llm_results:
-                result_segments.append(_apply_llm_result(seg, llm_results[idx]))
-            # fallback segments handled below
-
-        # Fallback: enrich segments that didn't get LLM results
+        result_segments: list[RawSegmentData] = []
         if fallback_needed:
             enriched_fallback = self._fallback.enrich(fallback_needed)
-            # Merge back in order
-            result_segments = []
             fallback_idx = 0
             for idx, seg in enumerate(segments):
                 if idx in llm_results:
@@ -179,6 +168,9 @@ class LlmEnricher:
                         fallback_idx += 1
                     else:
                         result_segments.append(seg)
+        else:
+            for idx, seg in enumerate(segments):
+                result_segments.append(_apply_llm_result(seg, llm_results[idx]))
 
         return result_segments
 

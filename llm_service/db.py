@@ -12,9 +12,16 @@ _SCHEMA_PATH = (
 
 
 async def init_db(db_path: str) -> aiosqlite.Connection:
-    """Open (or create) the SQLite database and ensure schema is applied."""
+    """Open (or create) the SQLite database and ensure schema is applied.
+
+    Uses isolation_level=None (autocommit) so that every SQL statement
+    commits immediately.  This prevents stale-read snapshots caused by
+    implicit transactions lingering across shared aiosqlite connections
+    (e.g. the API connection used by both submit and dashboard handlers).
+    All existing commit() calls become harmless no-ops.
+    """
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(db_path)
+    conn = await aiosqlite.connect(db_path, isolation_level=None)
     conn.row_factory = aiosqlite.Row
     await conn.execute("PRAGMA foreign_keys = ON")
     await conn.execute("PRAGMA journal_mode = WAL")

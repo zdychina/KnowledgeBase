@@ -106,7 +106,16 @@ class Worker:
 
             start = time.monotonic()
             try:
-                resp = await self._provider.complete(messages=messages, params=params)
+                # Build response_format hint from expected_type
+                response_format = (
+                    {"type": "json_object"}
+                    if expected_type in ("json_object", "json_array")
+                    else None
+                )
+                resp = await self._provider.complete(
+                    messages=messages, params=params,
+                    response_format=response_format,
+                )
                 latency = int((time.monotonic() - start) * 1000)
                 finished = datetime.now(timezone.utc).isoformat()
 

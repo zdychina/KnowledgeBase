@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from jsonschema import ValidationError as JsValidationError, validate as js_validate
+from jsonschema import SchemaError as JsSchemaError, ValidationError as JsValidationError, validate as js_validate
 
 
 @dataclass
@@ -50,6 +50,12 @@ def parse_output(
     if schema:
         try:
             js_validate(instance=parsed, schema=schema)
+        except JsSchemaError as e:
+            return ParseResult(
+                parse_status="failed",
+                parsed_output=parsed,
+                parse_error=f"invalid schema: {e.message}",
+            )
         except JsValidationError as e:
             return ParseResult(
                 parse_status="schema_invalid",

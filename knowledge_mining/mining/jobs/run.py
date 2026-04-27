@@ -39,7 +39,12 @@ from knowledge_mining.mining.relations import DefaultRelationBuilder
 from knowledge_mining.mining.snapshot import select_or_create_snapshot
 from knowledge_mining.mining.publishing import assemble_build, classify_documents, publish_release
 from knowledge_mining.mining.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier  # noqa: F401 — used for enrich
-from knowledge_mining.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
+from knowledge_mining.mining.pipeline import (
+    DocumentContext, PipelineConfig, MiningPipeline,
+    StreamingPipeline,
+    parse_stage, segment_stage, enrich_stage,
+    relations_stage, discourse_stage, retrieval_units_stage,
+)
 
 
 def run(
@@ -56,6 +61,7 @@ def run(
     embedding_model: str = "embedding-3",
     embedding_base_url: str = "https://open.bigmodel.cn/api/paas/v4",
     embedding_dimensions: int = 2048,
+    max_workers: int = 4,
 ) -> dict[str, Any]:
     """Execute the mining pipeline.
 
@@ -102,6 +108,7 @@ def run(
         return _run_pipeline(
             asset_db, runtime_db, input_path, params, phase1_only, run_id,
             publish_on_partial_failure, llm_services, embedding_generator,
+            max_workers,
         )
     except Exception as e:
         # Mark run as failed
@@ -248,6 +255,7 @@ def _run_pipeline(
     publish_on_partial_failure: bool = False,
     llm_services: dict[str, Any] | None = None,
     embedding_generator: Any | None = None,
+    max_workers: int = 4,
 ) -> dict[str, Any]:
     """Core pipeline logic. Assumes DBs are already open."""
     tracker = RuntimeTracker(runtime_db)
@@ -297,7 +305,6 @@ def _run_pipeline(
         discourse_relation_builder=llm.get("discourse_relation_builder"),
         contextualizer=llm.get("contextualizer"),
     )
-    pipeline = MiningPipeline(pipeline_config)
 
     committed_count = 0
     new_count = 0
@@ -306,18 +313,29 @@ def _run_pipeline(
     skipped_count = 0
     snapshot_decisions: list[dict[str, Any]] = []
 
+    # -- Phase 1a: Classify all docs, register in runtime, handle SKIP --
+    work_items: list[dict[str, Any]] = []  # docs that need pipeline processing
+
     for doc in docs:
         rd_id = uuid.uuid4().hex
         doc_key = f"doc:/{doc.relative_path}"
 
-        # Determine action by comparing with existing document
         existing_doc = asset_db.get_document_by_key(doc_key)
         if existing_doc is None:
             action = "NEW"
-        elif existing_doc["normalized_content_hash"] != doc.normalized_content_hash:
-            action = "UPDATE"
         else:
-            action = "SKIP"
+            # Compare against active snapshot's hash (not asset_documents)
+            active_link = asset_db._fetchone(
+                "SELECT ds.normalized_content_hash "
+                "FROM asset_document_snapshot_links dsl "
+                "JOIN asset_document_snapshots ds ON dsl.document_snapshot_id = ds.id "
+                "WHERE dsl.document_id = ? ORDER BY dsl.linked_at DESC LIMIT 1",
+                (existing_doc["id"],),
+            )
+            if active_link and active_link["normalized_content_hash"] == doc.normalized_content_hash:
+                action = "SKIP"
+            else:
+                action = "UPDATE"
 
         tracker.register_document(MiningRunDocumentData(
             id=rd_id,
@@ -329,11 +347,11 @@ def _run_pipeline(
         ))
         runtime_db.commit()
 
-        # SKIP: content unchanged, reuse existing snapshot without reprocessing
+        # SKIP: content unchanged
         if action == "SKIP" and existing_doc is not None:
             existing_link = asset_db._fetchone(
                 "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-                "WHERE document_id = ? ORDER BY created_at DESC LIMIT 1",
+                "WHERE document_id = ? ORDER BY linked_at DESC LIMIT 1",
                 (existing_doc["id"],),
             )
             if existing_link:
@@ -347,51 +365,66 @@ def _run_pipeline(
                 runtime_db.commit()
                 continue
 
+        # Queue for streaming pipeline
+        profile = DocumentProfile(
+            document_key=doc_key,
+            source_type=doc.source_type or params.default_source_type,
+            document_type=doc.document_type or params.default_document_type,
+            scope_json=doc.scope_json,
+            tags_json=doc.tags_json,
+            title=doc.title,
+        )
+        ctx = DocumentContext(raw_file=doc, profile=profile)
+        work_items.append({
+            "doc": doc,
+            "rd_id": rd_id,
+            "doc_key": doc_key,
+            "action": action,
+            "existing_doc": existing_doc,
+            "profile": profile,
+            "ctx": ctx,
+        })
+
+    # -- Phase 1b: Run streaming pipeline (all non-SKIP docs concurrently) --
+    if work_items:
+        config = pipeline_config
+        stages = [
+            ("parse",           lambda ctx: parse_stage(ctx, config),           1),
+            ("segment",         lambda ctx: segment_stage(ctx, config),         1),
+            ("enrich",          lambda ctx: enrich_stage(ctx, config),          max_workers),
+            ("relations",       lambda ctx: relations_stage(ctx, config),       1),
+            ("discourse",       lambda ctx: discourse_stage(ctx, config),       min(max_workers, 2)),
+            ("retrieval_units", lambda ctx: retrieval_units_stage(ctx, config), max_workers),
+        ]
+
+        pipeline = StreamingPipeline(stages)
+        ctxs = pipeline.process_all([item["ctx"] for item in work_items])
+
+    # -- Phase 1c: Write results to DB (main thread, serial, no concurrency issues) --
+    for i, item in enumerate(work_items):
+        ctx = ctxs[i]
+        doc = item["doc"]
+        rd_id = item["rd_id"]
+        doc_key = item["doc_key"]
+        action = item["action"]
+        existing_doc = item["existing_doc"]
+        profile = item["profile"]
+
+        # Pipeline error
+        if ctx.error:
+            tracker.fail_document(rd_id, ctx.error)
+            failed_count += 1
+            runtime_db.commit()
+            continue
+
+        # Parse produced no tree
+        if ctx.tree is None:
+            tracker.skip_document(rd_id)
+            skipped_count += 1
+            runtime_db.commit()
+            continue
+
         try:
-            profile = DocumentProfile(
-                document_key=doc_key,
-                source_type=doc.source_type or params.default_source_type,
-                document_type=doc.document_type or params.default_document_type,
-                scope_json=doc.scope_json,
-                tags_json=doc.tags_json,
-                title=doc.title,
-            )
-
-            # Build document context
-            ctx = DocumentContext(raw_file=doc, profile=profile)
-
-            # Stage tracking callback
-            def _make_stage_cb(rd_id: str, run_id: str):
-                import uuid as _uuid
-                stage_events: dict[str, Any] = {}
-                def cb(stage_name: str, current_ctx: DocumentContext):
-                    evt = tracker.start_stage(run_id, stage_name, rd_id)
-                    stage_events[stage_name] = evt
-                def end_cb(stage_name: str, summary: str = ""):
-                    evt = stage_events.get(stage_name)
-                    if evt:
-                        tracker.end_stage(evt, run_id, stage_name, output_summary=summary)
-                        runtime_db.commit()
-                return cb, end_cb
-
-            stage_cb, stage_end = _make_stage_cb(rd_id, run_id)
-
-            # Run pipeline
-            ctx = pipeline.process_document(ctx, stage_callback=stage_cb)
-
-            if ctx.tree is None:
-                tracker.skip_document(rd_id)
-                skipped_count += 1
-                runtime_db.commit()
-                continue
-
-            # End stage tracking
-            stage_end("parse", f"tree={'yes' if ctx.tree else 'no'}")
-            stage_end("segment", f"{len(ctx.segments)} segments")
-            stage_end("enrich", f"{len(ctx.segments)} enriched")
-            stage_end("build_relations", f"{len(ctx.relations)} relations")
-            stage_end("build_retrieval_units", f"{len(ctx.retrieval_units)} units")
-
             segments = list(ctx.segments)
             relations = list(ctx.relations)
             seg_id_map = ctx.seg_ids
@@ -409,10 +442,9 @@ def _run_pipeline(
             if action == "UPDATE" and existing_doc is not None:
                 old_links = asset_db._fetchall(
                     "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-                    "WHERE document_id = ? ORDER BY created_at DESC",
+                    "WHERE document_id = ? ORDER BY linked_at DESC",
                     (existing_doc["id"],),
                 )
-                # Skip the latest (just created), clean up older ones
                 for old_link in old_links[1:] if len(old_links) > 1 else []:
                     old_snap_id = old_link["document_snapshot_id"]
                     asset_db.delete_retrieval_units_by_snapshot(old_snap_id)
@@ -420,7 +452,8 @@ def _run_pipeline(
                     asset_db.delete_segments_by_snapshot(old_snap_id)
                 asset_db.commit()
 
-            # Write segments to DB
+            # Write segments to DB (track at commit time since pipeline ran in streaming)
+            evt_seg = tracker.start_stage(run_id, "segment", rd_id)
             for seg in segments:
                 seg_key = f"{seg.document_key}#{seg.segment_index}"
                 seg_id = seg_id_map.get(seg_key, uuid.uuid4().hex)
@@ -445,6 +478,7 @@ def _run_pipeline(
                 )
 
             # Write relations to DB
+            evt_rel = tracker.start_stage(run_id, "build_relations", rd_id)
             for rel in relations:
                 src_id = seg_id_map.get(rel.source_segment_key, "")
                 tgt_id = seg_id_map.get(rel.target_segment_key, "")
@@ -460,9 +494,14 @@ def _run_pipeline(
                         distance=rel.distance,
                         metadata_json=rel.metadata_json,
                     )
+            tracker.end_stage(evt_rel, run_id, "build_relations",
+                              output_summary=f"{len(relations)} relations")
+            tracker.end_stage(evt_seg, run_id, "segment",
+                              output_summary=f"{len(segments)} segments")
 
             # Write retrieval units to DB
-            ru_id_map: dict[str, str] = {}  # unit_key -> unit_id
+            evt_ru = tracker.start_stage(run_id, "build_retrieval_units", rd_id)
+            ru_id_map: dict[str, str] = {}
             for ru in retrieval_units:
                 unit_id = uuid.uuid4().hex
                 ru_id_map[ru.unit_key] = unit_id
@@ -488,6 +527,8 @@ def _run_pipeline(
                 )
 
             asset_db.commit()
+            tracker.end_stage(evt_ru, run_id, "build_retrieval_units",
+                              output_summary=f"{len(retrieval_units)} units")
 
             # Generate embeddings for retrieval units (if embedding_generator configured)
             if embedding_generator is not None and retrieval_units:
@@ -575,7 +616,13 @@ def _run_pipeline(
             runtime_db.commit()
 
     # Determine final run status (use SQL-valid values only)
+    # All docs failed -> "failed"; some failed -> "completed" with has_failures metadata
     run_status = "completed"
+    run_metadata = None
+    if failed_count > 0 and committed_count == 0:
+        run_status = "failed"
+    elif failed_count > 0:
+        run_metadata = {"has_failures": True, "failed_count": failed_count}
 
     tracker.complete_run(
         run_id,
@@ -585,6 +632,7 @@ def _run_pipeline(
         skipped_count=skipped_count,
         new_count=new_count,
         updated_count=updated_count,
+        metadata_json=run_metadata,
     )
     runtime_db.commit()
 

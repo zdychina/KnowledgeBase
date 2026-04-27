@@ -31,7 +31,7 @@ class TemplateRegistry:
         tpl_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
-            """INSERT INTO agent_llm_prompt_templates
+            """INSERT OR REPLACE INTO agent_llm_prompt_templates
                (id, template_key, template_version, purpose, system_prompt, user_prompt_template,
                 expected_output_type, output_schema_json, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",

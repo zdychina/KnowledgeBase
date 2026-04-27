@@ -1,10 +1,11 @@
-"""Comprehensive tests for v1.1 Knowledge Mining pipeline."""
+"""Comprehensive tests for v1.1+v1.2 Knowledge Mining pipeline."""
 from __future__ import annotations
 
 import os
 import shutil
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -146,7 +147,6 @@ class TestAssetCoreDB:
         asset_db.upsert_snapshot("s1", "hash_abc", "raw1", "text/markdown")
         asset_db.upsert_snapshot("s2", "hash_abc", "raw2", "text/markdown")
         s = asset_db.get_snapshot_by_hash("hash_abc")
-        # Second upsert should update, not create duplicate
         assert s["raw_content_hash"] == "raw2"
 
     def test_build_and_release(self, asset_db):
@@ -177,6 +177,21 @@ class TestMiningRuntimeDB:
         r = runtime_db.get_run("r1")
         assert r["status"] == "completed"
         assert r["committed_count"] == 5
+
+    def test_run_status_with_metadata(self, runtime_db):
+        run = MiningRunData(id="r2", input_path="/test", status="running", started_at="2026-01-01T00:00:00")
+        runtime_db.insert_run(run)
+        runtime_db.update_run_status(
+            "r2", "completed",
+            finished_at="2026-01-01T01:00:00",
+            metadata_json={"has_failures": True, "failed_count": 2},
+        )
+        r = runtime_db.get_run("r2")
+        assert r["status"] == "completed"
+        import json
+        meta = json.loads(r["metadata_json"])
+        assert meta["has_failures"] is True
+        assert meta["failed_count"] == 2
 
     def test_stage_events(self, runtime_db):
         runtime_db.insert_run(MiningRunData(id="r1", input_path="/test", started_at="2026-01-01T00:00:00"))
@@ -268,7 +283,7 @@ class TestSegmentation:
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         headings = [s for s in segments if s.block_type == "heading"]
-        assert len(headings) >= 4  # Test Command, Parameters, Example, Notes, Sub-note
+        assert len(headings) >= 4
 
     def test_segment_hashes(self, md_content):
         from knowledge_mining.mining.structure import parse_structure
@@ -297,7 +312,7 @@ class TestExtractors:
 
 
 # ===================================================================
-# T8-T12: New Modules
+# T8-T12: Pipeline Modules
 # ===================================================================
 
 class TestEnrich:
@@ -317,10 +332,9 @@ class TestEnrich:
         headings = [s for s in enriched if s.block_type == "heading"]
         for h in headings:
             assert "heading_role" in h.metadata_json
-        # Enrich should assign semantic roles (not "unknown" for non-headings)
         non_headings = [s for s in enriched if s.block_type != "heading"]
         roles = {s.semantic_role for s in non_headings}
-        assert len(roles - {"unknown"}) > 0  # at least some roles assigned
+        assert len(roles - {"unknown"}) > 0
 
 
 class TestRelations:
@@ -344,7 +358,6 @@ class TestRelations:
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         relations, seg_ids = build_relations(segments)
         header_rels = [r for r in relations if r.relation_type == "section_header_of"]
-        # Source should always be a heading segment
         heading_keys = {_make_key(s) for s in segments if s.block_type == "heading"}
         for rel in header_rels:
             assert rel.source_segment_key in heading_keys
@@ -358,10 +371,7 @@ class TestRetrievalUnits:
         from knowledge_mining.mining.retrieval_units import build_retrieval_units
         from knowledge_mining.mining.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
         tree = parse_structure(md_content)
-        # v1.1 flow: segment (structure only) → enrich (understanding) → retrieval_units
-        segments = segment_document(
-            tree, DocumentProfile(document_key="doc:/test.md"),
-        )
+        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         segments = enrich_segments(
             segments,
             entity_extractor=RuleBasedEntityExtractor(),
@@ -371,10 +381,36 @@ class TestRetrievalUnits:
         types = {u.unit_type for u in units}
         assert "raw_text" in types
         assert "contextual_text" in types
-        # entity_card requires entity_refs from enrich stage
         assert "entity_card" in types
-        # raw_text count should equal segment count
         assert sum(1 for u in units if u.unit_type == "raw_text") == len(segments)
+
+    def test_source_refs_with_segment_id(self):
+        """source_refs_json should include raw_segment_ids when source_seg_id provided."""
+        from knowledge_mining.mining.retrieval_units import _build_source_refs
+        seg = RawSegmentData(
+            document_key="doc:/a.md", segment_index=3,
+            source_offsets_json={"start": 10, "end": 50},
+        )
+        refs = _build_source_refs(seg, source_seg_id="seg-uuid-123")
+        assert refs["raw_segment_ids"] == ["seg-uuid-123"]
+        assert refs["document_key"] == "doc:/a.md"
+        assert refs["segment_index"] == 3
+
+    def test_source_refs_without_segment_id(self):
+        """source_refs_json should not include raw_segment_ids when source_seg_id is None."""
+        from knowledge_mining.mining.retrieval_units import _build_source_refs
+        seg = RawSegmentData(document_key="doc:/a.md", segment_index=1)
+        refs = _build_source_refs(seg)
+        assert "raw_segment_ids" not in refs
+
+    def test_generated_question_unit_has_task_id(self):
+        """llm_result_refs_json should include task_id from LLM."""
+        from knowledge_mining.mining.retrieval_units import _make_generated_question_unit
+        seg = RawSegmentData(document_key="doc:/a.md", segment_index=0, raw_text="test content")
+        unit = _make_generated_question_unit(seg, "What is X?", 0, "seg-1", "task-abc-123")
+        assert unit.llm_result_refs_json["task_id"] == "task-abc-123"
+        assert unit.llm_result_refs_json["source"] == "llm_runtime"
+        assert unit.llm_result_refs_json["question_index"] == 0
 
 
 class TestSnapshot:
@@ -396,7 +432,6 @@ class TestPublishing:
         from knowledge_mining.mining.publishing import assemble_build, publish_release
         asset_db.upsert_document("d1", "doc:/a.md", "a.md")
         asset_db.upsert_snapshot("s1", "nh1", "rh1", "text/markdown")
-        # v1.2: validate_build requires at least one segment per snapshot
         asset_db.insert_raw_segment(
             segment_id="seg-1", document_snapshot_id="s1",
             segment_key="doc:/a.md#0", segment_index=0,
@@ -455,12 +490,29 @@ class TestEndToEndPipeline:
             mining_runtime_db_path=str(tmp_dir / "mining_runtime.sqlite"),
         )
         assert result["release_id"] is not None
-        # Active release should be set
         db = AssetCoreDB(tmp_dir / "asset_core.sqlite")
         db.open()
         ar = db.get_active_release()
         assert ar is not None
         db.close()
+
+    def test_stage_events_recorded(self, input_dir, tmp_dir):
+        """Verify stage events are recorded for each document."""
+        from knowledge_mining.mining.jobs.run import run
+        result = run(
+            str(input_dir),
+            asset_core_db_path=str(tmp_dir / "asset_core.sqlite"),
+            mining_runtime_db_path=str(tmp_dir / "mining_runtime.sqlite"),
+        )
+        rdb = MiningRuntimeDB(tmp_dir / "mining_runtime.sqlite")
+        rdb.open()
+        events = rdb.get_stage_events(result["run_id"])
+        stages = {e["stage"] for e in events}
+        assert "select_snapshot" in stages
+        assert "segment" in stages
+        assert "build_relations" in stages
+        assert "build_retrieval_units" in stages
+        rdb.close()
 
 
 # ===================================================================

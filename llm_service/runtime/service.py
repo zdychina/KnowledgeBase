@@ -94,7 +94,41 @@ class LLMService:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        # Inject output schema into messages so LLM sees the constraint
+        self._inject_schema_into_messages(result)
+
         return result
+
+    @staticmethod
+    def _inject_schema_into_messages(result: dict) -> None:
+        """Append JSON Schema to system prompt so LLM generates conformant output.
+
+        Follows the DeepSeek / GLM recommended pattern:
+        inject schema into prompt content + response_format={"type":"json_object"}
+        + jsonschema post-validation.
+        """
+        schema = result.get("output_schema")
+        expected_type = result.get("expected_output_type")
+        msgs = result.get("messages")
+        if not schema or expected_type not in ("json_object", "json_array") or not msgs:
+            return
+
+        schema_instruction = (
+            "\n\n请严格按照以下 JSON Schema 格式返回结果，不要输出任何其他内容：\n"
+            + json.dumps(schema, indent=2, ensure_ascii=False)
+        )
+        # Create new list to avoid mutating caller-provided messages
+        new_msgs = []
+        injected = False
+        for msg in msgs:
+            if msg.get("role") == "system" and not injected:
+                new_msgs.append({**msg, "content": msg["content"] + schema_instruction})
+                injected = True
+            else:
+                new_msgs.append(msg)
+        if not injected:
+            new_msgs.insert(0, {"role": "system", "content": schema_instruction.strip()})
+        result["messages"] = new_msgs
 
     # ------------------------------------------------------------------
     # Submit (async)
@@ -120,7 +154,7 @@ class LLMService:
         resolved = await self._resolve_template(
             template_key, input, messages, expected_output_type, output_schema,
         )
-        actual_messages = resolved["messages"]
+        actual_messages = resolved["messages"] or [{"role": "user", "content": json.dumps(input or {})}]
         actual_expected_type = resolved["expected_output_type"] or "json_object"
         actual_schema = resolved["output_schema"]
 

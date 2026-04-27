@@ -25,6 +25,8 @@ class MockProvider:
         self,
         messages: list[dict],
         params: dict,
+        *,
+        response_format: dict | None = None,
     ) -> ProviderResponse:
         if self._error:
             raise self._error

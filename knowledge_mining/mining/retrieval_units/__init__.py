@@ -69,6 +69,8 @@ class LlmQuestionGenerator:
         from knowledge_mining.mining.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._timeout = timeout
+        # Track task_ids for provenance (seg_key -> task_id)
+        self._last_task_ids: dict[str, str] = {}
 
     def generate(self, segment: RawSegmentData) -> list[str]:
         """Single segment submit+poll (fallback, not recommended for batch)."""
@@ -92,8 +94,13 @@ class LlmQuestionGenerator:
         except Exception:
             return []
 
+    @property
+    def last_task_ids(self) -> dict[str, str]:
+        """Return task_id mapping from the most recent generate_batch call."""
+        return dict(self._last_task_ids)
+
     def generate_batch(self, segments: list[RawSegmentData]) -> dict[str, list[str]]:
-        """Batch: submit all tasks, then poll all results.
+        """Batch: submit all tasks, then poll all results concurrently.
 
         Returns {segment_key: [question_strings]}.
         Failed/empty results are omitted from the dict.
@@ -121,14 +128,16 @@ class LlmQuestionGenerator:
         if not seg_tasks:
             return {}
 
-        # Phase 2: Poll all results
+        # Store task_ids for provenance
+        self._last_task_ids = dict(seg_tasks)
+
+        # Phase 2: Poll all results concurrently
+        raw_results = self._client.poll_all(seg_tasks)
         results: dict[str, list[str]] = {}
-        for seg_key, task_id in seg_tasks.items():
-            items = self._client.poll_result(task_id, timeout=self._timeout)
-            if items:
-                questions = [item["question"] for item in items if "question" in item]
-                if questions:
-                    results[seg_key] = questions
+        for seg_key, items in raw_results.items():
+            questions = [item["question"] for item in items if "question" in item]
+            if questions:
+                results[seg_key] = questions
 
         return results
 
@@ -151,6 +160,13 @@ class LLMContextualizer:
         from knowledge_mining.mining.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._timeout = timeout
+        # Track task_ids for provenance (seg_key -> task_id)
+        self._last_task_ids: dict[str, str] = {}
+
+    @property
+    def last_task_ids(self) -> dict[str, str]:
+        """Return task_id mapping from the most recent contextualize call."""
+        return dict(self._last_task_ids)
 
     def contextualize(self, segments: list[RawSegmentData], document_text: str) -> dict[str, str]:
         """Generate context descriptions for all segments via LLM.
@@ -182,20 +198,18 @@ class LLMContextualizer:
             if task_id:
                 seg_tasks[seg_key] = task_id
 
-        for seg_key, task_id in seg_tasks.items():
-            try:
-                items = self._client.poll_result(task_id, timeout=self._timeout)
-                if items and isinstance(items, list):
-                    item = items[0] if items else {}
-                elif items and isinstance(items, dict):
-                    item = items
-                else:
-                    continue
-                context = item.get("context", "")
-                if context:
-                    results[seg_key] = context
-            except Exception:
+        # Store task_ids for provenance
+        self._last_task_ids = dict(seg_tasks)
+
+        # Poll all results concurrently
+        raw_results = self._client.poll_all(seg_tasks)
+        for seg_key, items in raw_results.items():
+            if not items:
                 continue
+            item = items[0] if isinstance(items, list) else items
+            context = item.get("context", "")
+            if context:
+                results[seg_key] = context
 
         return results
 
@@ -227,18 +241,26 @@ def build_retrieval_units(
 
     # Phase 1: Batch-generate all questions (submit all -> poll all)
     question_map: dict[str, list[str]] = {}
+    qgen_task_ids: dict[str, str] = {}  # seg_key -> task_id for provenance
     if qgen is not None:
         questionworthy = [s for s in segments if _is_questionworthy(s)]
         question_map = qgen.generate_batch(questionworthy)
+        # Extract task_ids from LLM-backed generator for provenance
+        if hasattr(qgen, "last_task_ids"):
+            qgen_task_ids = qgen.last_task_ids
 
     # Phase 1b: Batch-generate contextual descriptions
     context_map: dict[str, str] = {}
+    ctxer_task_ids: dict[str, str] = {}  # seg_key -> task_id for provenance
     document_text = "\n".join(s.raw_text for s in segments)
     try:
         context_map = ctxer.contextualize(
             [s for s in segments if s.raw_text.strip()],
             document_text,
         )
+        # Extract task_ids from LLM-backed contextualizer for provenance
+        if hasattr(ctxer, "last_task_ids"):
+            ctxer_task_ids = ctxer.last_task_ids
     except Exception as e:
         logger.warning("Contextualization failed: %s", e)
 
@@ -268,14 +290,16 @@ def build_retrieval_units(
 
         # 4. generated_question units (from batch results)
         questions = question_map.get(seg_key, [])
+        q_task_id = qgen_task_ids.get(seg_key)
         for qi, question in enumerate(questions):
-            units.append(_make_generated_question_unit(seg, question, qi, source_seg_id))
+            units.append(_make_generated_question_unit(seg, question, qi, source_seg_id, q_task_id))
 
         # 5. contextual_enhanced unit (LLM-generated context prepended to text)
         if seg_key in context_map:
             ctx_desc = context_map[seg_key]
             if ctx_desc:
-                units.append(_make_contextual_enhanced_unit(seg, ctx_desc, source_seg_id))
+                c_task_id = ctxer_task_ids.get(seg_key)
+                units.append(_make_contextual_enhanced_unit(seg, ctx_desc, source_seg_id, c_task_id))
 
     return units
 
@@ -300,7 +324,7 @@ def _make_raw_text_unit(
         semantic_role=seg.semantic_role,
         facets_json=_build_facets(seg),
         entity_refs_json=list(seg.entity_refs_json),
-        source_refs_json=_build_source_refs(seg),
+        source_refs_json=_build_source_refs(seg, source_seg_id),
         source_segment_id=source_seg_id,
         weight=1.0,
         metadata_json={"segment_index": seg.segment_index},
@@ -341,7 +365,7 @@ def _make_contextual_text_unit(
         semantic_role=seg.semantic_role,
         facets_json=_build_facets(seg),
         entity_refs_json=list(seg.entity_refs_json),
-        source_refs_json=_build_source_refs(seg),
+        source_refs_json=_build_source_refs(seg, source_seg_id),
         source_segment_id=source_seg_id,
         weight=0.6,
         metadata_json={
@@ -396,7 +420,7 @@ def _make_entity_card_unit(
         semantic_role=seg.semantic_role,
         facets_json={"entity_type": entity_type},
         entity_refs_json=[ref],
-        source_refs_json=_build_source_refs(seg),
+        source_refs_json=_build_source_refs(seg, source_seg_id),
         source_segment_id=source_seg_id,
         weight=0.5,
         metadata_json={"first_seen_in": seg.document_key},
@@ -408,11 +432,15 @@ def _make_generated_question_unit(
     question: str,
     question_index: int,
     source_seg_id: str | None = None,
+    llm_task_id: str | None = None,
 ) -> RetrievalUnitData:
     """Generated question unit: one per LLM-generated question."""
     title = f"Q{question_index + 1}: {question[:60]}"
     text = f"{question}\n---\n来源: {seg.section_title or '未知'}\n{seg.raw_text[:200]}"
     search_text = tokenize_for_search(f"{question} {seg.section_title or ''}")
+    llm_refs: dict[str, Any] = {"source": "llm_runtime", "question_index": question_index}
+    if llm_task_id:
+        llm_refs["task_id"] = llm_task_id
     return RetrievalUnitData(
         segment_key=f"{seg.document_key}#{seg.segment_index}",
         unit_key=f"ru:{seg.document_key}#{seg.segment_index}:gen_q_{question_index}",
@@ -430,8 +458,8 @@ def _make_generated_question_unit(
         semantic_role=seg.semantic_role,
         facets_json=_build_facets(seg),
         entity_refs_json=list(seg.entity_refs_json),
-        source_refs_json=_build_source_refs(seg),
-        llm_result_refs_json={"source": "llm_runtime", "question_index": question_index},
+        source_refs_json=_build_source_refs(seg, source_seg_id),
+        llm_result_refs_json=llm_refs,
         source_segment_id=source_seg_id,
         weight=0.7,
         metadata_json={"question_index": question_index},
@@ -590,7 +618,7 @@ def _make_table_row_units(
             semantic_role=seg.semantic_role,
             facets_json=_build_facets(seg),
             entity_refs_json=list(seg.entity_refs_json),
-            source_refs_json=_build_source_refs(seg),
+            source_refs_json=_build_source_refs(seg, source_seg_id),
             source_segment_id=source_seg_id,
             weight=0.8,
             metadata_json={"row_index": row_idx, "columns": columns},
@@ -599,7 +627,7 @@ def _make_table_row_units(
     return units
 
 
-def _build_source_refs(seg: RawSegmentData) -> dict[str, Any]:
+def _build_source_refs(seg: RawSegmentData, source_seg_id: str | None = None) -> dict[str, Any]:
     """Build source_refs for provenance tracing."""
     refs: dict[str, Any] = {
         "document_key": seg.document_key,
@@ -607,6 +635,8 @@ def _build_source_refs(seg: RawSegmentData) -> dict[str, Any]:
     }
     if seg.source_offsets_json:
         refs["offsets"] = seg.source_offsets_json
+    if source_seg_id:
+        refs["raw_segment_ids"] = [source_seg_id]
     return refs
 
 
@@ -614,6 +644,7 @@ def _make_contextual_enhanced_unit(
     seg: RawSegmentData,
     context_description: str,
     source_seg_id: str | None = None,
+    llm_task_id: str | None = None,
 ) -> RetrievalUnitData:
     """Contextual-enhanced unit: LLM-generated context prepended to segment text.
 
@@ -639,8 +670,8 @@ def _make_contextual_enhanced_unit(
         semantic_role=seg.semantic_role,
         facets_json=_build_facets(seg),
         entity_refs_json=list(seg.entity_refs_json),
-        source_refs_json=_build_source_refs(seg),
-        llm_result_refs_json={"source": "contextual_retrieval"},
+        source_refs_json=_build_source_refs(seg, source_seg_id),
+        llm_result_refs_json=({"source": "contextual_retrieval", "task_id": llm_task_id} if llm_task_id else {"source": "contextual_retrieval"}),
         source_segment_id=source_seg_id,
         weight=0.9,
         metadata_json={

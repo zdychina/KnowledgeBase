@@ -173,6 +173,18 @@ CREATE TABLE IF NOT EXISTS asset_raw_segment_relations (
             'elaborates',
             'condition',
             'contrast',
+            'evidences',
+            'causes',
+            'results_in',
+            'backgrounds',
+            'conditions',
+            'summarizes',
+            'justifies',
+            'enables',
+            'contrasts_with',
+            'parallels',
+            'sequences',
+            'unrelated',
             'other'
         )
     ),

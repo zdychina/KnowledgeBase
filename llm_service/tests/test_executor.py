@@ -54,12 +54,12 @@ async def test_execute_retries_on_failure(db):
     call_count = 0
     original_complete = provider.complete
 
-    async def flaky_complete(messages, params):
+    async def flaky_complete(messages, params, **kwargs):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             raise ProviderError("timeout", "first call timed out")
-        return await original_complete(messages, params)
+        return await original_complete(messages, params, **kwargs)
 
     provider.complete = flaky_complete
     executor = Executor(db, mgr, bus, provider)

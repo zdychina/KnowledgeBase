@@ -173,13 +173,11 @@ class DiscourseRelationBuilder:
     def __init__(
         self,
         base_url: str = "http://localhost:8900",
-        timeout: int = 120,
         bypass_proxy: bool = False,
         window_size: int = 15,
     ) -> None:
         from knowledge_mining.mining.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
-        self._timeout = timeout
         self._window_size = window_size
 
     def build(
@@ -236,7 +234,8 @@ class DiscourseRelationBuilder:
             if task_id is None:
                 return []
 
-            items = self._client.poll_result(task_id, timeout=self._timeout)
+            items = self._client.poll_all({"0": task_id})
+            items = items.get("0")
             if items is None:
                 return []
 
