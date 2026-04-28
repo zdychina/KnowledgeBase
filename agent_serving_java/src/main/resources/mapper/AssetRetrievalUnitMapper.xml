@@ -39,11 +39,11 @@
                ru.unit_type,
                ru.source_segment_id,
                ts_rank(
-                   to_tsvector('simple', ru.text),
+                   to_tsvector('simple', ru.search_text),
                    websearch_to_tsquery('simple', #{ftsQuery})
                ) AS fts_score
         FROM asset_retrieval_units ru
-        WHERE to_tsvector('simple', ru.text) @@ websearch_to_tsquery('simple', #{ftsQuery})
+        WHERE to_tsvector('simple', ru.search_text) @@ websearch_to_tsquery('simple', #{ftsQuery})
           AND ru.document_snapshot_id IN
         <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
             #{sid}

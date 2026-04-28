@@ -8,4 +8,5 @@ public class RelationRow {
     private String fromSegmentId;
     private String toSegmentId;
     private String relationType;
+    private Integer distance;
 }

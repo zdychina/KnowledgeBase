@@ -1,10 +1,12 @@
 package com.coremasterkb.serving.config;
 
 import com.coremasterkb.serving.application.ContextAssembler;
+import com.coremasterkb.serving.application.QueryLogService;
 import com.coremasterkb.serving.application.QueryNormalizer;
 import com.coremasterkb.serving.application.SearchService;
 import com.coremasterkb.serving.client.LlmRuntimeClient;
 import com.coremasterkb.serving.mapper.*;
+import com.coremasterkb.serving.mapper.ServingQueryLogMapper;
 import com.coremasterkb.serving.pipeline.*;
 import com.coremasterkb.serving.repository.AssetRepository;
 import com.coremasterkb.serving.retrieval.FtsRetriever;
@@ -121,6 +123,15 @@ public class ServingBeans {
     public ContextAssembler contextAssembler(
             AssetRepository assetRepository, GraphExpander graphExpander) {
         return new ContextAssembler(assetRepository, graphExpander);
+    }
+
+    // -------------------------------------------------------------------------
+    // Logging (cross-cutting, wired separately from business beans)
+    // -------------------------------------------------------------------------
+
+    @Bean
+    public QueryLogService queryLogService(ServingQueryLogMapper servingQueryLogMapper) {
+        return new QueryLogService(servingQueryLogMapper);
     }
 
     @Bean

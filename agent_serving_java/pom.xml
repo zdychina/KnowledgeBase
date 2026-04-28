@@ -48,6 +48,12 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- AOP (for non-invasive cross-cutting concerns, e.g. query logging) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- Configuration properties support -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

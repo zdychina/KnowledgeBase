@@ -102,17 +102,19 @@ public class ContextAssembler {
         List<ContextItem> items = new ArrayList<>();
         for (RetrievalCandidate c : candidates) {
             Map<String, Object> meta = c.metadata();
-            String text      = getStr(meta, "text");
-            String title     = getStr(meta, "title");
-            String blockType = getStr(meta, "block_type", "unknown");
-            String semRole   = getStr(meta, "semantic_role", "unknown");
-            String srcSegId  = getStr(meta, "source_segment_id");
+            String text          = getStr(meta, "text");
+            String title         = getStr(meta, "title");
+            String blockType     = getStr(meta, "block_type", "unknown");
+            String semRole       = getStr(meta, "semantic_role", "unknown");
+            String srcSegId      = getStr(meta, "source_segment_id");
+            String sourceRefsRaw = getStr(meta, "source_refs_json");
+            Map<String, Object> sourceRefs = JsonUtils.safeJsonParse(sourceRefsRaw);
             items.add(new ContextItem(
                     c.retrievalUnitId(), ServingConstants.KIND_RETRIEVAL_UNIT,
                     ServingConstants.ROLE_SEED,
                     text != null ? text : "",
                     c.score(), title, blockType, semRole, srcSegId, null,
-                    Collections.emptyMap(), Collections.emptyMap()));
+                    sourceRefs, Collections.emptyMap()));
         }
         return items;
     }
@@ -214,7 +216,7 @@ public class ContextAssembler {
                         rr.getFromSegmentId() != null ? rr.getFromSegmentId() : "",
                         rr.getToSegmentId()   != null ? rr.getToSegmentId()   : "",
                         rr.getRelationType()  != null ? rr.getRelationType()  : "",
-                        null))
+                        rr.getDistance()))
                 .collect(Collectors.toList());
     }
 

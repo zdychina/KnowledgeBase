@@ -26,12 +26,10 @@ public record NormalizedQuery(
         if (desiredRoles == null) desiredRoles = new ArrayList<>();
     }
 
-    /** Create a copy with a different scope (for override merging). */
     public NormalizedQuery withScope(Map<String, Object> newScope) {
         return new NormalizedQuery(originalQuery, intent, entities, newScope, keywords, desiredRoles);
     }
 
-    /** Create a copy with different entities (for override merging). */
     public NormalizedQuery withEntities(List<EntityRef> newEntities) {
         return new NormalizedQuery(originalQuery, intent, newEntities, scope, keywords, desiredRoles);
     }

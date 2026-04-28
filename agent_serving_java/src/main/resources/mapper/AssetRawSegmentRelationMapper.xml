@@ -9,6 +9,7 @@
         <result column="from_segment_id"  property="fromSegmentId"/>
         <result column="to_segment_id"    property="toSegmentId"/>
         <result column="relation_type"    property="relationType"/>
+        <result column="distance"         property="distance"/>
     </resultMap>
 
     <resultMap id="neighborResult"
@@ -22,7 +23,8 @@
         SELECT rel.id,
                rel.source_segment_id AS from_segment_id,
                rel.target_segment_id AS to_segment_id,
-               rel.relation_type
+               rel.relation_type,
+               rel.distance
         FROM asset_raw_segment_relations rel
         WHERE (
             rel.source_segment_id IN
