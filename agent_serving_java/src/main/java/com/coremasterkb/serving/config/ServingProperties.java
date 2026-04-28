@@ -27,18 +27,18 @@ public class ServingProperties {
     public static class LlmService {
 
         @NotBlank
-        private String baseUrl = "http://localhost:8900";
+        private String baseUrl;
 
-        private boolean enabled = false;
+        private boolean enabled;
 
         @NotNull
-        private Duration timeout = Duration.ofMillis(3000);
+        private Duration timeout;
     }
 
     @Data
     public static class Fts {
 
         @NotBlank
-        private String strategy = "sqlite";
+        private String strategy;
     }
 }

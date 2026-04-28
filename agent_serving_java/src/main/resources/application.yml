@@ -22,6 +22,6 @@ serving:
   llm-service:
     base-url: ${LLM_SERVICE_BASE_URL:http://localhost:8900}
     enabled: ${LLM_SERVICE_ENABLED:false}
-    timeout: 3000ms
+    timeout: ${LLM_SERVICE_TIMEOUT:3000ms}
   fts:
     strategy: ${SERVING_FTS_STRATEGY:postgresql}
