@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS serving_query_logs (
     -- 响应摘要（来自 ContextPack）
     result_item_count   INTEGER,                      -- 返回的 items 总数（seed + context + support）
     result_seed_count   INTEGER,                      -- 其中 seed 类型数量
-    result_has_result   TEXT    NOT NULL DEFAULT 'true', -- 'true' | 'false'，是否有召回结果
+    result_has_result   BOOLEAN NOT NULL DEFAULT TRUE,   -- 是否有召回结果
     result_issues_json  TEXT    NOT NULL DEFAULT '[]', -- issues 列表 JSON 数组
 
     -- 返回结果详情（来自 ContextPack，不存正文以控制行大小）
@@ -331,7 +331,7 @@ CREATE TABLE IF NOT EXISTS serving_query_logs (
     -- 每条 source：{id, document_key, title, relative_path}
     result_sources_json     TEXT    NOT NULL DEFAULT '[]',
     -- 每条 relation：{id, from_id, to_id, relation_type, distance}
-    result_relations_json   TEXT    NOT NULL DEFAULT '[]'
+    result_relations_json   TEXT    NOT NULL DEFAULT '[]',
 
     -- 性能
     duration_ms         INTEGER,                      -- 请求总耗时（毫秒）

@@ -31,7 +31,7 @@ public class ServingQueryLog {
     // 响应摘要
     private Integer resultItemCount;
     private Integer resultSeedCount;
-    private String resultHasResult;
+    private Boolean resultHasResult;
     private String resultIssuesJson;
 
     // 返回结果详情

@@ -59,13 +59,13 @@ public class QueryLogService {
 
                 entry.setResultItemCount(items.size());
                 entry.setResultSeedCount((int) seedCount);
-                entry.setResultHasResult(hasResult ? "true" : "false");
+                entry.setResultHasResult(hasResult);
                 entry.setResultIssuesJson(toJson(pack.issues()));
                 entry.setResultItemsJson(toJson(buildItemLogs(items)));
                 entry.setResultSourcesJson(toJson(buildSourceLogs(pack.sources())));
                 entry.setResultRelationsJson(toJson(buildRelationLogs(pack.relations())));
             } else {
-                entry.setResultHasResult("false");
+                entry.setResultHasResult(false);
             }
 
             logMapper.insert(entry);
