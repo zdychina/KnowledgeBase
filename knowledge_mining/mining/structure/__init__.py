@@ -4,13 +4,8 @@ Key design:
 - Single parent-child hierarchy, no duplicate content
 - Table structure preserved in ContentBlock.structure as {columns, rows}
 - ContentBlock carries line_start/line_end from markdown-it token.map
-- html_table blocks extracted with columns/rows via html.parser
 """
 from __future__ import annotations
-
-import re
-from html.parser import HTMLParser
-from typing import Any
 
 from markdown_it import MarkdownIt
 
@@ -65,7 +60,6 @@ def _tokens_to_blocks(tokens: list) -> list[ContentBlock]:
         elif tok.type in ("bullet_list_open", "ordered_list_open"):
             ordered = tok.type == "ordered_list_open"
             items: list[str] = []
-            items_nested: list[dict[str, Any]] = []
             line_start = tok.map[0] if tok.map else None
             j = i + 1
             depth = 1
@@ -76,23 +70,14 @@ def _tokens_to_blocks(tokens: list) -> list[ContentBlock]:
                     depth -= 1
                     if depth == 0:
                         break
-                if tokens[j].type == "inline":
-                    items_nested.append({"text": tokens[j].content, "depth": depth})
-                    if depth == 1:
-                        items.append(tokens[j].content)
+                if depth == 1 and tokens[j].type == "inline":
+                    items.append(tokens[j].content)
                 j += 1
             line_end = tok.map[1] if tok.map else None
-            hierarchical_text = _format_nested_items(items_nested, ordered)
             blocks.append(ContentBlock(
-                block_type="list", text=hierarchical_text,
+                block_type="list", text="\n".join(items),
                 line_start=line_start, line_end=line_end,
-                structure={
-                    "kind": "list",
-                    "ordered": ordered,
-                    "items": items,
-                    "items_nested": items_nested,
-                    "item_count": len(items_nested),
-                },
+                structure={"kind": "list", "ordered": ordered, "items": items, "item_count": len(items)},
             ))
             i = j + 1
             continue
@@ -120,11 +105,9 @@ def _tokens_to_blocks(tokens: list) -> list[ContentBlock]:
             line_start = tok.map[0] if tok.map else None
             line_end = tok.map[1] if tok.map else None
             if "<table" in html_text.lower():
-                structure = _parse_html_table(html_text)
                 blocks.append(ContentBlock(
                     block_type="html_table", text=html_text,
                     line_start=line_start, line_end=line_end,
-                    structure=structure,
                 ))
             else:
                 blocks.append(ContentBlock(
@@ -215,27 +198,6 @@ def _parse_table(tokens: list, start: int) -> ContentBlock:
             "col_count": col_count,
         },
     )
-
-
-def _format_nested_items(items_nested: list[dict[str, Any]], ordered: bool) -> str:
-    """Format nested list items into indented hierarchical text."""
-    if not items_nested:
-        return ""
-    lines: list[str] = []
-    ordered_counter = 0
-    last_depth = 0
-    for item in items_nested:
-        depth = item["depth"]
-        text = item["text"]
-        indent = "  " * (depth - 1)
-        if ordered and depth == 1:
-            ordered_counter += 1
-            prefix = f"{ordered_counter}. "
-        else:
-            prefix = "- "
-        lines.append(f"{indent}{prefix}{text}")
-        last_depth = depth
-    return "\n".join(lines)
 
 
 def _build_section_tree(blocks: list[ContentBlock]) -> SectionNode:
@@ -356,71 +318,3 @@ def _split_sub_sections(
         result.append(current)
 
     return result
-
-
-class _HtmlTableParser(HTMLParser):
-    """Minimal HTML table parser to extract columns and rows."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.columns: list[str] = []
-        self.rows: list[dict[str, str]] = []
-        self._in_thead = False
-        self._in_cell = False
-        self._current_row: list[str] = []
-        self._cell_text = ""
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in ("thead",):
-            self._in_thead = True
-        elif tag in ("tbody",):
-            self._in_thead = False
-        elif tag in ("th", "td"):
-            self._in_cell = True
-            self._cell_text = ""
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in ("thead",):
-            self._in_thead = False
-        elif tag in ("th", "td"):
-            self._in_cell = False
-            self._current_row.append(self._cell_text.strip())
-        elif tag == "tr":
-            if self._current_row:
-                if self._in_thead and not self.columns:
-                    self.columns = list(self._current_row)
-                else:
-                    if self.columns:
-                        row_dict = {
-                            self.columns[j]: cell
-                            for j, cell in enumerate(self._current_row)
-                            if j < len(self.columns)
-                        }
-                    else:
-                        row_dict = {f"col{j}": cell for j, cell in enumerate(self._current_row)}
-                    self.rows.append(row_dict)
-                self._current_row = []
-
-    def handle_data(self, data: str) -> None:
-        if self._in_cell:
-            self._cell_text += data
-
-
-def _parse_html_table(html_text: str) -> dict[str, Any]:
-    """Extract columns/rows structure from HTML table text."""
-    parser = _HtmlTableParser()
-    try:
-        parser.feed(html_text)
-    except Exception:
-        pass
-
-    col_count = len(parser.columns)
-    row_count = len(parser.rows)
-
-    return {
-        "kind": "html_table",
-        "columns": parser.columns,
-        "rows": parser.rows,
-        "row_count": row_count,
-        "col_count": col_count,
-    }

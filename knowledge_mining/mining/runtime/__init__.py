@@ -30,12 +30,10 @@ class RuntimeTracker:
         return data.id
 
     def complete_run(
-        self, run_id: str, *, build_id: str | None = None,
-        metadata_json: dict[str, Any] | None = None, **counters: int,
+        self, run_id: str, *, build_id: str | None = None, **counters: int,
     ) -> None:
         self._db.update_run_status(
-            run_id, "completed", finished_at=_utcnow(), build_id=build_id,
-            metadata_json=metadata_json, **counters,
+            run_id, "completed", finished_at=_utcnow(), build_id=build_id, **counters,
         )
 
     def fail_run(self, run_id: str, error_summary: str, **counters: int) -> None:

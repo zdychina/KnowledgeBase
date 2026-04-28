@@ -26,7 +26,7 @@ def classify_documents(
     - NEW: document not in previous build
     - UPDATE: document exists but snapshot changed
     - SKIP: document exists and snapshot unchanged
-    - REMOVE: document in previous build but not in current run (deleted file)
+    - REMOVE: document explicitly marked for removal
     """
     prev_build = asset_db.get_active_build()
     prev_snapshots: dict[str, str] = {}  # document_id -> snapshot_id
@@ -35,26 +35,7 @@ def classify_documents(
         for ps in asset_db.get_build_snapshots(prev_build["id"]):
             prev_snapshots[ps["document_id"]] = ps["document_snapshot_id"]
 
-    # Track which documents are in the current run
-    current_doc_ids = {d["document_id"] for d in snapshot_decisions}
-
-    # Detect REMOVE: documents in prev build but not in current run
-    for doc_id, snap_id in prev_snapshots.items():
-        if doc_id not in current_doc_ids:
-            snapshot_decisions.append({
-                "document_id": doc_id,
-                "document_snapshot_id": snap_id,
-                "action": "REMOVE",
-                "reason": "remove",
-                "selection_status": "removed",
-                "document_key": "",
-            })
-
     for decision in snapshot_decisions:
-        # Skip already-classified REMOVE entries
-        if decision.get("action") == "REMOVE":
-            continue
-
         doc_id = decision["document_id"]
         snap_id = decision["document_snapshot_id"]
 
@@ -165,25 +146,7 @@ def assemble_build(
 
 
 def validate_build(asset_db: AssetCoreDB, build_id: str) -> None:
-    """Validate that a build meets quality requirements.
-
-    Checks:
-    1. Build has at least one active snapshot
-    2. Each active snapshot has at least one segment
-    3. Incremental builds must have a valid parent build
-    """
-    build = asset_db.get_build(build_id)
-    if build is None:
-        raise ValueError(f"Build {build_id} not found")
-
-    # Check parent build exists for incremental builds
-    if build["build_mode"] == "incremental" and build["parent_build_id"]:
-        parent = asset_db.get_build(build["parent_build_id"])
-        if parent is None:
-            raise ValueError(
-                f"Incremental build {build_id} references missing parent {build['parent_build_id']}"
-            )
-
+    """Validate that a build has at least one active snapshot with segments."""
     snapshots = asset_db.get_build_snapshots(build_id)
     active = [s for s in snapshots if s["selection_status"] == "active"]
     if not active:

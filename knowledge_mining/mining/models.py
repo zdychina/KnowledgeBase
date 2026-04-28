@@ -62,7 +62,6 @@ VALID_SEMANTIC_ROLES = frozenset({
 })
 
 VALID_RELATION_TYPES = frozenset({
-    # Structural relations
     "previous",
     "next",
     "same_section",
@@ -72,19 +71,6 @@ VALID_RELATION_TYPES = frozenset({
     "elaborates",
     "condition",
     "contrast",
-    # RST discourse relations (EVO-17)
-    "evidences",
-    "causes",
-    "results_in",
-    "backgrounds",
-    "conditions",
-    "summarizes",
-    "justifies",
-    "enables",
-    "contrasts_with",
-    "parallels",
-    "sequences",
-    "unrelated",
     "other",
 })
 
@@ -136,7 +122,6 @@ VALID_STAGE_NAMES = frozenset({
     "segment",
     "enrich",
     "build_relations",
-    "discourse_relations",
     "build_retrieval_units",
     "select_snapshot",
     "assemble_build",

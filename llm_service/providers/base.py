@@ -26,8 +26,6 @@ class ProviderProtocol(Protocol):
         self,
         messages: list[dict],
         params: dict,
-        *,
-        response_format: dict | None = None,
     ) -> ProviderResponse: ...
 
     @property

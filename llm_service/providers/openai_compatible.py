@@ -34,8 +34,6 @@ class OpenAICompatibleProvider:
         self,
         messages: list[dict],
         params: dict,
-        *,
-        response_format: dict | None = None,
     ) -> ProviderResponse:
         url = f"{self._base_url}/chat/completions"
         headers = {
@@ -48,8 +46,6 @@ class OpenAICompatibleProvider:
             "messages": messages,
             **params,
         }
-        if response_format is not None:
-            body["response_format"] = response_format
         transport = httpx.AsyncHTTPTransport() if self._bypass_proxy else None
         async with httpx.AsyncClient(transport=transport, timeout=self._timeout) as client:
             try:

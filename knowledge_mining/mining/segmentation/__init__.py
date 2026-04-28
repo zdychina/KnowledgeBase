@@ -14,21 +14,6 @@ from knowledge_mining.mining.models import ContentBlock, DocumentProfile, RawSeg
 from knowledge_mining.mining.hash_utils import content_hash, normalized_hash
 from knowledge_mining.mining.text_utils import token_count
 
-
-class DefaultSegmenter:
-    """Default segmenter wrapping segment_document() for PipelineConfig."""
-
-    def segment(
-        self,
-        tree: SectionNode,
-        profile: DocumentProfile,
-        **kwargs: Any,
-    ) -> list[RawSegmentData]:
-        return segment_document(
-            tree, profile,
-            parser_name=kwargs.get("parser_name", "unknown"),
-        )
-
 _SCHEMA_BLOCK_TYPES = {
     "paragraph", "table", "list", "code", "blockquote",
     "html_table", "raw_html", "unknown",

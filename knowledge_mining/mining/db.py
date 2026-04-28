@@ -407,35 +407,6 @@ class AssetCoreDB(_DB):
             (document_snapshot_id,),
         )
 
-    # -- retrieval embeddings --
-
-    def insert_retrieval_embedding(
-        self,
-        embedding_id: str,
-        retrieval_unit_id: str,
-        embedding_model: str,
-        embedding_provider: str,
-        text_kind: str,
-        embedding_dim: int,
-        embedding_vector: str,
-        content_hash: str = "",
-        metadata_json: dict | None = None,
-    ) -> str:
-        now = _utcnow()
-        self._execute(
-            """INSERT INTO asset_retrieval_embeddings
-                   (id, retrieval_unit_id, embedding_model, embedding_provider,
-                    text_kind, embedding_dim, embedding_vector, content_hash,
-                    created_at, metadata_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                embedding_id, retrieval_unit_id, embedding_model, embedding_provider,
-                text_kind, embedding_dim, embedding_vector, content_hash,
-                now, _json_dumps(metadata_json),
-            ),
-        )
-        return embedding_id
-
     # -- builds --
 
     def insert_build(
@@ -607,7 +578,6 @@ class MiningRuntimeDB(_DB):
         finished_at: str | None = None,
         error_summary: str | None = None,
         build_id: str | None = None,
-        metadata_json: dict | None = None,
         **counters: int,
     ) -> None:
         parts = ["status = ?"]
@@ -621,9 +591,6 @@ class MiningRuntimeDB(_DB):
         if build_id is not None:
             parts.append("build_id = ?")
             params.append(build_id)
-        if metadata_json is not None:
-            parts.append("metadata_json = ?")
-            params.append(_json_dumps(metadata_json))
         for col in ("total_documents", "new_count", "updated_count", "skipped_count", "failed_count", "committed_count"):
             if col in counters:
                 parts.append(f"{col} = ?")
