@@ -196,10 +196,10 @@ def _dump_audit(result, asset_db_path, runtime_db_path):
             print(f"      llm_result_refs: {llm_refs}")
             print(f"      source_refs.raw_segment_ids: {src_refs.get('raw_segment_ids', 'MISSING')}")
 
-        # Show contextual_enhanced units
-        ctx_units = [u for u in units if u["unit_type"] == "contextual_text"
+        # Show raw_text units with LLM context
+        ctx_units = [u for u in units if u["unit_type"] == "raw_text"
                      and "context_description" in (json.loads(u.get("metadata_json") or "{}"))]
-        print(f"\n  Contextual Enhanced (LLM): {len(ctx_units)}")
+        print(f"\n  Raw text units with LLM context: {len(ctx_units)}")
         for cu in ctx_units[:3]:
             meta = json.loads(cu.get("metadata_json") or "{}")
             llm_refs = json.loads(cu.get("llm_result_refs_json") or "{}")
@@ -276,16 +276,25 @@ class TestLiveLLMPipeline:
                 assert "task_id" in llm_refs, f"Missing task_id in llm_result_refs: {llm_refs}"
                 assert "raw_segment_ids" in src_refs, f"Missing raw_segment_ids in source_refs: {src_refs}"
 
-            # === Retrieval unit-level: LLM contextual retrieval ===
-            ctx_enhanced = [u for u in units if u["unit_type"] == "contextual_text"
-                           and "context_description" in (json.loads(u.get("metadata_json") or "{}"))]
-            print(f"Contextual enhanced units: {len(ctx_enhanced)}")
-            assert len(ctx_enhanced) > 0, "Should have LLM-contextualized units"
+            # === Retrieval unit-level: LLM contextual retrieval (v1.3: folded into raw_text) ===
+            ctx_enhanced = [u for u in raw_text_units
+                           if "context_description" in (json.loads(u.get("metadata_json") or "{}"))]
+            print(f"Raw text units with LLM context: {len(ctx_enhanced)}")
+            assert len(ctx_enhanced) > 0, "Should have raw_text units enriched with LLM context"
 
             for cu in ctx_enhanced:
                 llm_refs = json.loads(cu.get("llm_result_refs_json") or "{}")
                 assert llm_refs.get("source") == "contextual_retrieval", f"Bad contextual refs: {llm_refs}"
                 assert "task_id" in llm_refs, f"Missing task_id in contextual llm_result_refs: {llm_refs}"
+
+            # === v1.3 density check ===
+            total_units = len(units)
+            density = total_units / len(segments)
+            print(f"Unit density: {density:.1f}x ({total_units} units / {len(segments)} segments)")
+            # No contextual_text units should exist (merged into raw_text)
+            assert not any(u["unit_type"] == "contextual_text" for u in units), (
+                "v1.3 should not produce contextual_text units — merged into raw_text"
+            )
 
             # === All raw_text units should have raw_segment_ids in source_refs ===
             raw_text_units = [u for u in units if u["unit_type"] == "raw_text"]
@@ -366,7 +375,7 @@ class TestLiveLLMPipeline:
                 assert len(text) > 5, f"Question too short: {text}"
 
     def test_llm_contextualizer_enhances_units(self):
-        """Verify contextualizer produces context descriptions with task_id."""
+        """Verify contextualizer enriches raw_text units with LLM context."""
         with tempfile.TemporaryDirectory() as tmpdir:
             docs_dir = _create_test_docs(tmpdir)
             result = run(
@@ -383,9 +392,10 @@ class TestLiveLLMPipeline:
             units = _rows_to_dicts(db.get_retrieval_units_by_snapshot(snap_id))
             db.close()
 
-            ctx_units = [u for u in units if u["unit_type"] == "contextual_text"
+            # v1.3: LLM context is in raw_text units, not separate contextual_text units
+            ctx_units = [u for u in units if u["unit_type"] == "raw_text"
                          and "context_description" in json.loads(u.get("metadata_json") or "{}")]
-            assert len(ctx_units) > 0, "Should have contextual enhanced units"
+            assert len(ctx_units) > 0, "Should have raw_text units enriched with LLM context"
 
             for cu in ctx_units:
                 refs = json.loads(cu["llm_result_refs_json"])

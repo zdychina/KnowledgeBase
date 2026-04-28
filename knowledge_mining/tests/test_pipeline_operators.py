@@ -240,75 +240,32 @@ class TestQuestionGenerationFilter:
 
 
 class TestContextualTextImprovements:
-    """Bug 4: contextual_text should not be simple title+raw_text concatenation."""
+    """v1.3: Section context is folded into raw_text.search_text (not separate unit)."""
 
-    def test_table_contextual_is_nl_description(self):
-        from knowledge_mining.mining.retrieval_units import _make_contextual_text_unit
-
-        seg = RawSegmentData(
-            document_key="doc:/test.md",
-            segment_index=0,
-            block_type="table",
-            section_title="参数列表",
-            raw_text="Param | Type | Desc\nVal1 | Str | Desc1",
-            structure_json={
-                "columns": ["Param", "Type", "Desc"],
-                "rows": [
-                    {"Param": "Name", "Type": "String", "Desc": "The name"},
-                    {"Param": "Age", "Type": "Int", "Desc": "The age"},
-                ],
-            },
-        )
-
-        unit = _make_contextual_text_unit(seg)
-        assert unit is not None
-        # Should be natural language, not raw pipe-delimited text
-        assert "列包括" in unit.text
-        assert "Param" in unit.text
-        assert unit.weight == 0.6
-
-    def test_list_contextual_uses_nested(self):
-        from knowledge_mining.mining.retrieval_units import _make_contextual_text_unit
+    def test_section_context_in_search_text(self):
+        """Section titles not in raw_text should appear in search_text."""
+        from knowledge_mining.mining.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
-            document_key="doc:/test.md",
-            segment_index=0,
-            block_type="list",
-            section_title="配置步骤",
-            raw_text="Step 1\nStep 2",
-            structure_json={
-                "items": ["Step 1", "Step 2"],
-                "items_nested": [
-                    {"text": "Step 1", "depth": 1},
-                    {"text": "detail A", "depth": 2},
-                    {"text": "Step 2", "depth": 1},
-                ],
-            },
-        )
-
-        unit = _make_contextual_text_unit(seg)
-        assert unit is not None
-        assert "配置步骤" in unit.text
-        assert "主要条目" in unit.text or "条目" in unit.text
-
-    def test_paragraph_contextual_only_when_section_adds_info(self):
-        from knowledge_mining.mining.retrieval_units import _make_contextual_text_unit
-
-        # Section title already in raw_text -> no contextual
-        seg1 = RawSegmentData(
             document_key="doc:/test.md",
             segment_index=0,
             block_type="paragraph",
-            raw_text="This is the 参数说明 section content",
-            section_path=[{"title": "参数说明", "level": 2}],
-            section_title="参数说明",
+            raw_text="This is content about configuration.",
+            section_path=[{"title": "参数说明", "level": 2}, {"title": "配置步骤", "level": 3}],
+            section_title="配置步骤",
         )
-        unit1 = _make_contextual_text_unit(seg1)
-        # Should return empty because section title is already in raw_text
-        assert unit1 is None or "参数说明" not in (unit1.text if unit1 else "")
 
-    def test_heading_never_gets_contextual(self):
-        from knowledge_mining.mining.retrieval_units import _make_contextual_text_unit
+        unit = _make_raw_text_unit(seg)
+        # search_text should contain the section title context (tokenized by jieba)
+        # "参数说明" is tokenized as "参数" + "说明", "配置步骤" as "配置" + "步骤"
+        assert "参数" in unit.search_text and "说明" in unit.search_text
+        assert "配置" in unit.search_text and "步骤" in unit.search_text
+        # text should be unchanged raw_text
+        assert unit.text == "This is content about configuration."
+
+    def test_heading_section_context_in_search_text(self):
+        """Headings still get raw_text units with section context in search_text."""
+        from knowledge_mining.mining.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -317,7 +274,10 @@ class TestContextualTextImprovements:
             raw_text="Title",
             section_title="Title",
         )
-        assert _make_contextual_text_unit(seg) is None
+
+        unit = _make_raw_text_unit(seg)
+        assert unit.unit_type == "raw_text"
+        assert unit.text == "Title"
 
 
 class TestTableRowUnits:
@@ -812,8 +772,9 @@ class TestContextualizer:
         segments = [RawSegmentData(document_key="doc:/test.md", segment_index=0, raw_text="test")]
         assert ctxer.contextualize(segments, "doc text") == {}
 
-    def test_contextual_enhanced_unit_creation(self):
-        from knowledge_mining.mining.retrieval_units import _make_contextual_enhanced_unit
+    def test_raw_text_unit_with_llm_context(self):
+        """v1.3: LLM context is folded into raw_text.search_text and metadata."""
+        from knowledge_mining.mining.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -824,14 +785,20 @@ class TestContextualizer:
             section_path=[{"title": "APN配置", "level": 2}],
         )
 
-        unit = _make_contextual_enhanced_unit(seg, "本段介绍APN的基本配置步骤")
-        assert unit.unit_type == "contextual_text"
-        assert unit.weight == 0.9
-        assert "本段介绍APN的基本配置步骤" in unit.text
+        unit = _make_raw_text_unit(seg, llm_context="本段介绍APN的基本配置步骤", llm_task_id="task-ctx-123")
+        assert unit.unit_type == "raw_text"
+        assert unit.weight == 1.0
+        # text is the original raw_text (for generation context)
         assert "APN配置需要设置正确的参数" in unit.text
+        # search_text contains the LLM context (tokenized by jieba)
+        assert "APN" in unit.search_text
+        assert "配置" in unit.search_text
         assert unit.metadata_json["context_description"] == "本段介绍APN的基本配置步骤"
+        assert unit.llm_result_refs_json["source"] == "contextual_retrieval"
+        assert unit.llm_result_refs_json["task_id"] == "task-ctx-123"
 
     def test_contextualizer_in_build_retrieval_units(self):
+        """v1.3: contextualizer enriches raw_text.search_text, no separate unit."""
         from knowledge_mining.mining.retrieval_units import build_retrieval_units
 
         segments = [
@@ -853,9 +820,14 @@ class TestContextualizer:
             contextualizer=MockContextualizer(),
         )
 
-        enhanced = [u for u in units if u.unit_key.endswith(":contextual_enhanced")]
-        assert len(enhanced) == 1
-        assert "Test context" in enhanced[0].text
+        # v1.3: no contextual_enhanced units, LLM context goes into raw_text
+        raw_units = [u for u in units if u.unit_type == "raw_text"]
+        assert len(raw_units) == 1
+        assert "Test" in raw_units[0].search_text
+        assert "context" in raw_units[0].search_text
+        assert raw_units[0].metadata_json.get("context_description") == "Test context"
+        # No separate contextual_text units
+        assert not any(u.unit_key.endswith(":contextual_enhanced") for u in units)
 
 
 # ===================================================================

@@ -380,9 +380,12 @@ class TestRetrievalUnits:
         units = build_retrieval_units(segments)
         types = {u.unit_type for u in units}
         assert "raw_text" in types
-        assert "contextual_text" in types
-        assert "entity_card" in types
+        # v1.3: entity_card only for strong types (command/protocol/network_element/parameter)
+        # May or may not have entity_card depending on extracted entities
         assert sum(1 for u in units if u.unit_type == "raw_text") == len(segments)
+        # v1.3 density check: should be 2-3x (raw_text + optional entity_card + table_row)
+        density = len(units) / len(segments)
+        assert density <= 3.0, f"Density too high: {density:.1f}x ({len(units)} units / {len(segments)} segments)"
 
     def test_source_refs_with_segment_id(self):
         """source_refs_json should include raw_segment_ids when source_seg_id provided."""

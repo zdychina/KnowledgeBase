@@ -107,21 +107,26 @@ class TestLlmResultRefsJson:
         assert "task_id" not in unit.llm_result_refs_json
         assert unit.llm_result_refs_json["question_index"] == 0
 
-    def test_contextual_enhanced_refs_with_task_id(self):
-        """Contextual enhanced unit should include task_id in llm_result_refs_json."""
-        from knowledge_mining.mining.retrieval_units import _make_contextual_enhanced_unit
+    def test_raw_text_unit_with_llm_context_provenance(self):
+        """Raw text unit with LLM context should include provenance in llm_result_refs_json."""
+        from knowledge_mining.mining.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
             segment_index=0,
             raw_text="Content to enhance",
         )
-        unit = _make_contextual_enhanced_unit(
-            seg, "Section intro about configuration", "seg-1", "task-ctx-456",
+        unit = _make_raw_text_unit(
+            seg, "seg-1", llm_context="Section intro about configuration", llm_task_id="task-ctx-456",
         )
 
+        # v1.3: LLM context is folded into raw_text.search_text, provenance in llm_result_refs_json
         assert unit.llm_result_refs_json["source"] == "contextual_retrieval"
         assert unit.llm_result_refs_json["task_id"] == "task-ctx-456"
+        assert "context_description" in unit.metadata_json
+        # search_text should contain the LLM context (tokenized, so words are separated)
+        assert "Section" in unit.search_text
+        assert "intro" in unit.search_text
 
     def test_db_roundtrip_source_refs(self):
         """Source refs with raw_segment_ids should survive DB roundtrip."""
