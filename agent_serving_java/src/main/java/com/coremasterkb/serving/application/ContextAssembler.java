@@ -208,7 +208,7 @@ public class ContextAssembler {
         if (allSegmentIds.isEmpty()) return Collections.emptyList();
 
         List<RelationRow> relRows =
-                repo.getRelationsForSegments(allSegmentIds, plan.expansion().relationTypes());
+                repo.getRelationsForSegments(allSegmentIds, plan.expansion().relationTypes(), snapshotIds);
 
         return relRows.stream()
                 .map(rr -> new ContextRelation(

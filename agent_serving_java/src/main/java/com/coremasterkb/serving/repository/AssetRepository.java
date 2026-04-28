@@ -87,9 +87,9 @@ public class AssetRepository {
     // -------------------------------------------------------------------------
 
     public List<RelationRow> getRelationsForSegments(
-            List<String> segmentIds, List<String> relationTypes) {
+            List<String> segmentIds, List<String> relationTypes, List<String> snapshotIds) {
         if (segmentIds == null || segmentIds.isEmpty()) return Collections.emptyList();
-        return relationMapper.selectRelationsForSegments(segmentIds, relationTypes);
+        return relationMapper.selectRelationsForSegments(segmentIds, relationTypes, snapshotIds);
     }
 
     // -------------------------------------------------------------------------

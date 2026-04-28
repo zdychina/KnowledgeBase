@@ -42,6 +42,12 @@
             #{rt}
         </foreach>
         </if>
+        <if test="snapshotIds != null and snapshotIds.size() > 0">
+        AND rel.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+        </if>
     </select>
 
     <!--

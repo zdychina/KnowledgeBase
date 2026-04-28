@@ -12,7 +12,8 @@ public interface AssetRawSegmentRelationMapper extends BaseMapper<AssetRawSegmen
 
     List<RelationRow> selectRelationsForSegments(
             @Param("segmentIds") List<String> segmentIds,
-            @Param("relationTypes") List<String> relationTypes);
+            @Param("relationTypes") List<String> relationTypes,
+            @Param("snapshotIds") List<String> snapshotIds);
 
     List<NeighborRow> selectNeighbors(
             @Param("segmentIds") List<String> segmentIds,
