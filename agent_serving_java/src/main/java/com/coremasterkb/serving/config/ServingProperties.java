@@ -32,7 +32,10 @@ public class ServingProperties {
         private boolean enabled;
 
         @NotNull
-        private Duration timeout;
+        private Duration connectTimeout;
+
+        @NotNull
+        private Duration readTimeout;
     }
 
     @Data
