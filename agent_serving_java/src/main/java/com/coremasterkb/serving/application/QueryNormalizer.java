@@ -134,34 +134,60 @@ public class QueryNormalizer {
     // LLM normalization
     // -------------------------------------------------------------------------
 
+    private static final String LLM_SYSTEM_PROMPT =
+            "You are a query normalization assistant for a telecom knowledge base.\n" +
+            "Analyze the user query and return a JSON object with exactly these fields:\n" +
+            "- intent: one of [command_usage, troubleshooting, concept_lookup, procedure, general]\n" +
+            "- normalized_query: a cleaner restatement of the query\n" +
+            "- keywords: array of key terms (strings)\n" +
+            "- desired_roles: array of relevant roles from " +
+            "[parameter, example, procedure_step, troubleshooting_step, alarm, constraint, concept, note]\n" +
+            "- entities: array of {type, name, normalized_name} where type is one of " +
+            "[command, product, version, network_element, command_op]\n" +
+            "- scope: object with optional fields {version, product, network_element}\n" +
+            "Return only the JSON object, no explanation.";
+
     private NormalizedQuery normalizeWithLlm(String query) {
         Map<String, Object> payload = new HashMap<>();
-        payload.put("task_type", "query_normalization");
-        payload.put("query", query);
+        payload.put("caller_domain", "serving");
+        payload.put("pipeline_stage", "normalizer");
+        payload.put("messages", List.of(
+                Map.of("role", "system", "content", LLM_SYSTEM_PROMPT),
+                Map.of("role", "user",   "content", query)
+        ));
+        payload.put("expected_output_type", "json_object");
 
         Map<String, Object> resp = llmClient.execute(payload);
         if (resp.isEmpty()) return null;
 
-        // Parse LLM response fields
-        String intent  = getStr(resp, "intent", ServingConstants.INTENT_GENERAL);
-        String normalized = getStr(resp, "normalized_query", query);
-        List<String> keywords = getStringList(resp, "keywords");
-        List<String> roles    = getStringList(resp, "desired_roles");
+        // Check top-level execution status
+        if (!"succeeded".equals(getStr(resp, "status", ""))) return null;
 
-        // Entities from LLM
-        List<EntityRef> entities = extractEntitiesFromLlmResp(resp);
-
-        // Scope from LLM (pass-through map)
+        // Unwrap result.parsed_output
+        if (!(resp.get("result") instanceof Map<?,?> resultMap)) return null;
         @SuppressWarnings("unchecked")
-        Map<String, Object> scope = resp.get("scope") instanceof Map<?,?> m
+        Map<String, Object> result = (Map<String, Object>) resultMap;
+        if (!"succeeded".equals(getStr(result, "parse_status", ""))) return null;
+
+        if (!(result.get("parsed_output") instanceof Map<?,?> parsedMap)) return null;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> parsed = (Map<String, Object>) parsedMap;
+
+        String intent    = getStr(parsed, "intent", ServingConstants.INTENT_GENERAL);
+        List<String> keywords = getStringList(parsed, "keywords");
+        List<String> roles    = getStringList(parsed, "desired_roles");
+        List<EntityRef> entities = extractEntitiesFromLlmResp(parsed);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> scope = parsed.get("scope") instanceof Map<?,?> m
                 ? (Map<String, Object>) m : new HashMap<>();
 
         return new NormalizedQuery(query, intent, entities, scope, keywords, roles);
     }
 
     @SuppressWarnings("unchecked")
-    private List<EntityRef> extractEntitiesFromLlmResp(Map<String, Object> resp) {
-        Object raw = resp.get("entities");
+    private List<EntityRef> extractEntitiesFromLlmResp(Map<String, Object> parsed) {
+        Object raw = parsed.get("entities");
         if (!(raw instanceof List<?> list)) return Collections.emptyList();
         List<EntityRef> result = new ArrayList<>();
         for (Object item : list) {
