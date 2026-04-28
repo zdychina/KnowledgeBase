@@ -1,11 +1,24 @@
 package com.coremasterkb.serving.config;
 
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.NestedConfigurationProperty;
+import org.springframework.validation.annotation.Validated;
+
+import java.time.Duration;
 
 @ConfigurationProperties(prefix = "serving")
+@Validated
 public class ServingProperties {
 
+    @Valid
+    @NestedConfigurationProperty
     private LlmService llmService = new LlmService();
+
+    @Valid
+    @NestedConfigurationProperty
     private Fts fts = new Fts();
 
     public LlmService getLlmService() {
@@ -25,9 +38,14 @@ public class ServingProperties {
     }
 
     public static class LlmService {
+
+        @NotBlank
         private String baseUrl = "http://localhost:8900";
+
         private boolean enabled = false;
-        private int timeoutMs = 3000;
+
+        @NotNull
+        private Duration timeout = Duration.ofMillis(3000);
 
         public String getBaseUrl() {
             return baseUrl;
@@ -45,16 +63,18 @@ public class ServingProperties {
             this.enabled = enabled;
         }
 
-        public int getTimeoutMs() {
-            return timeoutMs;
+        public Duration getTimeout() {
+            return timeout;
         }
 
-        public void setTimeoutMs(int timeoutMs) {
-            this.timeoutMs = timeoutMs;
+        public void setTimeout(Duration timeout) {
+            this.timeout = timeout;
         }
     }
 
     public static class Fts {
+
+        @NotBlank
         private String strategy = "sqlite";
 
         public String getStrategy() {

@@ -26,7 +26,7 @@ public class LlmRuntimeClient {
 
     public LlmRuntimeClient(ServingProperties.LlmService config) {
         this.config = config;
-        this.restTemplate = buildRestTemplate(config.getTimeoutMs());
+        this.restTemplate = buildRestTemplate((int) config.getTimeout().toMillis());
     }
 
     // -------------------------------------------------------------------------
@@ -99,11 +99,11 @@ public class LlmRuntimeClient {
         return Collections.emptyMap();
     }
 
-    private RestTemplate buildRestTemplate(int timeoutMs) {
+    private RestTemplate buildRestTemplate(int timeoutMillis) {
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(timeoutMs);
-        factory.setReadTimeout(timeoutMs);
+        factory.setConnectTimeout(timeoutMillis);
+        factory.setReadTimeout(timeoutMillis);
         return new RestTemplate(factory);
     }
 }
