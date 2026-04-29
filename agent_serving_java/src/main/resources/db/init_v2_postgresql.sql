@@ -269,6 +269,9 @@ CREATE INDEX idx_asset_retrieval_units_block_role
     ON public.asset_retrieval_units(block_type, semantic_role);
 CREATE INDEX idx_asset_retrieval_units_source_segment
     ON public.asset_retrieval_units(source_segment_id);
+CREATE INDEX idx_asset_retrieval_units_fts
+    ON public.asset_retrieval_units
+    USING GIN (to_tsvector('simple', COALESCE(search_text, '')));
 
 
 -- public.asset_build_document_snapshots definition
@@ -354,15 +357,3 @@ CREATE INDEX idx_asset_retrieval_embeddings_unit
     ON public.asset_retrieval_embeddings(retrieval_unit_id);
 
 
--- public.asset_retrieval_units_fts definition
--- Replaces SQLite FTS5 virtual table.
--- search_vector is populated by the application on INSERT/UPDATE of asset_retrieval_units.
--- To build: to_tsvector('simple', coalesce(title,'') || ' ' || "text" || ' ' || search_text)
-
-CREATE TABLE public.asset_retrieval_units_fts (
-    retrieval_unit_id TEXT PRIMARY KEY REFERENCES public.asset_retrieval_units(id) ON DELETE CASCADE,
-    search_vector     TSVECTOR NOT NULL
-);
-
-CREATE INDEX idx_asset_retrieval_units_fts_vector
-    ON public.asset_retrieval_units_fts USING GIN(search_vector);

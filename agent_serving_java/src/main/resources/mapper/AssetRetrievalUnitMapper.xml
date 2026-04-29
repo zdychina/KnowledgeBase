@@ -21,9 +21,9 @@
     </resultMap>
 
     <!--
-        PostgreSQL full-text search using pre-built search_vector in asset_retrieval_units_fts.
+        PostgreSQL full-text search using websearch_to_tsquery.
         ftsQuery format: "token1 OR token2 OR token3"
-        search_vector is populated by the mining pipeline on INSERT/UPDATE of asset_retrieval_units.
+        Uses 'simple' dictionary — install pg_jieba for Chinese tokenization.
     -->
     <select id="searchByFts" resultMap="ftsResultMap">
         SELECT ru.id,
@@ -39,12 +39,11 @@
                ru.unit_type,
                ru.source_segment_id,
                ts_rank(
-                   fts.search_vector,
+                   to_tsvector('simple', ru.search_text),
                    websearch_to_tsquery('simple', #{ftsQuery})
                ) AS fts_score
         FROM asset_retrieval_units ru
-        JOIN asset_retrieval_units_fts fts ON fts.retrieval_unit_id = ru.id
-        WHERE fts.search_vector @@ websearch_to_tsquery('simple', #{ftsQuery})
+        WHERE to_tsvector('simple', ru.search_text) @@ websearch_to_tsquery('simple', #{ftsQuery})
           AND ru.document_snapshot_id IN
         <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
             #{sid}
