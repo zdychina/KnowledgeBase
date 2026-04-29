@@ -25,6 +25,8 @@ class SearchRequest(BaseModel):
     scope: dict | None = None
     entities: list[EntityRef] | None = None
     debug: bool = False
+    domain: str | None = None
+    mode: str = "evidence"
 
 
 # --- Normalized Query ---
@@ -80,6 +82,25 @@ class QueryPlan(BaseModel):
     reranker_config: RerankerConfig = Field(default_factory=RerankerConfig)
 
 
+# --- Retrieval Query (v1.3 — replaces empty QueryPlan in retrieval) ---
+
+
+class RetrievalQuery(BaseModel):
+    """Rich query context — carries full semantics to each retriever.
+
+    Modeled after LlamaIndex QueryBundle: carries query text, keywords,
+    entities, embedding, and scope in a single structured object.
+    Each retriever extracts only what it needs from this object.
+    """
+    original_query: str
+    keywords: list[str] = Field(default_factory=list)
+    entities: list[EntityRef] = Field(default_factory=list)
+    query_embedding: list[float] | None = None
+    sub_queries: list[str] = Field(default_factory=list)
+    intent: str = "general"
+    scope: dict = Field(default_factory=dict)
+
+
 # --- Retrieval ---
 
 class RetrievalCandidate(BaseModel):
@@ -87,6 +108,7 @@ class RetrievalCandidate(BaseModel):
     score: float
     source: str
     metadata: dict = Field(default_factory=dict)
+    score_chain: "ScoreChain | None" = None
 
 
 # --- Active Scope ---
@@ -122,6 +144,10 @@ class ContextItem(BaseModel):
     relation_to_seed: str | None = None
     source_refs: dict = Field(default_factory=dict)
     metadata: dict = Field(default_factory=dict)
+    route_sources: list[str] = Field(default_factory=list)
+    score_chain: "ScoreChain | None" = None
+    evidence_role: str = ""
+    citation: dict = Field(default_factory=dict)
 
 
 class ContextRelation(BaseModel):
@@ -155,3 +181,89 @@ class ContextPack(BaseModel):
     issues: list[Issue] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
     debug: dict | None = None
+
+
+# --- v2 Retrieval Orchestrator models ---
+
+class SubQuery(BaseModel):
+    text: str
+    intent: str = "general"
+    entities: list[EntityRef] = Field(default_factory=list)
+
+
+class EvidenceNeed(BaseModel):
+    preferred_roles: list[str] = Field(default_factory=list)
+    preferred_blocks: list[str] = Field(default_factory=list)
+    needs_comparison: bool = False
+    needs_citation: bool = False
+
+
+class QueryUnderstanding(BaseModel):
+    original_query: str = ""
+    intent: str = "general"
+    sub_queries: list[SubQuery] = Field(default_factory=list)
+    entities: list[EntityRef] = Field(default_factory=list)
+    scope: dict = Field(default_factory=dict)
+    keywords: list[str] = Field(default_factory=list)
+    evidence_need: EvidenceNeed = Field(default_factory=EvidenceNeed)
+    ambiguities: list[str] = Field(default_factory=list)
+    source: str = "rule"  # "rule" | "llm"
+
+
+class RouteConfig(BaseModel):
+    name: str
+    enabled: bool = True
+    weight: float = 1.0
+    top_k: int = 50
+
+
+class FusionConfig(BaseModel):
+    method: str = "weighted_rrf"  # "identity" | "rrf" | "weighted_rrf"
+    k: int = 60
+
+
+class RerankConfig(BaseModel):
+    method: str = "score"  # "score" | "llm" | "cascade"
+    fallback: str = "score"
+
+
+class AssemblyConfig(BaseModel):
+    source_drilldown: bool = True
+    relation_expansion: bool = True
+    max_items: int = 10
+    max_expanded: int = 20
+    max_relation_depth: int = 2
+    relation_types: list[str] = Field(default_factory=lambda: [
+        "previous", "next", "same_section",
+        "same_parent_section", "section_header_of",
+    ])
+
+
+class RetrievalRoutePlan(BaseModel):
+    routes: list[RouteConfig] = Field(default_factory=list)
+    filters: dict = Field(default_factory=dict)
+    fusion: FusionConfig = Field(default_factory=FusionConfig)
+    rerank: RerankConfig = Field(default_factory=RerankConfig)
+    assembly: AssemblyConfig = Field(default_factory=AssemblyConfig)
+    expansion: ExpansionConfig = Field(default_factory=ExpansionConfig)
+
+
+class ScoreChain(BaseModel):
+    raw_score: float = 0.0
+    fusion_score: float = 0.0
+    rerank_score: float = 0.0
+    route_sources: list[str] = Field(default_factory=list)
+
+
+class TraceStage(BaseModel):
+    name: str
+    input_summary: str = ""
+    output_summary: str = ""
+    duration_ms: float = 0.0
+    error: str = ""
+
+
+class Trace(BaseModel):
+    request_id: str = ""
+    stages: list[TraceStage] = Field(default_factory=list)
+    total_duration_ms: float = 0.0

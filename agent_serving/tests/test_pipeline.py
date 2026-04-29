@@ -2,12 +2,17 @@
 import pytest
 
 from agent_serving.serving.schemas.models import (
+    ContextItem,
     ExpansionConfig,
     NormalizedQuery,
     QueryPlan,
     RetrievalBudget,
     RetrievalCandidate,
+    RetrievalRoutePlan,
     RetrieverConfig,
+    RouteConfig,
+    ScoreChain,
+    SearchRequest,
 )
 from agent_serving.serving.pipeline.fusion import IdentityFusion, RRFFusion
 from agent_serving.serving.pipeline.reranker import ScoreReranker
@@ -476,3 +481,132 @@ class TestV12LLMPlannerFallback:
         )
         plan = await provider.abuild_plan(normalized)
         assert plan.intent == "general"
+
+
+# --- v2 Tests ---
+
+
+class TestV2TraceCollector:
+    """TraceCollector timing and output."""
+
+    def test_trace_stages(self):
+        from agent_serving.serving.observability.trace import TraceCollector
+        tc = TraceCollector()
+        tc.start_stage("understand")
+        tc.end_stage("understand", output_summary="intent=command_usage")
+        tc.start_stage("retrieve")
+        tc.end_stage("retrieve", output_summary="10 candidates")
+        trace = tc.build_trace(request_id="test-123")
+        assert trace.request_id == "test-123"
+        assert len(trace.stages) == 2
+        assert trace.stages[0].name == "understand"
+        assert trace.stages[0].duration_ms >= 0
+        assert trace.total_duration_ms >= 0
+
+    def test_trace_error_stage(self):
+        from agent_serving.serving.observability.trace import TraceCollector
+        tc = TraceCollector()
+        tc.start_stage("failing_stage")
+        tc.end_stage("failing_stage", error="something went wrong")
+        trace = tc.build_trace()
+        assert trace.stages[0].error == "something went wrong"
+
+
+class TestV2DomainPackReader:
+    """Domain pack reading for Serving."""
+
+    def test_load_default_profile(self):
+        from agent_serving.serving.domain_pack_reader import load_serving_profile
+        profile = load_serving_profile(None)
+        assert profile.domain_id == "default"
+        assert len(profile.route_policy) > 0
+
+    def test_get_route_policy(self):
+        from agent_serving.serving.domain_pack_reader import (
+            load_serving_profile,
+            get_route_policy,
+        )
+        profile = load_serving_profile(None)
+        policy = get_route_policy(profile, "command_usage")
+        assert "entity_exact" in policy
+        assert policy["entity_exact"]["weight"] > 1.0
+
+
+class TestV2RetrieverManager:
+    """RetrieverManager v2 route plan integration."""
+
+    @pytest.mark.asyncio
+    async def test_retrieve_from_route_plan(self):
+        from agent_serving.serving.pipeline.retriever_manager import RetrieverManager
+        from agent_serving.serving.schemas.models import (
+            RetrievalRoutePlan,
+            RouteConfig,
+            ScoreChain,
+        )
+        from unittest.mock import AsyncMock
+
+        mock_retriever = AsyncMock()
+        mock_retriever.retrieve.return_value = [
+            RetrievalCandidate(
+                retrieval_unit_id="ru-1", score=0.9, source="fts_bm25",
+                metadata={},
+                score_chain=ScoreChain(raw_score=0.9, route_sources=["fts_bm25"]),
+            ),
+        ]
+
+        mgr = RetrieverManager({"fts_bm25": mock_retriever})
+        route_plan = RetrievalRoutePlan(
+            routes=[RouteConfig(name="fts_bm25", enabled=True, weight=1.0)],
+        )
+        results = await mgr.retrieve_from_route_plan(route_plan, ["snap-1"])
+        assert len(results) == 1
+        assert results[0].score_chain.route_sources == ["fts_bm25"]
+
+
+class TestV2Models:
+    """v2 new model validation."""
+
+    def test_search_request_domain(self):
+        req = SearchRequest(query="test", domain="cloud_core_network")
+        assert req.domain == "cloud_core_network"
+        assert req.mode == "evidence"
+
+    def test_retrieval_candidate_score_chain(self):
+        sc = ScoreChain(raw_score=0.9, fusion_score=0.8, rerank_score=0.85, route_sources=["fts_bm25"])
+        c = RetrievalCandidate(
+            retrieval_unit_id="ru-1", score=0.85, source="fts_bm25",
+            metadata={}, score_chain=sc,
+        )
+        assert c.score_chain.raw_score == 0.9
+        assert c.score_chain.fusion_score == 0.8
+
+    def test_context_item_v2_fields(self):
+        item = ContextItem(
+            id="ru-1", kind="retrieval_unit", role="seed",
+            text="test", score=0.9,
+            route_sources=["fts_bm25", "entity_exact"],
+            evidence_role="direct_answer",
+            citation={"section": "ADD APN"},
+        )
+        assert len(item.route_sources) == 2
+        assert item.evidence_role == "direct_answer"
+        assert item.citation["section"] == "ADD APN"
+
+    def test_retrieval_route_plan(self):
+        plan = RetrievalRoutePlan(
+            routes=[
+                RouteConfig(name="fts_bm25", weight=1.0, top_k=50),
+                RouteConfig(name="entity_exact", weight=1.4, top_k=20),
+            ],
+        )
+        assert len(plan.routes) == 2
+        assert plan.routes[1].weight == 1.4
+
+    def test_trace_model(self):
+        from agent_serving.serving.schemas.models import Trace, TraceStage
+        trace = Trace(
+            request_id="req-1",
+            stages=[TraceStage(name="test", duration_ms=10.0)],
+            total_duration_ms=10.0,
+        )
+        assert len(trace.stages) == 1

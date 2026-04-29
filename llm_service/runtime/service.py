@@ -32,6 +32,7 @@ class LLMService:
         self._db = db
         self._config = config
         self._bus = EventBus(db)
+        self._submit_lock = asyncio.Lock()
         self._mgr = TaskManager(
             db, self._bus,
             max_attempts=config.default_max_attempts,
@@ -124,34 +125,55 @@ class LLMService:
         actual_expected_type = resolved["expected_output_type"] or "json_object"
         actual_schema = resolved["output_schema"]
 
-        task_id = await self._mgr.submit(
-            caller_domain, pipeline_stage,
-            idempotency_key=idempotency_key,
-            max_attempts=max_attempts, priority=priority,
-            metadata=metadata,
-        )
+        task_id = None
+        async with self._submit_lock:
+            if idempotency_key:
+                cur = await self._db.execute(
+                    """SELECT id FROM agent_llm_tasks
+                       WHERE idempotency_key = ?
+                         AND status NOT IN ('failed', 'dead_letter', 'cancelled')
+                       ORDER BY created_at DESC
+                       LIMIT 1""",
+                    (idempotency_key,),
+                )
+                existing = await cur.fetchone()
+                if existing:
+                    return existing["id"]
 
-        # Only create request row if this is a new task
-        cur = await self._db.execute("SELECT COUNT(*) as cnt FROM agent_llm_requests WHERE task_id = ?", (task_id,))
-        req_count = (await cur.fetchone())["cnt"]
-        if req_count == 0:
-            now = datetime.now(timezone.utc).isoformat()
-            request_id = str(uuid.uuid4())
-            provider_instance = self._executor._provider
-            await self._db.execute(
-                """INSERT INTO agent_llm_requests
-                   (id, task_id, provider, model, prompt_template_key, messages_json, input_json,
-                    params_json, expected_output_type, output_schema_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    request_id, task_id, provider_instance.provider_name,
-                    provider_instance.default_model, template_key,
-                    json.dumps(actual_messages or []), json.dumps(input or {}),
-                    json.dumps(params or {}), actual_expected_type,
-                    json.dumps(actual_schema or {}), now,
-                ),
-            )
-            await self._db.commit()
+            in_transaction = False
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                in_transaction = True
+                task_id = await self._mgr.insert_task_row(
+                    caller_domain, pipeline_stage,
+                    idempotency_key=idempotency_key,
+                    max_attempts=max_attempts, priority=priority,
+                    metadata=metadata,
+                )
+                now = datetime.now(timezone.utc).isoformat()
+                request_id = str(uuid.uuid4())
+                provider_instance = self._executor._provider
+                await self._db.execute(
+                    """INSERT INTO agent_llm_requests
+                       (id, task_id, provider, model, prompt_template_key, messages_json, input_json,
+                        params_json, expected_output_type, output_schema_json, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        request_id, task_id, provider_instance.provider_name,
+                        provider_instance.default_model, template_key,
+                        json.dumps(actual_messages or []), json.dumps(input or {}),
+                        json.dumps(params or {}), actual_expected_type,
+                        json.dumps(actual_schema or {}), now,
+                    ),
+                )
+                await self._db.execute("COMMIT")
+                in_transaction = False
+            except Exception:
+                if in_transaction:
+                    await self._db.execute("ROLLBACK")
+                raise
+
+            await self._bus.emit(task_id, "submitted", "task submitted")
 
         return task_id
 

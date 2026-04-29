@@ -46,15 +46,18 @@
 - 状态：Codex review 6 项全部修复，30 测试通过，LLM 接缝已建立，待 Codex 复审
 - 当前阶段：review 修复完成，待复审
 - Claude：Claude Mining 已完成 Codex review 全部 P1+P2 修复，enrich 正式可替换、generated_question 预留、build merge 语义、run 失败语义、旧测试清理
-- Codex：已完成正式审查；待复审修复结果
+- Codex：已基于真实 SQLite 与 LLM 调用记录发布 Mining 工业级数据质量基线，要求下一版一次性交付 Content Quality Gate、Question Policy、Post Validation、Unit Budget、Reference Relation 与 Data Quality Eval
 - 管理员：已确认 v1.1 数据库架构、shared snapshot、build/release 与三库边界为统一口径
 - 计划文档：`docs/plans/2026-04-21-v11-knowledge-mining-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-21-v11-knowledge-mining-claude-mining-handoff.md`
-- 审查文档：`docs/analysis/2026-04-21-v11-knowledge-mining-codex-review.md`
+- 审查文档：
+  - `docs/analysis/2026-04-27-v11-knowledge-mining-state-audit-codex-review.md`
+  - `docs/analysis/2026-04-28-v11-knowledge-mining-domain-pack-half-graphrag-codex-review.md`
+  - `docs/analysis/2026-04-28-v11-knowledge-mining-industrial-data-quality-codex-review.md`
 - 修复文档：`docs/handoffs/2026-04-21-v11-knowledge-mining-claude-mining-fix.md`
 - 阶段审查文档：`docs/handoffs/2026-04-22-v11-knowledge-mining-claude-mining-stage-review.md`
 - 管理员文档：
-- 最新消息序号：MSG-20260422-211000-codex
+- 最新消息序号：MSG-20260428-224500-codex
 - 备注：主背景见 `README.md`、`docs/architecture/2026-04-21-coremasterkb-v1.1-architecture.md`、`.dev/2026-04-21-v1.1-database-complete-proposal.md` 与 `databases/asset_core|mining_runtime` 契约。
 
 ## TASK-20260421-v11-agent-serving
@@ -63,14 +66,17 @@
 - 状态：v1.2 实现完成，112 测试通过，已提交 handoff，待 Codex 审查
 - 当前阶段：v1.2 实现完成 / 等待审查
 - Claude：Claude Serving 已完成 v1.2 全量实现（P1×5 + P2×3 + LLM×3 + 自查修复×3），112 passed/1 skipped，提交 handoff
-- Codex：已发布 v1.2 Retrieval View Layer 架构方案，指出 Serving 侧 P1/P2/LLM 优先级
+- Codex：已复审 Serving 工业级编排器实现，确认真实 API 主链空召回，要求先修 QueryUnderstanding 到 BM25/entity route 的可执行链路、Domain Pack 路径和真实 API eval
 - 管理员：已确认 Serving 需脱离旧 command/canonical 路径，按 Agent Knowledge Backend 重写
 - 计划文档：`docs/plans/2026-04-22-v12-agent-serving-impl-plan.md`
 - 交接文档：`docs/handoffs/2026-04-22-v12-agent-serving-claude-serving-handoff.md`
-- 审查文档：`docs/analysis/2026-04-22-v11-agent-serving-codex-review.md`
+- 审查文档：
+  - `docs/analysis/2026-04-22-v11-agent-serving-codex-review.md`
+  - `docs/analysis/2026-04-28-v12-agent-serving-industrial-retrieval-redesign-codex-review.md`
+  - `docs/analysis/2026-04-29-v12-agent-serving-industrial-orchestrator-codex-review.md`
 - 修复文档：
 - 管理员文档：
-- 最新消息序号：MSG-20260422-220000-claude-serving
+- 最新消息序号：MSG-20260429-001500-codex
 - 备注：主背景见 `README.md`、`docs/architecture/2026-04-21-coremasterkb-v1.1-architecture.md`、`.dev/2026-04-21-v1.1-database-complete-proposal.md` 与 `databases/asset_core` 契约。
 
 ## TASK-20260421-v11-agent-llm-runtime

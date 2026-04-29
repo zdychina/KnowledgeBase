@@ -93,6 +93,10 @@ VALID_TARGET_TYPES = frozenset({
     "other",
 })
 
+# Deprecated: use DomainProfile.strong_entity_types instead.
+# Kept as empty frozenset for backward compatibility; real values come from domain pack.
+STRONG_ENTITY_TYPES = frozenset()
+
 VALID_RUN_STATUSES = frozenset({
     "queued",
     "running",

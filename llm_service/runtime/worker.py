@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -67,6 +68,12 @@ class Worker:
                     await asyncio.sleep(self._poll_interval)
             except asyncio.CancelledError:
                 return
+            except sqlite3.OperationalError as e:
+                if "database is locked" not in str(e).lower():
+                    logger.exception("%s database error: %s", name, e)
+                else:
+                    logger.warning("%s claim skipped because sqlite writer is busy", name)
+                await asyncio.sleep(self._poll_interval)
             except Exception as e:
                 logger.exception("%s error: %s", name, e)
                 await asyncio.sleep(self._poll_interval)

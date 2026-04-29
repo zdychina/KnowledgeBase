@@ -11,7 +11,8 @@ from typing import Any
 
 import aiosqlite
 
-from agent_serving.serving.schemas.models import QueryPlan, RetrievalCandidate
+from agent_serving.serving.schemas.constants import ROUTE_LEXICAL_BM25
+from agent_serving.serving.schemas.models import RetrievalCandidate, RetrievalQuery
 from agent_serving.serving.retrieval.retriever import Retriever
 
 logger = logging.getLogger(__name__)
@@ -73,20 +74,31 @@ class FTS5BM25Retriever(Retriever):
 
     async def retrieve(
         self,
-        plan: QueryPlan,
+        query: RetrievalQuery,
         snapshot_ids: list[str],
+        top_k: int = 50,
     ) -> list[RetrievalCandidate]:
-        if not snapshot_ids or not plan.keywords:
+        if not snapshot_ids:
             return []
 
-        # Build FTS OR query from keywords (v1.2: OR semantics)
-        fts_tokens = _tokenize_for_fts(" ".join(plan.keywords))
+        # Collect search terms: keywords + sub_queries, fallback to original_query
+        search_terms = list(query.keywords)
+        for sq in query.sub_queries:
+            search_terms.extend(sq.split())
+        if not search_terms and query.original_query:
+            search_terms = _tokenize_for_fts(query.original_query).split()
+
+        if not search_terms:
+            return []
+
+        # Build FTS OR query from terms (v1.2: OR semantics)
+        fts_tokens = _tokenize_for_fts(" ".join(search_terms))
         token_list = [t for t in fts_tokens.split() if t]
         fts_query = _build_fts_or_query(token_list)
         if not fts_query:
             return []
 
-        recall_limit = plan.budget.max_items * plan.budget.recall_multiplier
+        recall_limit = top_k * 5
 
         # FTS5 match on retrieval_units within snapshot scope
         placeholders = ",".join("?" for _ in snapshot_ids)
@@ -119,27 +131,35 @@ class FTS5BM25Retriever(Retriever):
             rows = await cursor.fetchall()
         except Exception:
             logger.warning("FTS5 query failed, falling back to LIKE", exc_info=True)
-            return await self._fallback_like(plan, snapshot_ids)
+            return await self._fallback_like(query, snapshot_ids, top_k)
 
-        return self._rows_to_candidates(rows, source="fts_bm25")
+        return self._rows_to_candidates(rows, source=ROUTE_LEXICAL_BM25)
 
     async def _fallback_like(
         self,
-        plan: QueryPlan,
+        query: RetrievalQuery,
         snapshot_ids: list[str],
+        top_k: int = 50,
     ) -> list[RetrievalCandidate]:
         """LIKE fallback when FTS5 is not available."""
-        if not plan.keywords or not snapshot_ids:
+        # Collect search terms same as retrieve()
+        search_terms = list(query.keywords)
+        for sq in query.sub_queries:
+            search_terms.extend(sq.split())
+        if not search_terms and query.original_query:
+            search_terms = _tokenize_for_fts(query.original_query).split()
+
+        if not search_terms or not snapshot_ids:
             return []
 
         placeholders = ",".join("?" for _ in snapshot_ids)
         like_clauses = " OR ".join(
-            "ru.text LIKE ?" for _ in plan.keywords
+            "ru.text LIKE ?" for _ in search_terms
         )
-        params: list[Any] = [f"%{k}%" for k in plan.keywords]
+        params: list[Any] = [f"%{k}%" for k in search_terms]
         params.extend(snapshot_ids)
 
-        recall_limit = plan.budget.max_items * plan.budget.recall_multiplier
+        recall_limit = top_k * 5
 
         sql = f"""
             SELECT
@@ -170,9 +190,9 @@ class FTS5BM25Retriever(Retriever):
             r = dict(row)
             text = (r.get("text", "") or "").lower()
             hit_count = sum(
-                1 for kw in plan.keywords if kw.lower() in text
+                1 for kw in search_terms if kw.lower() in text
             )
-            score = hit_count / max(len(plan.keywords), 1)
+            score = hit_count / max(len(search_terms), 1)
             candidates.append(self._row_to_candidate(r, score, source="like_fallback"))
 
         return candidates

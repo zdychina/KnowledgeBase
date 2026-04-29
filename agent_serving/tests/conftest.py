@@ -45,6 +45,8 @@ RU_ADD_APN = "eeee0000-0000-0000-0000-000000000001"
 RU_5G = "eeee0000-0000-0000-0000-000000000002"
 RU_ADD_APN_CTX = "eeee0000-0000-0000-0000-000000000003"
 RU_5G_HEADING = "eeee0000-0000-0000-0000-000000000004"
+RU_SMF_ENTITY = "eeee0000-0000-0000-0000-000000000005"
+RU_SMF_QUESTION = "eeee0000-0000-0000-0000-000000000006"
 
 
 SEED_IDS = {
@@ -64,6 +66,8 @@ SEED_IDS = {
     "ru_5g": RU_5G,
     "ru_add_apn_ctx": RU_ADD_APN_CTX,
     "ru_5g_heading": RU_5G_HEADING,
+    "ru_smf_entity": RU_SMF_ENTITY,
+    "ru_smf_question": RU_SMF_QUESTION,
 }
 
 
@@ -217,7 +221,48 @@ async def _seed_v11_data(db: aiosqlite.Connection) -> None:
              "[]",
              json.dumps({"raw_segment_ids": [RS_5G_CONCEPT]}),
              1.0, now, "{}", RS_5G_CONCEPT),
+            # entity_card: SMF entity card
+            (RU_SMF_ENTITY, SNAP_FEATURE, "RU_SMF_ENTITY", "entity_card", "raw_segment",
+             json.dumps({"raw_segment_id": RS_5G_CONCEPT}),
+             "SMF",
+             "SMF (Session Management Function) 是5GC中的会话管理功能实体，负责PFCP会话建立和管理。",
+             "SMF Session Management Function 5GC PFCP 会话",
+             "paragraph", "concept",
+             json.dumps({"network_elements": ["SMF"]}),
+             json.dumps([{"type": "network_element", "name": "SMF", "normalized_name": "SMF"}]),
+             json.dumps({"raw_segment_ids": [RS_5G_CONCEPT]}),
+             1.0, now, "{}", RS_5G_CONCEPT),
+            # generated_question: question about SMF
+            (RU_SMF_QUESTION, SNAP_FEATURE, "RU_SMF_QUESTION", "generated_question", "raw_segment",
+             json.dumps({"raw_segment_id": RS_5G_CONCEPT}),
+             "SMF的作用是什么？",
+             "SMF在5G核心网中负责会话管理，包括PFCP会话建立、UPF选择和IP地址分配。",
+             "SMF 5G 核心网 会话管理 PFCP UPF IP",
+             "paragraph", "concept",
+             json.dumps({"domains": ["5G"]}),
+             json.dumps([{"type": "network_element", "name": "SMF", "normalized_name": "SMF"}]),
+             json.dumps({"raw_segment_ids": [RS_5G_CONCEPT]}),
+             0.8, now, "{}", RS_5G_CONCEPT),
         ],
+    )
+
+    # v2: entity_refs_json column migration (if not already present)
+    try:
+        await db.execute(
+            "ALTER TABLE asset_retrieval_units "
+            "ADD COLUMN entity_refs_json TEXT DEFAULT '[]'"
+        )
+    except Exception:
+        pass  # Column already exists
+
+    # Update existing rows with entity_refs_json
+    await db.execute(
+        "UPDATE asset_retrieval_units SET entity_refs_json = ? WHERE id = ?",
+        (json.dumps([{"type": "command", "name": "ADD APN", "normalized_name": "ADD APN"}]), RU_ADD_APN),
+    )
+    await db.execute(
+        "UPDATE asset_retrieval_units SET entity_refs_json = ? WHERE id = ?",
+        (json.dumps([{"type": "term", "name": "5G", "normalized_name": "5g"}]), RU_5G),
     )
 
     # build

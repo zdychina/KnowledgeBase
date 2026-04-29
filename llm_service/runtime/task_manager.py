@@ -42,6 +42,33 @@ class TaskManager:
             if existing:
                 return existing
 
+        task_id = await self.insert_task_row(
+            caller_domain,
+            pipeline_stage,
+            idempotency_key=idempotency_key,
+            max_attempts=max_attempts,
+            priority=priority,
+            metadata=metadata,
+        )
+        await self._db.commit()
+        await self._bus.emit(task_id, "submitted", "task submitted")
+        return task_id
+
+    async def insert_task_row(
+        self,
+        caller_domain: str,
+        pipeline_stage: str,
+        *,
+        idempotency_key: str | None = None,
+        max_attempts: int | None = None,
+        priority: int = 100,
+        metadata: dict | None = None,
+    ) -> str:
+        """Insert the task row without committing or emitting events.
+
+        This lets higher-level callers create the task and its request row in
+        one transaction before workers can claim it.
+        """
         task_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         ma = max_attempts or self._default_max_attempts
@@ -57,8 +84,6 @@ class TaskManager:
                 now, now, json.dumps(metadata or {}),
             ),
         )
-        await self._db.commit()
-        await self._bus.emit(task_id, "submitted", "task submitted")
         return task_id
 
     async def claim(self) -> str | None:
