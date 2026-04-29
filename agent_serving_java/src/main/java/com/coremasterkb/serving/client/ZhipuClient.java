@@ -9,6 +9,7 @@ import org.springframework.http.*;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -109,5 +110,73 @@ public class ZhipuClient {
         return texts.stream()
                 .map(this::embed)
                 .toList();
+    }
+
+    /**
+     * Rerank documents against a query.
+     *
+     * Endpoint: POST /rerank
+     * Request:  {"model": "rerank", "query": "...", "documents": [...], "top_n": N}
+     * Response: {"results": [{"index": 0, "relevance_score": 0.95, "document": {...}}, ...]}
+     *
+     * @return list of result maps with keys "index" (Integer) and "score" (Double),
+     *         ordered by relevance descending; empty list on any error / not configured
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> rerank(String query, List<String> documents, int topN) {
+        if (!config.isConfigured()) return Collections.emptyList();
+        if (query == null || query.isBlank() || documents == null || documents.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("model", config.getRerankModel());
+            body.put("query", query);
+            body.put("documents", documents);
+            body.put("top_n", topN);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Authorization", "Bearer " + config.getApiKey());
+
+            String requestBody = objectMapper.writeValueAsString(body);
+            HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
+
+            String url = config.getBaseUrl() + "/rerank";
+            ResponseEntity<String> response =
+                    restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
+
+            if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+                log.debug("Zhipu rerank returned non-2xx: {}", response.getStatusCode());
+                return Collections.emptyList();
+            }
+
+            Map<String, Object> parsed = objectMapper.readValue(
+                    response.getBody(), new TypeReference<>() {});
+
+            Object resultsRaw = parsed.get("results");
+            if (!(resultsRaw instanceof List<?> rawList)) return Collections.emptyList();
+
+            // Normalize to {index, score} maps (callers expect "score", not "relevance_score")
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object item : rawList) {
+                if (!(item instanceof Map<?, ?> m)) continue;
+                Map<String, Object> r = (Map<String, Object>) m;
+                Object idxObj   = r.get("index");
+                Object scoreObj = r.get("relevance_score");
+                if (idxObj instanceof Number && scoreObj instanceof Number) {
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("index", ((Number) idxObj).intValue());
+                    entry.put("score", ((Number) scoreObj).doubleValue());
+                    out.add(entry);
+                }
+            }
+            return out;
+
+        } catch (Exception e) {
+            log.debug("Zhipu rerank failed: {}", e.getMessage());
+            return Collections.emptyList();
+        }
     }
 }

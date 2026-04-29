@@ -35,3 +35,4 @@ serving:
     base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
     embedding-model: ${ZHIPU_EMBEDDING_MODEL:embedding-3}
     embedding-dimensions: ${ZHIPU_EMBEDDING_DIMENSIONS:2048}
+    rerank-model: ${ZHIPU_RERANK_MODEL:rerank}

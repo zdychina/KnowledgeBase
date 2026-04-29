@@ -62,6 +62,8 @@ public class ServingProperties {
         /** Dimension of the embedding vector (embedding-3 supports 64~2048). */
         private int embeddingDimensions = 2048;
 
+        private String rerankModel = "rerank";
+
         public boolean isConfigured() {
             return apiKey != null && !apiKey.isBlank();
         }

@@ -122,8 +122,8 @@ public class ServingBeans {
     }
 
     @Bean
-    public ZhipuModelReranker zhipuModelReranker(LlmRuntimeClient llmRuntimeClient) {
-        return new ZhipuModelReranker(llmRuntimeClient);
+    public ZhipuModelReranker zhipuModelReranker(ZhipuClient zhipuClient) {
+        return new ZhipuModelReranker(zhipuClient);
     }
 
     // -------------------------------------------------------------------------
