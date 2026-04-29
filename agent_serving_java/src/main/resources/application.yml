@@ -7,7 +7,7 @@ logging:
 
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:15432}/${DB_NAME:knowledge_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:15432}/${DB_NAME:test_db}
     username: ${DB_USER:zdy}
     password: ${DB_PASSWORD:zdy1234}
     driver-class-name: org.postgresql.Driver
@@ -31,7 +31,7 @@ serving:
   fts:
     strategy: ${SERVING_FTS_STRATEGY:postgresql}
   zhipu:
-    api-key: ${ZHIPU_API_KEY:}
+    api-key: ${ZHIPU_API_KEY:bec7cc02fc88529bee532a07070f4e80.PbObZYZROyxvmtfq}
     base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
     embedding-model: ${ZHIPU_EMBEDDING_MODEL:embedding-3}
     embedding-dimensions: ${ZHIPU_EMBEDDING_DIMENSIONS:2048}
