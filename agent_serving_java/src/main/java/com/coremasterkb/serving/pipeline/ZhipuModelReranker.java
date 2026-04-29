@@ -13,8 +13,7 @@ import java.util.stream.Collectors;
  * Reranker that calls the Zhipu rerank model API directly
  * (POST https://open.bigmodel.cn/api/paas/v4/rerank).
  *
- * Returns null when the API key is not configured or the call fails,
- * signalling SearchService to fall back to ScoreReranker.
+ * Returns null when the API call fails, signalling SearchService to fall back to ScoreReranker.
  */
 public class ZhipuModelReranker implements Reranker {
 
@@ -27,11 +26,10 @@ public class ZhipuModelReranker implements Reranker {
     }
 
     /**
-     * @return reranked list, or {@code null} if API not configured / call failed (caller falls back)
+     * @return reranked list, or {@code null} if the API call failed (caller falls back to ScoreReranker)
      */
     @Override
     public List<RetrievalCandidate> rerank(List<RetrievalCandidate> candidates, QueryPlan plan) {
-        if (!zhipuClient.isConfigured()) return null;
         if (candidates == null || candidates.isEmpty()) return Collections.emptyList();
 
         String query = String.join(" ", plan.keywords());

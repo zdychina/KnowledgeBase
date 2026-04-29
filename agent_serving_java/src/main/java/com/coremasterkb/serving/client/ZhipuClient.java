@@ -41,20 +41,14 @@ public class ZhipuClient {
         this.restTemplate = new RestTemplate(factory);
     }
 
-    /** True when an API key is configured. */
-    public boolean isConfigured() {
-        return config.isConfigured();
-    }
-
     /**
      * Embed a single text string.
      *
      * @return float array of length {@code config.embeddingDimensions},
-     *         or empty array on any error / not configured
+     *         or empty array on any error
      */
     @SuppressWarnings("unchecked")
     public float[] embed(String text) {
-        if (!config.isConfigured()) return new float[0];
         if (text == null || text.isBlank()) return new float[0];
 
         try {
@@ -104,7 +98,7 @@ public class ZhipuClient {
 
     /** Batch embed — convenience wrapper; returns empty list on error. */
     public List<float[]> embedBatch(List<String> texts) {
-        if (!config.isConfigured() || texts == null || texts.isEmpty()) {
+        if (texts == null || texts.isEmpty()) {
             return Collections.emptyList();
         }
         return texts.stream()
@@ -124,7 +118,6 @@ public class ZhipuClient {
      */
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> rerank(String query, List<String> documents, int topN) {
-        if (!config.isConfigured()) return Collections.emptyList();
         if (query == null || query.isBlank() || documents == null || documents.isEmpty()) {
             return Collections.emptyList();
         }

@@ -52,20 +52,16 @@ public class ServingProperties {
     @Data
     public static class Zhipu {
 
-        /** Zhipu API key. Leave blank to disable direct embedding calls. */
-        private String apiKey = "";
+        @NotBlank
+        private String apiKey;
 
-        private String baseUrl = "https://open.bigmodel.cn/api/paas/v4";
+        private String baseUrl;
 
-        private String embeddingModel = "embedding-3";
+        private String embeddingModel;
 
         /** Dimension of the embedding vector (embedding-3 supports 64~2048). */
-        private int embeddingDimensions = 2048;
+        private int embeddingDimensions;
 
-        private String rerankModel = "rerank";
-
-        public boolean isConfigured() {
-            return apiKey != null && !apiKey.isBlank();
-        }
+        private String rerankModel;
     }
 }

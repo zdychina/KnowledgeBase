@@ -17,7 +17,6 @@ import java.util.stream.Collectors;
  *
  * Embeds the query text via Zhipu embedding-3 API (direct call),
  * then computes cosine similarity against stored embeddings in Java.
- * Returns empty list when Zhipu API key is not configured.
  */
 public class DenseVectorRetriever implements Retriever {
 
@@ -41,7 +40,6 @@ public class DenseVectorRetriever implements Retriever {
 
     @Override
     public List<RetrievalCandidate> retrieve(QueryPlan plan, List<String> snapshotIds) {
-        if (!zhipuClient.isConfigured()) return Collections.emptyList();
         if (snapshotIds == null || snapshotIds.isEmpty()) return Collections.emptyList();
 
         String queryText = String.join(" ", plan.keywords());
