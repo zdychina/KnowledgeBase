@@ -5,11 +5,17 @@ import com.coremasterkb.serving.domain.*;
 import java.util.*;
 
 /**
- * Deterministic rule-based planner.
- * Translated from the Python pipeline plan() logic.
+ * Deterministic rule-based planner with retrieval routing.
  *
- * Passes keywords, intent, entities, and scope from NormalizedQuery;
- * applies overrides where provided; uses default budget and expansion configs.
+ * Routing logic:
+ *   - fts_bm25 (weight=1.0)  : always enabled
+ *   - entity_exact (weight=1.0): enabled when entities are present in the query
+ *   - dense_vector (weight=0.8): always requested; the retriever falls back silently
+ *                                if LLM service is unavailable
+ *
+ * fusion_method:
+ *   - "weighted_rrf" when ≥2 retrievers are enabled
+ *   - "identity" when only fts_bm25 is enabled
  */
 public class RulePlannerProvider implements PlannerProvider {
 
@@ -21,26 +27,41 @@ public class RulePlannerProvider implements PlannerProvider {
     ) {
         String intent = normalized.intent();
 
-        // Effective entities: prefer override if supplied and non-empty
-        List<EntityRef> entities;
-        if (entitiesOverride != null && !entitiesOverride.isEmpty()) {
-            entities = entitiesOverride;
-        } else {
-            entities = normalized.entities() != null ? normalized.entities() : Collections.emptyList();
+        List<EntityRef> entities = (entitiesOverride != null && !entitiesOverride.isEmpty())
+                ? entitiesOverride
+                : (normalized.entities() != null ? normalized.entities() : Collections.emptyList());
+
+        Map<String, Object> scope = (scopeOverride != null && !scopeOverride.isEmpty())
+                ? scopeOverride
+                : (normalized.scope() != null ? normalized.scope() : Collections.emptyMap());
+
+        List<String> keywords    = normalized.keywords()    != null ? normalized.keywords()    : Collections.emptyList();
+        List<String> desiredRoles = normalized.desiredRoles() != null ? normalized.desiredRoles() : Collections.emptyList();
+
+        // ---- Retrieval routing ----
+        List<String> enabledRetrievers = new ArrayList<>();
+        Map<String, Double> weights    = new LinkedHashMap<>();
+
+        enabledRetrievers.add("fts_bm25");
+        weights.put("fts_bm25", 1.0);
+
+        if (!entities.isEmpty()) {
+            enabledRetrievers.add("entity_exact");
+            weights.put("entity_exact", 1.0);
         }
 
-        // Effective scope: prefer override if supplied and non-empty
-        Map<String, Object> scope;
-        if (scopeOverride != null && !scopeOverride.isEmpty()) {
-            scope = scopeOverride;
-        } else {
-            scope = normalized.scope() != null ? normalized.scope() : Collections.emptyMap();
-        }
+        // dense_vector is always requested; DenseVectorRetriever handles unavailability
+        enabledRetrievers.add("dense_vector");
+        weights.put("dense_vector", 0.8);
 
-        List<String> keywords = normalized.keywords() != null
-                ? normalized.keywords() : Collections.emptyList();
-        List<String> desiredRoles = normalized.desiredRoles() != null
-                ? normalized.desiredRoles() : Collections.emptyList();
+        String fusionMethod = enabledRetrievers.size() > 1 ? "weighted_rrf" : "identity";
+
+        RetrieverConfig retrieverConfig = new RetrieverConfig(
+                Collections.unmodifiableList(enabledRetrievers),
+                fusionMethod,
+                60,
+                Collections.unmodifiableMap(weights)
+        );
 
         return new QueryPlan(
                 intent,
@@ -48,10 +69,10 @@ public class RulePlannerProvider implements PlannerProvider {
                 entities,
                 scope,
                 desiredRoles,
-                Collections.emptyList(), // desiredBlockTypes — rule planner does not set these
+                Collections.emptyList(),
                 new RetrievalBudget(),
                 new ExpansionConfig(),
-                new RetrieverConfig(),
+                retrieverConfig,
                 new RerankerConfig()
         );
     }

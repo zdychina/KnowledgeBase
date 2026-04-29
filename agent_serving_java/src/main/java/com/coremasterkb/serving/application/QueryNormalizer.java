@@ -3,6 +3,7 @@ package com.coremasterkb.serving.application;
 import com.coremasterkb.serving.client.LlmRuntimeClient;
 import com.coremasterkb.serving.constants.ServingConstants;
 import com.coremasterkb.serving.domain.EntityRef;
+import com.coremasterkb.serving.domain.EvidenceNeed;
 import com.coremasterkb.serving.domain.NormalizedQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +14,6 @@ import java.util.regex.Pattern;
 
 /**
  * Rule-based query normalizer with optional LLM enhancement.
- * Translated from application/normalizer.py.
  *
  * Two-layer strategy:
  *   1. Try LLM if available (LlmRuntimeClient.isAvailable())
@@ -31,7 +31,7 @@ public class QueryNormalizer {
     private static final Pattern VERSION_PATTERN =
             Pattern.compile("V\\d{3}R\\d{3}(C\\d{2})?");
 
-    // ---- Tokenization split (mirrors Python regex) ----
+    // ---- Tokenization split ----
     private static final Pattern TOKEN_SPLIT =
             Pattern.compile("[\\s,，、？?。.！!；;：:]+");
 
@@ -67,7 +67,9 @@ public class QueryNormalizer {
             ServingConstants.INTENT_CONCEPT_LOOKUP,
                 List.of("是什么","什么是","概念","介绍","概述","原理"),
             ServingConstants.INTENT_PROCEDURE,
-                List.of("步骤","流程","操作","怎么做","如何操作")
+                List.of("步骤","流程","操作","怎么做","如何操作"),
+            ServingConstants.INTENT_COMPARATIVE,
+                List.of("区别","对比","比较","差异","有什么不同","和...的区别")
     );
 
     // ---- Intent → desired roles map ----
@@ -80,6 +82,8 @@ public class QueryNormalizer {
                 List.of("concept","note"),
             ServingConstants.INTENT_PROCEDURE,
                 List.of("procedure_step","parameter","example"),
+            ServingConstants.INTENT_COMPARATIVE,
+                List.of("concept","note"),
             ServingConstants.INTENT_GENERAL,
                 Collections.emptyList()
     );
@@ -96,6 +100,15 @@ public class QueryNormalizer {
             "for","with","from","by","as","what","which","how","why","when","where","who"
     );
 
+    // ---- LLM intent alias normalizer ----
+    private static final Map<String, String> INTENT_ALIAS = Map.of(
+            "conceptual",     ServingConstants.INTENT_CONCEPT_LOOKUP,
+            "procedural",     ServingConstants.INTENT_PROCEDURE,
+            "troubleshoot",   ServingConstants.INTENT_TROUBLESHOOT,
+            "troubleshooting",ServingConstants.INTENT_TROUBLESHOOT,
+            "comparative",    ServingConstants.INTENT_COMPARATIVE
+    );
+
     private final LlmRuntimeClient llmClient; // nullable
 
     public QueryNormalizer(LlmRuntimeClient llmClient) {
@@ -106,27 +119,19 @@ public class QueryNormalizer {
     // Main entry point
     // -------------------------------------------------------------------------
 
-    /**
-     * Normalize the raw query string. Tries LLM enhancement first if available,
-     * then falls back to rule-based logic.
-     */
     public NormalizedQuery normalize(String rawQuery) {
         if (rawQuery == null) rawQuery = "";
         String query = rawQuery.trim();
 
-        // Layer 1: LLM enhancement (optional)
         if (llmClient != null && llmClient.isAvailable()) {
             try {
                 NormalizedQuery llmResult = normalizeWithLlm(query);
-                if (llmResult != null) {
-                    return llmResult;
-                }
+                if (llmResult != null) return llmResult;
             } catch (Exception e) {
                 log.debug("LLM normalization failed, using rules: {}", e.getMessage());
             }
         }
 
-        // Layer 2: rule-based
         return normalizeWithRules(query);
     }
 
@@ -137,7 +142,7 @@ public class QueryNormalizer {
     private static final String LLM_SYSTEM_PROMPT =
             "You are a query normalization assistant for a telecom knowledge base.\n" +
             "Analyze the user query and return a JSON object with exactly these fields:\n" +
-            "- intent: one of [command_usage, troubleshooting, concept_lookup, procedure, general]\n" +
+            "- intent: one of [command_usage, troubleshooting, concept_lookup, procedure, comparative, general]\n" +
             "- normalized_query: a cleaner restatement of the query\n" +
             "- keywords: array of key terms (strings)\n" +
             "- desired_roles: array of relevant roles from " +
@@ -145,6 +150,8 @@ public class QueryNormalizer {
             "- entities: array of {type, name, normalized_name} where type is one of " +
             "[command, product, version, network_element, command_op]\n" +
             "- scope: object with optional fields {version, product, network_element}\n" +
+            "- evidence_need: object with fields " +
+            "{preferred_roles: [], preferred_blocks: [], needs_comparison: bool, needs_citation: bool}\n" +
             "Return only the JSON object, no explanation.";
 
     private NormalizedQuery normalizeWithLlm(String query) {
@@ -160,10 +167,8 @@ public class QueryNormalizer {
         Map<String, Object> resp = llmClient.execute(payload);
         if (resp.isEmpty()) return null;
 
-        // Check top-level execution status
         if (!"succeeded".equals(getStr(resp, "status", ""))) return null;
 
-        // Unwrap result.parsed_output
         if (!(resp.get("result") instanceof Map<?,?> resultMap)) return null;
         @SuppressWarnings("unchecked")
         Map<String, Object> result = (Map<String, Object>) resultMap;
@@ -173,7 +178,8 @@ public class QueryNormalizer {
         @SuppressWarnings("unchecked")
         Map<String, Object> parsed = (Map<String, Object>) parsedMap;
 
-        String intent    = getStr(parsed, "intent", ServingConstants.INTENT_GENERAL);
+        String rawIntent = getStr(parsed, "intent", ServingConstants.INTENT_GENERAL);
+        String intent    = INTENT_ALIAS.getOrDefault(rawIntent, rawIntent);
         List<String> keywords = getStringList(parsed, "keywords");
         List<String> roles    = getStringList(parsed, "desired_roles");
         List<EntityRef> entities = extractEntitiesFromLlmResp(parsed);
@@ -182,7 +188,9 @@ public class QueryNormalizer {
         Map<String, Object> scope = parsed.get("scope") instanceof Map<?,?> m
                 ? (Map<String, Object>) m : new HashMap<>();
 
-        return new NormalizedQuery(query, intent, entities, scope, keywords, roles);
+        EvidenceNeed evidenceNeed = extractEvidenceNeed(parsed);
+
+        return new NormalizedQuery(query, intent, entities, scope, keywords, roles, evidenceNeed);
     }
 
     @SuppressWarnings("unchecked")
@@ -202,27 +210,31 @@ public class QueryNormalizer {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
+    private EvidenceNeed extractEvidenceNeed(Map<String, Object> parsed) {
+        Object raw = parsed.get("evidence_need");
+        if (!(raw instanceof Map<?,?> m)) return new EvidenceNeed();
+        Map<String, Object> en = (Map<String, Object>) m;
+        List<String> preferredRoles  = getStringList(en, "preferred_roles");
+        List<String> preferredBlocks = getStringList(en, "preferred_blocks");
+        boolean needsComparison = Boolean.TRUE.equals(en.get("needs_comparison"));
+        boolean needsCitation   = Boolean.TRUE.equals(en.get("needs_citation"));
+        return new EvidenceNeed(preferredRoles, preferredBlocks, needsComparison, needsCitation);
+    }
+
     // -------------------------------------------------------------------------
     // Rule-based normalization
     // -------------------------------------------------------------------------
 
     public NormalizedQuery normalizeWithRules(String query) {
-        // 1. Detect entities
-        List<EntityRef> entities = detectEntities(query);
+        List<EntityRef> entities   = detectEntities(query);
+        String intent              = detectIntent(query);
+        Map<String, Object> scope  = extractScope(query);
+        List<String> keywords      = extractKeywords(query);
+        List<String> desiredRoles  = INTENT_ROLES.getOrDefault(intent, Collections.emptyList());
+        EvidenceNeed evidenceNeed  = computeEvidenceNeed(intent);
 
-        // 2. Detect intent
-        String intent = detectIntent(query);
-
-        // 3. Extract scope (version, product, NE)
-        Map<String, Object> scope = extractScope(query);
-
-        // 4. Tokenize + filter keywords
-        List<String> keywords = extractKeywords(query);
-
-        // 5. Map intent → desired roles
-        List<String> desiredRoles = INTENT_ROLES.getOrDefault(intent, Collections.emptyList());
-
-        return new NormalizedQuery(query, intent, entities, scope, keywords, desiredRoles);
+        return new NormalizedQuery(query, intent, entities, scope, keywords, desiredRoles, evidenceNeed);
     }
 
     // -------------------------------------------------------------------------
@@ -232,7 +244,6 @@ public class QueryNormalizer {
     private List<EntityRef> detectEntities(String query) {
         List<EntityRef> entities = new ArrayList<>();
 
-        // Command entities (e.g. ADD USER_GROUP)
         Matcher cmdMatcher = COMMAND_PATTERN.matcher(query);
         while (cmdMatcher.find()) {
             String op  = cmdMatcher.group(1);
@@ -240,29 +251,24 @@ public class QueryNormalizer {
             entities.add(new EntityRef("command", op + " " + obj, op + "_" + obj));
         }
 
-        // CN operator translations
         for (Map.Entry<String, String> entry : CN_OP_MAP.entrySet()) {
             if (query.contains(entry.getKey())) {
                 entities.add(new EntityRef("command_op", entry.getKey(), entry.getValue()));
             }
         }
 
-        // Products
         for (String product : PRODUCTS) {
             if (query.contains(product)) {
                 entities.add(new EntityRef("product", product, product));
             }
         }
 
-        // Network elements
         for (String ne : NETWORK_ELEMENTS) {
-            // Whole-word match using word boundaries or surrounded by non-alpha
             if (query.matches(".*(?<![A-Z])" + ne + "(?![A-Z]).*")) {
                 entities.add(new EntityRef("network_element", ne, ne));
             }
         }
 
-        // Versions
         Matcher verMatcher = VERSION_PATTERN.matcher(query);
         while (verMatcher.find()) {
             String ver = verMatcher.group();
@@ -279,12 +285,9 @@ public class QueryNormalizer {
     private String detectIntent(String query) {
         for (Map.Entry<String, List<String>> entry : INTENT_KEYWORDS.entrySet()) {
             for (String kw : entry.getValue()) {
-                if (query.contains(kw)) {
-                    return entry.getKey();
-                }
+                if (query.contains(kw)) return entry.getKey();
             }
         }
-        // Check if query looks like a command (EN pattern)
         if (COMMAND_PATTERN.matcher(query).find()) {
             return ServingConstants.INTENT_COMMAND_USAGE;
         }
@@ -298,25 +301,16 @@ public class QueryNormalizer {
     private Map<String, Object> extractScope(String query) {
         Map<String, Object> scope = new HashMap<>();
 
-        // Version
         Matcher verMatcher = VERSION_PATTERN.matcher(query);
-        if (verMatcher.find()) {
-            scope.put("version", verMatcher.group());
-        }
+        if (verMatcher.find()) scope.put("version", verMatcher.group());
 
-        // Product
         for (String product : PRODUCTS) {
-            if (query.contains(product)) {
-                scope.put("product", product);
-                break;
-            }
+            if (query.contains(product)) { scope.put("product", product); break; }
         }
 
-        // Network element
         for (String ne : NETWORK_ELEMENTS) {
             if (query.matches(".*(?<![A-Z])" + ne + "(?![A-Z]).*")) {
-                scope.put("network_element", ne);
-                break;
+                scope.put("network_element", ne); break;
             }
         }
 
@@ -332,7 +326,6 @@ public class QueryNormalizer {
         List<String> keywords = new ArrayList<>();
         for (String part : parts) {
             if (part.isEmpty()) continue;
-            // Keep len >= 2 or single CJK character
             if (part.length() >= 2 || CJK_CHAR.matcher(part).matches()) {
                 if (!STOPWORDS_ZH.contains(part) && !STOPWORDS_EN.contains(part.toLowerCase())) {
                     keywords.add(part);
@@ -340,6 +333,20 @@ public class QueryNormalizer {
             }
         }
         return keywords;
+    }
+
+    // -------------------------------------------------------------------------
+    // EvidenceNeed (rule-based)
+    // -------------------------------------------------------------------------
+
+    private EvidenceNeed computeEvidenceNeed(String intent) {
+        return switch (intent) {
+            case ServingConstants.INTENT_COMPARATIVE    ->
+                    new EvidenceNeed(Collections.emptyList(), Collections.emptyList(), true, false);
+            case ServingConstants.INTENT_CONCEPT_LOOKUP ->
+                    new EvidenceNeed(Collections.emptyList(), Collections.emptyList(), false, true);
+            default -> new EvidenceNeed();
+        };
     }
 
     // -------------------------------------------------------------------------

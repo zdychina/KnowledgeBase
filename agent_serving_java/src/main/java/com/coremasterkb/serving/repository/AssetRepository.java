@@ -20,18 +20,21 @@ public class AssetRepository {
     private final AssetRawSegmentMapper rawSegmentMapper;
     private final AssetRawSegmentRelationMapper relationMapper;
     private final AssetDocumentMapper documentMapper;
+    private final com.coremasterkb.serving.mapper.AssetRetrievalEmbeddingMapper embeddingMapper;
 
     public AssetRepository(
             AssetPublishReleaseMapper releaseMapper,
             AssetBuildDocumentSnapshotMapper buildSnapshotMapper,
             AssetRawSegmentMapper rawSegmentMapper,
             AssetRawSegmentRelationMapper relationMapper,
-            AssetDocumentMapper documentMapper) {
-        this.releaseMapper = releaseMapper;
+            AssetDocumentMapper documentMapper,
+            com.coremasterkb.serving.mapper.AssetRetrievalEmbeddingMapper embeddingMapper) {
+        this.releaseMapper    = releaseMapper;
         this.buildSnapshotMapper = buildSnapshotMapper;
         this.rawSegmentMapper = rawSegmentMapper;
-        this.relationMapper = relationMapper;
-        this.documentMapper = documentMapper;
+        this.relationMapper   = relationMapper;
+        this.documentMapper   = documentMapper;
+        this.embeddingMapper  = embeddingMapper;
     }
 
     // -------------------------------------------------------------------------

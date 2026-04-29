@@ -14,6 +14,7 @@ public final class ServingConstants {
     public static final String INTENT_TROUBLESHOOT   = "troubleshooting";
     public static final String INTENT_CONCEPT_LOOKUP = "concept_lookup";
     public static final String INTENT_PROCEDURE      = "procedure";
+    public static final String INTENT_COMPARATIVE    = "comparative";
     public static final String INTENT_GENERAL        = "general";
 
     // ---- Item roles ----

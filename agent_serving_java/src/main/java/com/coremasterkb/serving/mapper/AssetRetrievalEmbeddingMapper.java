@@ -1,0 +1,17 @@
+package com.coremasterkb.serving.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.coremasterkb.serving.entity.AssetRetrievalEmbedding;
+import com.coremasterkb.serving.mapper.result.EmbeddingRow;
+import org.apache.ibatis.annotations.Param;
+
+import java.util.List;
+
+public interface AssetRetrievalEmbeddingMapper extends BaseMapper<AssetRetrievalEmbedding> {
+
+    /**
+     * Load embeddings (with unit metadata) scoped to the given snapshots.
+     * Only rows where text_kind = 'search_text' are returned.
+     */
+    List<EmbeddingRow> selectWithUnitMeta(@Param("snapshotIds") List<String> snapshotIds);
+}

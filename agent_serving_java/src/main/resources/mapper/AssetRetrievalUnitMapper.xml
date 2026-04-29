@@ -52,4 +52,41 @@
         LIMIT #{limit}
     </select>
 
+    <!--
+        Entity-exact search: finds units whose entity_refs_json (JSONB array)
+        contains any element with a "name" matching one of the given entity names.
+        Score is fixed at 0.95 to mark these as high-confidence exact matches.
+    -->
+    <select id="searchByEntityExact" resultMap="ftsResultMap">
+        SELECT ru.id,
+               ru.document_snapshot_id,
+               ru.text,
+               ru.title,
+               ru.block_type,
+               ru.semantic_role,
+               ru.source_refs_json,
+               ru.facets_json,
+               ru.target_type,
+               ru.target_ref_json,
+               ru.unit_type,
+               ru.source_segment_id,
+               0.95 AS fts_score
+        FROM asset_retrieval_units ru
+        WHERE ru.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+          AND ru.entity_refs_json != '[]'
+          AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(ru.entity_refs_json::jsonb) AS e
+              WHERE e->>'name' IN
+              <foreach collection="entityNames" item="name" open="(" separator="," close=")">
+                  #{name}
+              </foreach>
+          )
+        ORDER BY ru.weight DESC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

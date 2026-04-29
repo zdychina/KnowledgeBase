@@ -6,9 +6,10 @@ import com.coremasterkb.serving.application.QueryNormalizer;
 import com.coremasterkb.serving.application.SearchService;
 import com.coremasterkb.serving.client.LlmRuntimeClient;
 import com.coremasterkb.serving.mapper.*;
-import com.coremasterkb.serving.mapper.ServingQueryLogMapper;
 import com.coremasterkb.serving.pipeline.*;
 import com.coremasterkb.serving.repository.AssetRepository;
+import com.coremasterkb.serving.retrieval.DenseVectorRetriever;
+import com.coremasterkb.serving.retrieval.EntityExactRetriever;
 import com.coremasterkb.serving.retrieval.FtsRetriever;
 import com.coremasterkb.serving.retrieval.GraphExpander;
 import com.coremasterkb.serving.retrieval.Retriever;
@@ -19,7 +20,6 @@ import java.util.List;
 
 /**
  * Spring @Bean wiring for all serving components.
- * Mappers are injected automatically via @MapperScan on AgentServingApplication.
  */
 @Configuration
 public class ServingBeans {
@@ -49,10 +49,11 @@ public class ServingBeans {
             AssetBuildDocumentSnapshotMapper buildSnapshotMapper,
             AssetRawSegmentMapper rawSegmentMapper,
             AssetRawSegmentRelationMapper relationMapper,
-            AssetDocumentMapper documentMapper) {
+            AssetDocumentMapper documentMapper,
+            AssetRetrievalEmbeddingMapper embeddingMapper) {
         return new AssetRepository(
                 releaseMapper, buildSnapshotMapper,
-                rawSegmentMapper, relationMapper, documentMapper);
+                rawSegmentMapper, relationMapper, documentMapper, embeddingMapper);
     }
 
     @Bean
@@ -70,8 +71,23 @@ public class ServingBeans {
     }
 
     @Bean
-    public RetrieverManager retrieverManager(FtsRetriever ftsRetriever) {
-        List<Retriever> retrievers = List.of(ftsRetriever);
+    public EntityExactRetriever entityExactRetriever(AssetRetrievalUnitMapper retrievalUnitMapper) {
+        return new EntityExactRetriever(retrievalUnitMapper);
+    }
+
+    @Bean
+    public DenseVectorRetriever denseVectorRetriever(
+            LlmRuntimeClient llmRuntimeClient,
+            AssetRetrievalEmbeddingMapper embeddingMapper) {
+        return new DenseVectorRetriever(llmRuntimeClient, embeddingMapper);
+    }
+
+    @Bean
+    public RetrieverManager retrieverManager(
+            FtsRetriever ftsRetriever,
+            EntityExactRetriever entityExactRetriever,
+            DenseVectorRetriever denseVectorRetriever) {
+        List<Retriever> retrievers = List.of(ftsRetriever, entityExactRetriever, denseVectorRetriever);
         return new RetrieverManager(retrievers);
     }
 
@@ -90,8 +106,18 @@ public class ServingBeans {
     }
 
     @Bean
+    public WeightedRRFFusion weightedRRFFusion() {
+        return new WeightedRRFFusion();
+    }
+
+    @Bean
     public ScoreReranker scoreReranker() {
         return new ScoreReranker();
+    }
+
+    @Bean
+    public ZhipuModelReranker zhipuModelReranker(LlmRuntimeClient llmRuntimeClient) {
+        return new ZhipuModelReranker(llmRuntimeClient);
     }
 
     // -------------------------------------------------------------------------
@@ -126,7 +152,7 @@ public class ServingBeans {
     }
 
     // -------------------------------------------------------------------------
-    // Logging (cross-cutting, wired separately from business beans)
+    // Logging
     // -------------------------------------------------------------------------
 
     @Bean
@@ -142,11 +168,14 @@ public class ServingBeans {
             RetrieverManager retrieverManager,
             IdentityFusion identityFusion,
             RRFFusion rrfFusion,
+            WeightedRRFFusion weightedRRFFusion,
             ScoreReranker scoreReranker,
+            ZhipuModelReranker zhipuModelReranker,
             ContextAssembler contextAssembler) {
         return new SearchService(
                 normalizer, planner, assetRepository,
                 retrieverManager, identityFusion, rrfFusion,
-                scoreReranker, contextAssembler);
+                weightedRRFFusion, scoreReranker, zhipuModelReranker,
+                contextAssembler);
     }
 }
