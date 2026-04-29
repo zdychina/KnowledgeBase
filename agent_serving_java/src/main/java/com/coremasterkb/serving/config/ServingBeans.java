@@ -5,6 +5,7 @@ import com.coremasterkb.serving.application.QueryLogService;
 import com.coremasterkb.serving.application.QueryNormalizer;
 import com.coremasterkb.serving.application.SearchService;
 import com.coremasterkb.serving.client.LlmRuntimeClient;
+import com.coremasterkb.serving.client.ZhipuClient;
 import com.coremasterkb.serving.mapper.*;
 import com.coremasterkb.serving.pipeline.*;
 import com.coremasterkb.serving.repository.AssetRepository;
@@ -37,6 +38,11 @@ public class ServingBeans {
     @Bean
     public LlmRuntimeClient llmRuntimeClient() {
         return new LlmRuntimeClient(properties.getLlmService());
+    }
+
+    @Bean
+    public ZhipuClient zhipuClient() {
+        return new ZhipuClient(properties.getZhipu());
     }
 
     // -------------------------------------------------------------------------
@@ -77,9 +83,9 @@ public class ServingBeans {
 
     @Bean
     public DenseVectorRetriever denseVectorRetriever(
-            LlmRuntimeClient llmRuntimeClient,
+            ZhipuClient zhipuClient,
             AssetRetrievalEmbeddingMapper embeddingMapper) {
-        return new DenseVectorRetriever(llmRuntimeClient, embeddingMapper);
+        return new DenseVectorRetriever(zhipuClient, embeddingMapper);
     }
 
     @Bean

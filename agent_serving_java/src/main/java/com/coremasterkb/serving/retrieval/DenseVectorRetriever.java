@@ -1,10 +1,11 @@
 package com.coremasterkb.serving.retrieval;
 
-import com.coremasterkb.serving.client.LlmRuntimeClient;
+import com.coremasterkb.serving.client.ZhipuClient;
 import com.coremasterkb.serving.domain.QueryPlan;
 import com.coremasterkb.serving.domain.RetrievalCandidate;
 import com.coremasterkb.serving.mapper.AssetRetrievalEmbeddingMapper;
 import com.coremasterkb.serving.mapper.result.EmbeddingRow;
+import com.coremasterkb.serving.util.JsonUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,9 +13,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Dense vector retriever: embeds the query via LLM service, then computes
- * cosine similarity against stored embeddings in Java.
- * Falls back to empty list if LLM service is unavailable.
+ * Dense vector retriever.
+ *
+ * Embeds the query text via Zhipu embedding-3 API (direct call),
+ * then computes cosine similarity against stored embeddings in Java.
+ * Returns empty list when Zhipu API key is not configured.
  */
 public class DenseVectorRetriever implements Retriever {
 
@@ -22,12 +25,12 @@ public class DenseVectorRetriever implements Retriever {
     private static final String SOURCE_NAME = "dense_vector";
     private static final int DEFAULT_TOP_K = 50;
 
-    private final LlmRuntimeClient llmClient;
+    private final ZhipuClient zhipuClient;
     private final AssetRetrievalEmbeddingMapper embeddingMapper;
 
-    public DenseVectorRetriever(LlmRuntimeClient llmClient,
+    public DenseVectorRetriever(ZhipuClient zhipuClient,
                                 AssetRetrievalEmbeddingMapper embeddingMapper) {
-        this.llmClient      = llmClient;
+        this.zhipuClient     = zhipuClient;
         this.embeddingMapper = embeddingMapper;
     }
 
@@ -38,21 +41,21 @@ public class DenseVectorRetriever implements Retriever {
 
     @Override
     public List<RetrievalCandidate> retrieve(QueryPlan plan, List<String> snapshotIds) {
-        if (!llmClient.isAvailable()) return Collections.emptyList();
+        if (!zhipuClient.isConfigured()) return Collections.emptyList();
         if (snapshotIds == null || snapshotIds.isEmpty()) return Collections.emptyList();
 
         String queryText = String.join(" ", plan.keywords());
         if (queryText.isBlank()) return Collections.emptyList();
 
-        // Step 1: get query embedding
-        float[] queryVec = llmClient.embed(queryText);
+        // Step 1: embed query via Zhipu API
+        float[] queryVec = zhipuClient.embed(queryText);
         if (queryVec.length == 0) return Collections.emptyList();
 
-        // Step 2: load stored embeddings (with unit metadata)
+        // Step 2: load stored embeddings with unit metadata
         List<EmbeddingRow> rows = embeddingMapper.selectWithUnitMeta(snapshotIds);
         if (rows.isEmpty()) return Collections.emptyList();
 
-        // Step 3: cosine similarity, collect (score, row) pairs
+        // Step 3: cosine similarity
         record Scored(double score, EmbeddingRow row) {}
         List<Scored> scored = new ArrayList<>();
         for (EmbeddingRow row : rows) {
@@ -62,7 +65,7 @@ public class DenseVectorRetriever implements Retriever {
             scored.add(new Scored(sim, row));
         }
 
-        // Step 4: sort desc, truncate
+        // Step 4: sort desc, truncate to top-k
         scored.sort(Comparator.comparingDouble(Scored::score).reversed());
         int limit = Math.min(DEFAULT_TOP_K, scored.size());
 
@@ -75,17 +78,12 @@ public class DenseVectorRetriever implements Retriever {
     // Helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Parse embedding_vector stored as JSON float array: [0.1, 0.2, ...].
-     * Returns empty array on any parse error.
-     */
+    /** Parse embedding_vector stored as JSON float array: [0.1, 0.2, ...] */
     @SuppressWarnings("unchecked")
     private float[] parseVector(String json) {
         if (json == null || json.isBlank()) return new float[0];
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper =
-                    com.coremasterkb.serving.util.JsonUtils.mapper();
-            List<Number> list = mapper.readValue(json, List.class);
+            List<Number> list = JsonUtils.mapper().readValue(json, List.class);
             float[] result = new float[list.size()];
             for (int i = 0; i < list.size(); i++) {
                 result[i] = list.get(i).floatValue();

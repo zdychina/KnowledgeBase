@@ -23,6 +23,10 @@ public class ServingProperties {
     @NestedConfigurationProperty
     private Fts fts = new Fts();
 
+    @Valid
+    @NestedConfigurationProperty
+    private Zhipu zhipu = new Zhipu();
+
     @Data
     public static class LlmService {
 
@@ -43,5 +47,23 @@ public class ServingProperties {
 
         @NotBlank
         private String strategy;
+    }
+
+    @Data
+    public static class Zhipu {
+
+        /** Zhipu API key. Leave blank to disable direct embedding calls. */
+        private String apiKey = "";
+
+        private String baseUrl = "https://open.bigmodel.cn/api/paas/v4";
+
+        private String embeddingModel = "embedding-3";
+
+        /** Dimension of the embedding vector (embedding-3 supports 64~2048). */
+        private int embeddingDimensions = 2048;
+
+        public boolean isConfigured() {
+            return apiKey != null && !apiKey.isBlank();
+        }
     }
 }

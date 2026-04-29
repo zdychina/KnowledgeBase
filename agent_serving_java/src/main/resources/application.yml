@@ -30,3 +30,8 @@ serving:
     read-timeout: ${LLM_SERVICE_READ_TIMEOUT:120s}
   fts:
     strategy: ${SERVING_FTS_STRATEGY:postgresql}
+  zhipu:
+    api-key: ${ZHIPU_API_KEY:}
+    base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+    embedding-model: ${ZHIPU_EMBEDDING_MODEL:embedding-3}
+    embedding-dimensions: ${ZHIPU_EMBEDDING_DIMENSIONS:2048}
