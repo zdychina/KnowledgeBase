@@ -31,7 +31,7 @@ serving:
   fts:
     strategy: ${SERVING_FTS_STRATEGY:postgresql}
   zhipu:
-    api-key: ${ZHIPU_API_KEY:bec7cc02fc88529bee532a07070f4e80.PbObZYZROyxvmtfq}
+    api-key: ${ZHIPU_API_KEY}
     base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
     embedding-model: ${ZHIPU_EMBEDDING_MODEL:embedding-3}
     embedding-dimensions: ${ZHIPU_EMBEDDING_DIMENSIONS:2048}
