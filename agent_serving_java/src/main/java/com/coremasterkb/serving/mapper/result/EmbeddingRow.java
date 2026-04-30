@@ -11,6 +11,7 @@ public class EmbeddingRow {
 
     private String retrievalUnitId;
     private String embeddingVector;     // serialized JSON float array
+    private int    embeddingDim;
 
     // Fields from asset_retrieval_units (needed to build RetrievalCandidate)
     private String documentSnapshotId;

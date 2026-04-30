@@ -12,6 +12,9 @@ public interface AssetRetrievalEmbeddingMapper extends BaseMapper<AssetRetrieval
     /**
      * Load embeddings (with unit metadata) scoped to the given snapshots.
      * Only rows where text_kind = 'search_text' are returned.
+     * {@code limit} acts as a safety cap to prevent unbounded memory use.
      */
-    List<EmbeddingRow> selectWithUnitMeta(@Param("snapshotIds") List<String> snapshotIds);
+    List<EmbeddingRow> selectWithUnitMeta(
+            @Param("snapshotIds") List<String> snapshotIds,
+            @Param("limit") int limit);
 }

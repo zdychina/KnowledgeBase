@@ -355,5 +355,7 @@ CREATE TABLE public.asset_retrieval_embeddings (
 
 CREATE INDEX idx_asset_retrieval_embeddings_unit
     ON public.asset_retrieval_embeddings(retrieval_unit_id);
+CREATE INDEX idx_asset_retrieval_embeddings_unit_kind
+    ON public.asset_retrieval_embeddings(retrieval_unit_id, text_kind);
 
 

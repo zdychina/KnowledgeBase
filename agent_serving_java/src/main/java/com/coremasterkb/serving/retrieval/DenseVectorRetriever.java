@@ -23,6 +23,8 @@ public class DenseVectorRetriever implements Retriever {
     private static final Logger log = LoggerFactory.getLogger(DenseVectorRetriever.class);
     private static final String SOURCE_NAME = "dense_vector";
     private static final int DEFAULT_TOP_K = 50;
+    // Safety cap: prevents unbounded memory load; cosine similarity still runs over all loaded rows
+    private static final int MAX_LOAD = 5_000;
 
     private final ZhipuClient zhipuClient;
     private final AssetRetrievalEmbeddingMapper embeddingMapper;
@@ -49,16 +51,17 @@ public class DenseVectorRetriever implements Retriever {
         float[] queryVec = zhipuClient.embed(queryText);
         if (queryVec.length == 0) return Collections.emptyList();
 
-        // Step 2: load stored embeddings with unit metadata
-        List<EmbeddingRow> rows = embeddingMapper.selectWithUnitMeta(snapshotIds);
+        // Step 2: load stored embeddings with unit metadata (capped at MAX_LOAD)
+        List<EmbeddingRow> rows = embeddingMapper.selectWithUnitMeta(snapshotIds, MAX_LOAD);
         if (rows.isEmpty()) return Collections.emptyList();
 
-        // Step 3: cosine similarity
+        // Step 3: cosine similarity; skip rows whose stored dim mismatches the query vector
         record Scored(double score, EmbeddingRow row) {}
         List<Scored> scored = new ArrayList<>();
         for (EmbeddingRow row : rows) {
+            if (row.getEmbeddingDim() != queryVec.length) continue;
             float[] stored = parseVector(row.getEmbeddingVector());
-            if (stored.length == 0 || stored.length != queryVec.length) continue;
+            if (stored.length == 0) continue;
             double sim = cosineSimilarity(queryVec, stored);
             scored.add(new Scored(sim, row));
         }
