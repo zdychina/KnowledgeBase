@@ -1,5 +1,6 @@
 package com.coremasterkb.serving.retrieval;
 
+import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.coremasterkb.serving.domain.QueryPlan;
 import com.coremasterkb.serving.domain.RetrievalCandidate;
 import com.coremasterkb.serving.mapper.AssetRetrievalUnitMapper;
@@ -11,15 +12,13 @@ import java.util.stream.Collectors;
 
 /**
  * PostgreSQL full-text search retriever using ts_rank + websearch_to_tsquery.
- * Java-side tokenization filters stopwords before building the FTS query.
- * Install pg_jieba on the DB for proper Chinese tokenization.
+ * Query-side tokenization uses jieba (Java port) to match write-side Python jieba segmentation.
  */
 public class FtsRetriever implements Retriever {
 
     private static final String SOURCE_NAME = "fts_bm25";
 
-    private static final Pattern SPLIT_PATTERN =
-            Pattern.compile("[\\s,，、？?。.！!；;：:]+");
+    private static final JiebaSegmenter SEGMENTER = new JiebaSegmenter();
 
     private static final Pattern CJK_PATTERN =
             Pattern.compile("[\\u4e00-\\u9fff]");
@@ -88,22 +87,16 @@ public class FtsRetriever implements Retriever {
     }
 
     /**
-     * Tokenize text: split on punctuation/whitespace, keep tokens of length >= 2
-     * or single CJK characters, and filter stopwords.
+     * Tokenize text using jieba segmentation (matches write-side Python jieba),
+     * then filter stopwords and short tokens.
      */
     public List<String> tokenize(String text) {
         if (text == null || text.isBlank()) return Collections.emptyList();
-        String[] parts = SPLIT_PATTERN.split(text.trim());
-        List<String> tokens = new ArrayList<>();
-        for (String part : parts) {
-            if (part.isEmpty()) continue;
-            if (part.length() >= 2 || CJK_PATTERN.matcher(part).matches()) {
-                String lower = part.toLowerCase();
-                if (!STOPWORDS_ZH.contains(part) && !STOPWORDS_EN.contains(lower)) {
-                    tokens.add(part);
-                }
-            }
-        }
-        return tokens;
+        return SEGMENTER.sentenceProcess(text).stream()
+                .map(String::trim)
+                .filter(t -> !t.isBlank())
+                .filter(t -> t.length() >= 2 || CJK_PATTERN.matcher(t).matches())
+                .filter(t -> !STOPWORDS_ZH.contains(t) && !STOPWORDS_EN.contains(t.toLowerCase()))
+                .collect(Collectors.toList());
     }
 }
