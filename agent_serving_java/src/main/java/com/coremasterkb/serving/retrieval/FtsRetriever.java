@@ -6,6 +6,11 @@ import com.coremasterkb.serving.domain.RetrievalCandidate;
 import com.coremasterkb.serving.mapper.AssetRetrievalUnitMapper;
 import com.coremasterkb.serving.mapper.result.FtsResultRow;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -13,6 +18,7 @@ import java.util.stream.Collectors;
 /**
  * PostgreSQL full-text search retriever using ts_rank + websearch_to_tsquery.
  * Query-side tokenization uses jieba (Java port) to match write-side Python jieba segmentation.
+ * Stopwords are loaded from classpath: fts/stopwords_zh.txt and fts/stopwords_en.txt.
  */
 public class FtsRetriever implements Retriever {
 
@@ -23,17 +29,25 @@ public class FtsRetriever implements Retriever {
     private static final Pattern CJK_PATTERN =
             Pattern.compile("[\\u4e00-\\u9fff]");
 
-    private static final Set<String> STOPWORDS_ZH = Set.of(
-            "的","了","在","是","和","与","及","或","也","都","这","那","有","没","不","会","能","要",
-            "可以","什么","怎么","如何","哪些","为什么","吗","呢","啊","个","一","到","把","被","让",
-            "给","从","对","等","请问","帮我","告诉","知道","想","应该","需要"
-    );
+    private static final Set<String> STOPWORDS_ZH = loadStopwords("fts/stopwords_zh.txt");
+    private static final Set<String> STOPWORDS_EN = loadStopwords("fts/stopwords_en.txt");
 
-    private static final Set<String> STOPWORDS_EN = Set.of(
-            "a","an","the","is","are","was","were","be","been","do","does","did",
-            "has","have","had","and","or","but","not","no","in","on","at","to","of",
-            "for","with","from","by","as","what","which","how","why","when","where","who"
-    );
+    private static Set<String> loadStopwords(String classpathResource) {
+        try (InputStream is = FtsRetriever.class.getClassLoader().getResourceAsStream(classpathResource)) {
+            if (is == null) return Set.of();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
+                Set<String> words = new HashSet<>();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = line.strip();
+                    if (!line.isEmpty()) words.add(line);
+                }
+                return Collections.unmodifiableSet(words);
+            }
+        } catch (IOException e) {
+            return Set.of();
+        }
+    }
 
     private final AssetRetrievalUnitMapper retrievalUnitMapper;
 
@@ -89,14 +103,18 @@ public class FtsRetriever implements Retriever {
     /**
      * Tokenize text using jieba segmentation (matches write-side Python jieba),
      * then filter stopwords and short tokens.
+     * Falls back to raw jieba output when all tokens are filtered out (e.g. "不可以").
      */
     public List<String> tokenize(String text) {
         if (text == null || text.isBlank()) return Collections.emptyList();
-        return SEGMENTER.sentenceProcess(text).stream()
+        List<String> raw = SEGMENTER.sentenceProcess(text).stream()
                 .map(String::trim)
                 .filter(t -> !t.isBlank())
+                .toList();
+        List<String> filtered = raw.stream()
                 .filter(t -> t.length() >= 2 || CJK_PATTERN.matcher(t).matches())
                 .filter(t -> !STOPWORDS_ZH.contains(t) && !STOPWORDS_EN.contains(t.toLowerCase()))
                 .collect(Collectors.toList());
+        return filtered.isEmpty() ? raw : filtered;
     }
 }
