@@ -23,7 +23,7 @@
 
     <!--
         Load embeddings + unit metadata for active snapshots.
-        Only text_kind='search_text' rows are used; one embedding per unit is assumed.
+        text_kind filter omitted temporarily; one embedding per unit is assumed.
     -->
     <select id="selectWithUnitMeta" resultMap="embeddingRowMap">
         SELECT re.retrieval_unit_id,
@@ -42,8 +42,7 @@
                ru.source_segment_id
         FROM asset_retrieval_embeddings re
         JOIN asset_retrieval_units ru ON re.retrieval_unit_id = ru.id
-        WHERE re.text_kind = 'search_text'
-          AND ru.document_snapshot_id IN
+        WHERE ru.document_snapshot_id IN
         <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
             #{sid}
         </foreach>
