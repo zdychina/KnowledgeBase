@@ -39,6 +39,10 @@ serving:
   assembler:
     low-confidence-threshold: 0.1
   retrieval:
+    enabled-retrievers:
+      - fts_bm25
+      - dense_vector
+      - entity_exact
     rrf-k: 60
     retriever-weights:
       fts_bm25: 1.0

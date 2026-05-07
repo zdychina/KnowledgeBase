@@ -140,7 +140,7 @@ public class ServingBeans {
     @Bean
     public RulePlannerProvider rulePlannerProvider() {
         ServingProperties.Retrieval cfg = properties.getRetrieval();
-        return new RulePlannerProvider(cfg.getRrfK(), cfg.getRetrieverWeights());
+        return new RulePlannerProvider(cfg.getRrfK(), cfg.getEnabledRetrievers(), cfg.getRetrieverWeights());
     }
 
     @Bean

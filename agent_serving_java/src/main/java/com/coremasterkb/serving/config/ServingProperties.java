@@ -9,6 +9,7 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -103,6 +104,9 @@ public class ServingProperties {
     public static class Retrieval {
 
         private int rrfK = 60;
+
+        /** Whitelist of retrievers that may be activated. Remove an entry to disable it globally. */
+        private List<String> enabledRetrievers = List.of("fts_bm25", "dense_vector", "entity_exact");
 
         private Map<String, Double> retrieverWeights = Map.of(
                 "fts_bm25", 1.0,

@@ -20,11 +20,14 @@ import java.util.*;
 public class RulePlannerProvider implements PlannerProvider {
 
     private final int rrfK;
+    private final Set<String> allowedRetrievers;
     private final Map<String, Double> retrieverWeights;
 
-    public RulePlannerProvider(int rrfK, Map<String, Double> retrieverWeights) {
-        this.rrfK             = rrfK;
-        this.retrieverWeights = retrieverWeights;
+    public RulePlannerProvider(int rrfK, List<String> enabledRetrievers,
+                               Map<String, Double> retrieverWeights) {
+        this.rrfK              = rrfK;
+        this.allowedRetrievers = new HashSet<>(enabledRetrievers);
+        this.retrieverWeights  = retrieverWeights;
     }
 
     @Override
@@ -50,17 +53,21 @@ public class RulePlannerProvider implements PlannerProvider {
         List<String> enabledRetrievers = new ArrayList<>();
         Map<String, Double> weights    = new LinkedHashMap<>();
 
-        enabledRetrievers.add("fts_bm25");
-        weights.put("fts_bm25", retrieverWeights.getOrDefault("fts_bm25", 1.0));
+        if (allowedRetrievers.contains("fts_bm25")) {
+            enabledRetrievers.add("fts_bm25");
+            weights.put("fts_bm25", retrieverWeights.getOrDefault("fts_bm25", 1.0));
+        }
 
-        if (!entities.isEmpty()) {
+        if (!entities.isEmpty() && allowedRetrievers.contains("entity_exact")) {
             enabledRetrievers.add("entity_exact");
             weights.put("entity_exact", retrieverWeights.getOrDefault("entity_exact", 1.0));
         }
 
         // dense_vector is always requested; DenseVectorRetriever handles unavailability
-        enabledRetrievers.add("dense_vector");
-        weights.put("dense_vector", retrieverWeights.getOrDefault("dense_vector", 0.8));
+        if (allowedRetrievers.contains("dense_vector")) {
+            enabledRetrievers.add("dense_vector");
+            weights.put("dense_vector", retrieverWeights.getOrDefault("dense_vector", 0.8));
+        }
 
         String fusionMethod = enabledRetrievers.size() > 1 ? "weighted_rrf" : "identity";
 
