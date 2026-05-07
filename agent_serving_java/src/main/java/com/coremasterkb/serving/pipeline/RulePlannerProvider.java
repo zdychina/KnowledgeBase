@@ -19,6 +19,14 @@ import java.util.*;
  */
 public class RulePlannerProvider implements PlannerProvider {
 
+    private final int rrfK;
+    private final Map<String, Double> retrieverWeights;
+
+    public RulePlannerProvider(int rrfK, Map<String, Double> retrieverWeights) {
+        this.rrfK             = rrfK;
+        this.retrieverWeights = retrieverWeights;
+    }
+
     @Override
     public QueryPlan buildPlan(
             NormalizedQuery normalized,
@@ -43,23 +51,23 @@ public class RulePlannerProvider implements PlannerProvider {
         Map<String, Double> weights    = new LinkedHashMap<>();
 
         enabledRetrievers.add("fts_bm25");
-        weights.put("fts_bm25", 1.0);
+        weights.put("fts_bm25", retrieverWeights.getOrDefault("fts_bm25", 1.0));
 
         if (!entities.isEmpty()) {
             enabledRetrievers.add("entity_exact");
-            weights.put("entity_exact", 1.0);
+            weights.put("entity_exact", retrieverWeights.getOrDefault("entity_exact", 1.0));
         }
 
         // dense_vector is always requested; DenseVectorRetriever handles unavailability
         enabledRetrievers.add("dense_vector");
-        weights.put("dense_vector", 0.8);
+        weights.put("dense_vector", retrieverWeights.getOrDefault("dense_vector", 0.8));
 
         String fusionMethod = enabledRetrievers.size() > 1 ? "weighted_rrf" : "identity";
 
         RetrieverConfig retrieverConfig = new RetrieverConfig(
                 Collections.unmodifiableList(enabledRetrievers),
                 fusionMethod,
-                60,
+                rrfK,
                 Collections.unmodifiableMap(weights)
         );
 

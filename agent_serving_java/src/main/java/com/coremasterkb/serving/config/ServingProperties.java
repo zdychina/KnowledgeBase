@@ -9,6 +9,7 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.util.Map;
 import java.util.Set;
 
 @ConfigurationProperties(prefix = "serving")
@@ -80,10 +81,24 @@ public class ServingProperties {
     }
 
     @NestedConfigurationProperty
+    private Retrieval retrieval = new Retrieval();
+
+    @NestedConfigurationProperty
     private DenseVector denseVector = new DenseVector();
 
     @NestedConfigurationProperty
     private Reranker reranker = new Reranker();
+
+    @Data
+    public static class Retrieval {
+
+        private int rrfK = 60;
+
+        private Map<String, Double> retrieverWeights = Map.of(
+                "fts_bm25", 1.0,
+                "entity_exact", 1.0,
+                "dense_vector", 0.8);
+    }
 
     @Data
     public static class DenseVector {
