@@ -163,7 +163,8 @@ public class ServingBeans {
     @Bean
     public ContextAssembler contextAssembler(
             AssetRepository assetRepository, GraphExpander graphExpander) {
-        return new ContextAssembler(assetRepository, graphExpander);
+        return new ContextAssembler(assetRepository, graphExpander,
+                properties.getAssembler().getLowConfidenceThreshold());
     }
 
     // -------------------------------------------------------------------------

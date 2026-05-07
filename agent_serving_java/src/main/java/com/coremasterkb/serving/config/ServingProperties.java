@@ -81,6 +81,9 @@ public class ServingProperties {
     }
 
     @NestedConfigurationProperty
+    private Assembler assembler = new Assembler();
+
+    @NestedConfigurationProperty
     private Retrieval retrieval = new Retrieval();
 
     @NestedConfigurationProperty
@@ -88,6 +91,13 @@ public class ServingProperties {
 
     @NestedConfigurationProperty
     private Reranker reranker = new Reranker();
+
+    @Data
+    public static class Assembler {
+
+        /** Candidates below this score trigger a low-confidence issue in the response. */
+        private double lowConfidenceThreshold = 0.1;
+    }
 
     @Data
     public static class Retrieval {

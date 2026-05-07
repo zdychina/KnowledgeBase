@@ -36,6 +36,8 @@ serving:
     embedding-model: ${ZHIPU_EMBEDDING_MODEL:embedding-3}
     embedding-dimensions: ${ZHIPU_EMBEDDING_DIMENSIONS:2048}
     rerank-model: ${ZHIPU_RERANK_MODEL:rerank}
+  assembler:
+    low-confidence-threshold: 0.1
   retrieval:
     rrf-k: 60
     retriever-weights:

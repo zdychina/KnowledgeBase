@@ -20,10 +20,13 @@ public class ContextAssembler {
 
     private final AssetRepository repo;
     private final GraphExpander graphExpander;
+    private final double lowConfidenceThreshold;
 
-    public ContextAssembler(AssetRepository repo, GraphExpander graphExpander) {
+    public ContextAssembler(AssetRepository repo, GraphExpander graphExpander,
+                            double lowConfidenceThreshold) {
         this.repo = repo;
         this.graphExpander = graphExpander;
+        this.lowConfidenceThreshold = lowConfidenceThreshold;
     }
 
     public ContextPack assemble(
@@ -274,7 +277,7 @@ public class ContextAssembler {
                     "No retrieval results found for the query."));
             return issues;
         }
-        boolean allLowConfidence = candidates.stream().allMatch(c -> c.score() < 0.1);
+        boolean allLowConfidence = candidates.stream().allMatch(c -> c.score() < lowConfidenceThreshold);
         if (allLowConfidence) {
             issues.add(new Issue(ServingConstants.ISSUE_LOW_CONFIDENCE,
                     "All retrieved results have very low confidence scores."));
