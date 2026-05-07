@@ -9,6 +9,7 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.util.Set;
 
 @ConfigurationProperties(prefix = "serving")
 @Validated
@@ -26,6 +27,9 @@ public class ServingProperties {
     @Valid
     @NestedConfigurationProperty
     private Zhipu zhipu = new Zhipu();
+
+    @NestedConfigurationProperty
+    private Domain domain = new Domain();
 
     @Data
     public static class LlmService {
@@ -63,5 +67,15 @@ public class ServingProperties {
         private int embeddingDimensions;
 
         private String rerankModel;
+    }
+
+    @Data
+    public static class Domain {
+
+        private Set<String> products = Set.of("UDG", "UNC", "CloudCore");
+
+        private Set<String> networkElements = Set.of(
+                "AMF", "SMF", "UPF", "UDM", "PCF", "NRF",
+                "AUSF", "BSF", "NSSF", "SCP", "UDSF", "UDR");
     }
 }

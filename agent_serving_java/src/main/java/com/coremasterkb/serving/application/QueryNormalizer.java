@@ -50,13 +50,8 @@ public class QueryNormalizer {
             "配置", "SET"
     );
 
-    // ---- Known products ----
-    private static final Set<String> PRODUCTS = Set.of("UDG", "UNC", "CloudCore");
-
-    // ---- Known network elements ----
-    private static final Set<String> NETWORK_ELEMENTS = Set.of(
-            "AMF","SMF","UPF","UDM","PCF","NRF","AUSF","BSF","NSSF","SCP","UDSF","UDR"
-    );
+    private final Set<String> products;
+    private final Set<String> networkElements;
 
     // ---- Intent keywords ----
     private static final Map<String, List<String>> INTENT_KEYWORDS = Map.of(
@@ -111,8 +106,10 @@ public class QueryNormalizer {
 
     private final LlmRuntimeClient llmClient; // nullable
 
-    public QueryNormalizer(LlmRuntimeClient llmClient) {
+    public QueryNormalizer(LlmRuntimeClient llmClient, Set<String> products, Set<String> networkElements) {
         this.llmClient = llmClient;
+        this.products = products;
+        this.networkElements = networkElements;
     }
 
     // -------------------------------------------------------------------------
@@ -257,13 +254,13 @@ public class QueryNormalizer {
             }
         }
 
-        for (String product : PRODUCTS) {
+        for (String product : products) {
             if (query.contains(product)) {
                 entities.add(new EntityRef("product", product, product));
             }
         }
 
-        for (String ne : NETWORK_ELEMENTS) {
+        for (String ne : networkElements) {
             if (query.matches(".*(?<![A-Z])" + ne + "(?![A-Z]).*")) {
                 entities.add(new EntityRef("network_element", ne, ne));
             }
@@ -304,11 +301,11 @@ public class QueryNormalizer {
         Matcher verMatcher = VERSION_PATTERN.matcher(query);
         if (verMatcher.find()) scope.put("version", verMatcher.group());
 
-        for (String product : PRODUCTS) {
+        for (String product : products) {
             if (query.contains(product)) { scope.put("product", product); break; }
         }
 
-        for (String ne : NETWORK_ELEMENTS) {
+        for (String ne : networkElements) {
             if (query.matches(".*(?<![A-Z])" + ne + "(?![A-Z]).*")) {
                 scope.put("network_element", ne); break;
             }

@@ -148,7 +148,8 @@ public class ServingBeans {
     public QueryNormalizer queryNormalizer(LlmRuntimeClient llmRuntimeClient) {
         LlmRuntimeClient effective = properties.getLlmService().isEnabled()
                 ? llmRuntimeClient : null;
-        return new QueryNormalizer(effective);
+        ServingProperties.Domain domain = properties.getDomain();
+        return new QueryNormalizer(effective, domain.getProducts(), domain.getNetworkElements());
     }
 
     @Bean
