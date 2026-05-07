@@ -8,6 +8,9 @@ import com.coremasterkb.serving.domain.NormalizedQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -105,11 +108,22 @@ public class QueryNormalizer {
     );
 
     private final LlmRuntimeClient llmClient; // nullable
+    private final String llmSystemPrompt;
 
     public QueryNormalizer(LlmRuntimeClient llmClient, Set<String> products, Set<String> networkElements) {
         this.llmClient = llmClient;
         this.products = products;
         this.networkElements = networkElements;
+        this.llmSystemPrompt = loadPrompt("prompts/normalizer-system-prompt.txt");
+    }
+
+    private static String loadPrompt(String classpathResource) {
+        try (InputStream is = QueryNormalizer.class.getClassLoader().getResourceAsStream(classpathResource)) {
+            if (is == null) throw new IllegalStateException("Prompt file not found: " + classpathResource);
+            return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to load prompt: " + classpathResource, e);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -136,27 +150,12 @@ public class QueryNormalizer {
     // LLM normalization
     // -------------------------------------------------------------------------
 
-    private static final String LLM_SYSTEM_PROMPT =
-            "You are a query normalization assistant for a telecom knowledge base.\n" +
-            "Analyze the user query and return a JSON object with exactly these fields:\n" +
-            "- intent: one of [command_usage, troubleshooting, concept_lookup, procedure, comparative, general]\n" +
-            "- normalized_query: a cleaner restatement of the query\n" +
-            "- keywords: array of key terms (strings)\n" +
-            "- desired_roles: array of relevant roles from " +
-            "[parameter, example, procedure_step, troubleshooting_step, alarm, constraint, concept, note]\n" +
-            "- entities: array of {type, name, normalized_name} where type is one of " +
-            "[command, product, version, network_element, command_op]\n" +
-            "- scope: object with optional fields {version, product, network_element}\n" +
-            "- evidence_need: object with fields " +
-            "{preferred_roles: [], preferred_blocks: [], needs_comparison: bool, needs_citation: bool}\n" +
-            "Return only the JSON object, no explanation.";
-
     private NormalizedQuery normalizeWithLlm(String query) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("caller_domain", "serving");
         payload.put("pipeline_stage", "normalizer");
         payload.put("messages", List.of(
-                Map.of("role", "system", "content", LLM_SYSTEM_PROMPT),
+                Map.of("role", "system", "content", llmSystemPrompt),
                 Map.of("role", "user",   "content", query)
         ));
         payload.put("expected_output_type", "json_object");
