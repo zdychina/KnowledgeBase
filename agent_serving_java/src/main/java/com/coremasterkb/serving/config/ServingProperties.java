@@ -78,4 +78,26 @@ public class ServingProperties {
                 "AMF", "SMF", "UPF", "UDM", "PCF", "NRF",
                 "AUSF", "BSF", "NSSF", "SCP", "UDSF", "UDR");
     }
+
+    @NestedConfigurationProperty
+    private Reranker reranker = new Reranker();
+
+    @Data
+    public static class Reranker {
+
+        /** Multiplier applied to low-value block types (heading, toc, link). */
+        private double lowValueBlockPenalty = 0.3;
+
+        /** Score added when semantic_role matches a desired role. */
+        private double boostSemanticRole = 0.30;
+
+        /** Score added when block_type matches a desired block type. */
+        private double boostBlockType = 0.15;
+
+        /** Score added when scope constraints match the candidate's facets. */
+        private double boostScopeMatch = 0.20;
+
+        /** Score added when entity constraints match the candidate's entity refs. */
+        private double boostEntityMatch = 0.25;
+    }
 }

@@ -20,6 +20,21 @@ public class ScoreReranker implements Reranker {
 
     private static final Set<String> LOW_VALUE_BLOCK_TYPES = Set.of("heading", "toc", "link");
 
+    private final double lowValueBlockPenalty;
+    private final double boostSemanticRole;
+    private final double boostBlockType;
+    private final double boostScopeMatch;
+    private final double boostEntityMatch;
+
+    public ScoreReranker(double lowValueBlockPenalty, double boostSemanticRole,
+                         double boostBlockType, double boostScopeMatch, double boostEntityMatch) {
+        this.lowValueBlockPenalty = lowValueBlockPenalty;
+        this.boostSemanticRole    = boostSemanticRole;
+        this.boostBlockType       = boostBlockType;
+        this.boostScopeMatch      = boostScopeMatch;
+        this.boostEntityMatch     = boostEntityMatch;
+    }
+
     @Override
     public List<RetrievalCandidate> rerank(List<RetrievalCandidate> candidates, QueryPlan plan) {
         if (candidates == null || candidates.isEmpty()) {
@@ -39,7 +54,7 @@ public class ScoreReranker implements Reranker {
 
             // Stage 2: downweight low-value block types
             if (blockType != null && LOW_VALUE_BLOCK_TYPES.contains(blockType.toLowerCase())) {
-                score *= 0.3;
+                score *= lowValueBlockPenalty;
             }
 
             // Stage 3: rule-based boosts
@@ -103,12 +118,12 @@ public class ScoreReranker implements Reranker {
         // Boost: semantic_role in desired_roles
         String semanticRole = getStringMeta(c, "semantic_role");
         if (semanticRole != null && desiredRoles != null && desiredRoles.contains(semanticRole)) {
-            score += 0.3;
+            score += boostSemanticRole;
         }
 
         // Boost: block_type in desired_block_types
         if (blockType != null && desiredBlockTypes != null && desiredBlockTypes.contains(blockType)) {
-            score += 0.15;
+            score += boostBlockType;
         }
 
         // Boost: scope match in facets_json
@@ -116,7 +131,7 @@ public class ScoreReranker implements Reranker {
         if (facetsJson != null && !facetsJson.isBlank() && !scopeConstraints.isEmpty()) {
             Map<String, Object> facets = JsonUtils.safeJsonParse(facetsJson);
             if (scopeMatchesFacets(scopeConstraints, facets)) {
-                score += 0.2;
+                score += boostScopeMatch;
             }
         }
 
@@ -125,7 +140,7 @@ public class ScoreReranker implements Reranker {
         if (entityRefsJson != null && !entityRefsJson.isBlank()
                 && entityConstraints != null && !entityConstraints.isEmpty()) {
             if (entityMatchesRefs(entityConstraints, entityRefsJson)) {
-                score += 0.25;
+                score += boostEntityMatch;
             }
         }
 

@@ -118,7 +118,13 @@ public class ServingBeans {
 
     @Bean
     public ScoreReranker scoreReranker() {
-        return new ScoreReranker();
+        ServingProperties.Reranker cfg = properties.getReranker();
+        return new ScoreReranker(
+                cfg.getLowValueBlockPenalty(),
+                cfg.getBoostSemanticRole(),
+                cfg.getBoostBlockType(),
+                cfg.getBoostScopeMatch(),
+                cfg.getBoostEntityMatch());
     }
 
     @Bean
