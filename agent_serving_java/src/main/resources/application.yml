@@ -36,6 +36,9 @@ serving:
     embedding-model: ${ZHIPU_EMBEDDING_MODEL:embedding-3}
     embedding-dimensions: ${ZHIPU_EMBEDDING_DIMENSIONS:2048}
     rerank-model: ${ZHIPU_RERANK_MODEL:rerank}
+  dense-vector:
+    top-k: 50
+    max-load: 5000
   reranker:
     low-value-block-penalty: 0.3
     boost-semantic-role: 0.30

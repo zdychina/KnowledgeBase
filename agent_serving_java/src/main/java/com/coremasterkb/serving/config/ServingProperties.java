@@ -80,7 +80,20 @@ public class ServingProperties {
     }
 
     @NestedConfigurationProperty
+    private DenseVector denseVector = new DenseVector();
+
+    @NestedConfigurationProperty
     private Reranker reranker = new Reranker();
+
+    @Data
+    public static class DenseVector {
+
+        /** Number of top candidates returned after cosine similarity ranking. */
+        private int topK = 50;
+
+        /** Maximum number of embedding rows loaded from DB per query. */
+        private int maxLoad = 5000;
+    }
 
     @Data
     public static class Reranker {

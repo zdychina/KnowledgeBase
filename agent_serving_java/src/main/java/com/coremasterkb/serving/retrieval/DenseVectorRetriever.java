@@ -22,17 +22,20 @@ public class DenseVectorRetriever implements Retriever {
 
     private static final Logger log = LoggerFactory.getLogger(DenseVectorRetriever.class);
     private static final String SOURCE_NAME = "dense_vector";
-    private static final int DEFAULT_TOP_K = 50;
-    // Safety cap: prevents unbounded memory load; cosine similarity still runs over all loaded rows
-    private static final int MAX_LOAD = 5_000;
 
     private final ZhipuClient zhipuClient;
     private final AssetRetrievalEmbeddingMapper embeddingMapper;
+    private final int topK;
+    // Safety cap: prevents unbounded memory load; cosine similarity still runs over all loaded rows
+    private final int maxLoad;
 
     public DenseVectorRetriever(ZhipuClient zhipuClient,
-                                AssetRetrievalEmbeddingMapper embeddingMapper) {
+                                AssetRetrievalEmbeddingMapper embeddingMapper,
+                                int topK, int maxLoad) {
         this.zhipuClient     = zhipuClient;
         this.embeddingMapper = embeddingMapper;
+        this.topK            = topK;
+        this.maxLoad         = maxLoad;
     }
 
     @Override
@@ -52,7 +55,7 @@ public class DenseVectorRetriever implements Retriever {
         if (queryVec.length == 0) return Collections.emptyList();
 
         // Step 2: load stored embeddings with unit metadata (capped at MAX_LOAD)
-        List<EmbeddingRow> rows = embeddingMapper.selectWithUnitMeta(snapshotIds, MAX_LOAD);
+        List<EmbeddingRow> rows = embeddingMapper.selectWithUnitMeta(snapshotIds, maxLoad);
         if (rows.isEmpty()) return Collections.emptyList();
 
         // Step 3: cosine similarity; skip rows whose stored dim mismatches the query vector
@@ -68,7 +71,7 @@ public class DenseVectorRetriever implements Retriever {
 
         // Step 4: sort desc, truncate to top-k
         scored.sort(Comparator.comparingDouble(Scored::score).reversed());
-        int limit = Math.min(DEFAULT_TOP_K, scored.size());
+        int limit = Math.min(topK, scored.size());
 
         return scored.subList(0, limit).stream()
                 .map(s -> rowToCandidate(s.row(), s.score()))

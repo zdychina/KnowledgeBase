@@ -85,7 +85,8 @@ public class ServingBeans {
     public DenseVectorRetriever denseVectorRetriever(
             ZhipuClient zhipuClient,
             AssetRetrievalEmbeddingMapper embeddingMapper) {
-        return new DenseVectorRetriever(zhipuClient, embeddingMapper);
+        ServingProperties.DenseVector cfg = properties.getDenseVector();
+        return new DenseVectorRetriever(zhipuClient, embeddingMapper, cfg.getTopK(), cfg.getMaxLoad());
     }
 
     @Bean
