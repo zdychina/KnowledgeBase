@@ -2,15 +2,14 @@
 import json
 
 import pytest
-import pytest_asyncio
 
 from agent_serving.serving.schemas.models import RetrievalQuery
 from agent_serving.serving.retrieval.bm25_retriever import FTS5BM25Retriever
 from agent_serving.tests.conftest import SNAP_UDG, SNAP_FEATURE
 
 
-@pytest_asyncio.fixture
-async def retriever(pg_pool):
+@pytest.fixture
+def retriever(pg_pool):
     return FTS5BM25Retriever(pg_pool)
 
 
@@ -70,20 +69,18 @@ class TestBuildScopeFilter:
 
 @pytest.mark.pg
 class TestBM25Retrieve:
-    @pytest.mark.asyncio
-    async def test_tsvector_returns_scored_candidates(self, retriever):
+    def test_tsvector_returns_scored_candidates(self, retriever):
         rq = RetrievalQuery(
             original_query="ADD APN",
             keywords=["ADD", "APN"],
         )
-        results = await retriever.retrieve(rq, [SNAP_UDG])
+        results = retriever.retrieve(rq, [SNAP_UDG])
         assert len(results) > 0
         assert all(r.source == "fts_bm25" for r in results)
         assert all(r.score > 0 for r in results)
         assert any("APN" in (r.metadata.get("text", "") or "") for r in results)
 
-    @pytest.mark.asyncio
-    async def test_scope_pushdown_filters_by_facets(self, retriever):
+    def test_scope_pushdown_filters_by_facets(self, retriever):
         """Query with scope={"products": ["UDG"]} should only return UDG items."""
         rq_noscope = RetrievalQuery(
             original_query="ADD APN",
@@ -94,31 +91,28 @@ class TestBM25Retrieve:
             keywords=["ADD", "APN"],
             scope={"products": ["UDG"]},
         )
-        results_all = await retriever.retrieve(rq_noscope, [SNAP_UDG, SNAP_FEATURE])
-        results_udg = await retriever.retrieve(rq_scope, [SNAP_UDG, SNAP_FEATURE])
+        results_all = retriever.retrieve(rq_noscope, [SNAP_UDG, SNAP_FEATURE])
+        results_udg = retriever.retrieve(rq_scope, [SNAP_UDG, SNAP_FEATURE])
         # Scope filter should reduce or equal results
         assert len(results_udg) <= len(results_all)
 
-    @pytest.mark.asyncio
-    async def test_empty_snapshot_ids(self, retriever):
+    def test_empty_snapshot_ids(self, retriever):
         rq = RetrievalQuery(original_query="ADD APN", keywords=["ADD"])
-        results = await retriever.retrieve(rq, [])
+        results = retriever.retrieve(rq, [])
         assert results == []
 
-    @pytest.mark.asyncio
-    async def test_empty_keywords_returns_empty(self, retriever):
+    def test_empty_keywords_returns_empty(self, retriever):
         rq = RetrievalQuery(original_query="")
-        results = await retriever.retrieve(rq, [SNAP_UDG])
+        results = retriever.retrieve(rq, [SNAP_UDG])
         assert results == []
 
-    @pytest.mark.asyncio
-    async def test_chinese_query_trigram_fallback(self, retriever):
+    def test_chinese_query_trigram_fallback(self, retriever):
         """Chinese text likely triggers trigram similarity fallback."""
         rq = RetrievalQuery(
             original_query="会话管理",
             keywords=["会话", "管理"],
         )
-        results = await retriever.retrieve(rq, [SNAP_FEATURE])
+        results = retriever.retrieve(rq, [SNAP_FEATURE])
         # May return results via trigram or LIKE fallback
         # At minimum, should not raise an error
         assert isinstance(results, list)

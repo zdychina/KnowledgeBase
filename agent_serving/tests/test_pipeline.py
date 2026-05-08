@@ -38,29 +38,26 @@ def _candidate(ru_id, score, source="fts_bm25"):
 
 
 class TestIdentityFusion:
-    @pytest.mark.asyncio
-    async def test_dedup_keeps_higher_score(self):
+    def test_dedup_keeps_higher_score(self):
         fusion = IdentityFusion()
         candidates = [
             _candidate("a", 0.9, "fts"),
             _candidate("a", 0.5, "like"),
             _candidate("b", 0.7, "fts"),
         ]
-        result = await fusion.fuse(candidates, QueryPlan())
+        result = fusion.fuse(candidates, QueryPlan())
         assert len(result) == 2
         assert result[0].score == 0.9  # Sorted desc
         assert result[1].score == 0.7
 
-    @pytest.mark.asyncio
-    async def test_empty_input(self):
+    def test_empty_input(self):
         fusion = IdentityFusion()
-        result = await fusion.fuse([], QueryPlan())
+        result = fusion.fuse([], QueryPlan())
         assert result == []
 
 
 class TestRRFFusion:
-    @pytest.mark.asyncio
-    async def test_multi_source_fusion(self):
+    def test_multi_source_fusion(self):
         fusion = RRFFusion(k=60)
         candidates = [
             _candidate("a", 0.9, "fts"),
@@ -68,43 +65,39 @@ class TestRRFFusion:
             _candidate("a", 0.5, "vector"),
             _candidate("c", 0.7, "vector"),
         ]
-        result = await fusion.fuse(candidates, QueryPlan())
+        result = fusion.fuse(candidates, QueryPlan())
         ids = [c.retrieval_unit_id for c in result]
         # "a" appears in both sources, should rank highest
         assert ids[0] == "a"
 
-    @pytest.mark.asyncio
-    async def test_single_source(self):
+    def test_single_source(self):
         fusion = RRFFusion()
         candidates = [_candidate("x", 0.9, "fts"), _candidate("y", 0.5, "fts")]
-        result = await fusion.fuse(candidates, QueryPlan())
+        result = fusion.fuse(candidates, QueryPlan())
         assert len(result) == 2
 
 
 class TestScoreReranker:
-    @pytest.mark.asyncio
-    async def test_role_preference(self):
+    def test_role_preference(self):
         reranker = ScoreReranker()
         plan = QueryPlan(desired_roles=["parameter"])
         candidates = [
             RetrievalCandidate(retrieval_unit_id="a", score=0.5, source="fts", metadata={"semantic_role": "concept"}),
             RetrievalCandidate(retrieval_unit_id="b", score=0.8, source="fts", metadata={"semantic_role": "parameter"}),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert result[0].metadata["semantic_role"] == "parameter"
 
-    @pytest.mark.asyncio
-    async def test_budget_truncation(self):
+    def test_budget_truncation(self):
         reranker = ScoreReranker()
         plan = QueryPlan(budget=RetrievalBudget(max_items=2))
         candidates = [_candidate(f"ru-{i}", i * 0.1) for i in range(5)]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert len(result) == 2
 
-    @pytest.mark.asyncio
-    async def test_empty_candidates(self):
+    def test_empty_candidates(self):
         reranker = ScoreReranker()
-        result = await reranker.rerank([], QueryPlan())
+        result = reranker.rerank([], QueryPlan())
         assert result == []
 
 
@@ -190,8 +183,7 @@ class TestJsonUtils:
 class TestV12Deduplication:
     """Step 1.5: raw_text / contextual_text dedup by source_segment_id."""
 
-    @pytest.mark.asyncio
-    async def test_dedup_keeps_higher_score(self):
+    def test_dedup_keeps_higher_score(self):
         reranker = ScoreReranker()
         plan = QueryPlan(budget=RetrievalBudget(max_items=10))
         candidates = [
@@ -204,13 +196,12 @@ class TestV12Deduplication:
                 metadata={"unit_type": "contextual_text", "source_segment_id": "seg-1"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         ids = [c.retrieval_unit_id for c in result]
         assert "ru-raw" in ids
         assert "ru-ctx" not in ids  # Deduped — lower score
 
-    @pytest.mark.asyncio
-    async def test_different_segments_not_deduped(self):
+    def test_different_segments_not_deduped(self):
         reranker = ScoreReranker()
         plan = QueryPlan(budget=RetrievalBudget(max_items=10))
         candidates = [
@@ -223,11 +214,10 @@ class TestV12Deduplication:
                 metadata={"unit_type": "raw_text", "source_segment_id": "seg-2"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert len(result) == 2
 
-    @pytest.mark.asyncio
-    async def test_entity_card_not_deduped(self):
+    def test_entity_card_not_deduped(self):
         reranker = ScoreReranker()
         plan = QueryPlan(budget=RetrievalBudget(max_items=10))
         candidates = [
@@ -240,15 +230,14 @@ class TestV12Deduplication:
                 metadata={"unit_type": "raw_text", "source_segment_id": "seg-1"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert len(result) == 2  # entity_card passes through dedup
 
 
 class TestV12Downweight:
     """Step 2.1: Low-value block_type downweight."""
 
-    @pytest.mark.asyncio
-    async def test_heading_downweighted(self):
+    def test_heading_downweighted(self):
         reranker = ScoreReranker()
         plan = QueryPlan(budget=RetrievalBudget(max_items=10))
         candidates = [
@@ -261,12 +250,11 @@ class TestV12Downweight:
                 metadata={"block_type": "paragraph"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         # paragraph should rank higher (heading was downweighted)
         assert result[0].retrieval_unit_id == "ru-para"
 
-    @pytest.mark.asyncio
-    async def test_toc_downweighted(self):
+    def test_toc_downweighted(self):
         reranker = ScoreReranker()
         plan = QueryPlan(budget=RetrievalBudget(max_items=10))
         candidates = [
@@ -279,7 +267,7 @@ class TestV12Downweight:
                 metadata={"block_type": "paragraph"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         # paragraph (0.5) still beats toc (1.0 * 0.3 = 0.3)
         assert result[0].retrieval_unit_id == "ru-para"
 
@@ -287,8 +275,7 @@ class TestV12Downweight:
 class TestV12RuleScoring:
     """Step 2.2: Rule-based scoring boost."""
 
-    @pytest.mark.asyncio
-    async def test_intent_role_boost(self):
+    def test_intent_role_boost(self):
         reranker = ScoreReranker()
         plan = QueryPlan(desired_roles=["parameter"])
         candidates = [
@@ -301,12 +288,11 @@ class TestV12RuleScoring:
                 metadata={"semantic_role": "parameter"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert result[0].retrieval_unit_id == "ru-param"
         assert result[0].score > result[1].score
 
-    @pytest.mark.asyncio
-    async def test_scope_boost(self):
+    def test_scope_boost(self):
         reranker = ScoreReranker()
         plan = QueryPlan(
             scope_constraints={"products": ["UDG"]},
@@ -322,11 +308,10 @@ class TestV12RuleScoring:
                 metadata={"facets_json": '{"products": ["UNC"]}'},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert result[0].retrieval_unit_id == "ru-match"
 
-    @pytest.mark.asyncio
-    async def test_entity_boost(self):
+    def test_entity_boost(self):
         reranker = ScoreReranker()
         plan = QueryPlan(
             keywords=["add apn"],
@@ -342,7 +327,7 @@ class TestV12RuleScoring:
                 metadata={"entity_refs_json": "[]"},
             ),
         ]
-        result = await reranker.rerank(candidates, plan)
+        result = reranker.rerank(candidates, plan)
         assert result[0].retrieval_unit_id == "ru-entity"
 
 
@@ -508,17 +493,16 @@ class TestV2DomainPackReader:
 class TestV2RetrieverManager:
     """RetrieverManager v2 route plan integration."""
 
-    @pytest.mark.asyncio
-    async def test_retrieve_from_route_plan(self):
+    def test_retrieve_from_route_plan(self):
         from agent_serving.serving.pipeline.retriever_manager import RetrieverManager
         from agent_serving.serving.schemas.models import (
             RetrievalRoutePlan,
             RouteConfig,
             ScoreChain,
         )
-        from unittest.mock import AsyncMock
+        from unittest.mock import MagicMock
 
-        mock_retriever = AsyncMock()
+        mock_retriever = MagicMock()
         mock_retriever.retrieve.return_value = [
             RetrievalCandidate(
                 retrieval_unit_id="ru-1", score=0.9, source="fts_bm25",
@@ -531,7 +515,7 @@ class TestV2RetrieverManager:
         route_plan = RetrievalRoutePlan(
             routes=[RouteConfig(name="fts_bm25", enabled=True, weight=1.0)],
         )
-        results = await mgr.retrieve_from_route_plan(route_plan, ["snap-1"])
+        results = mgr.retrieve_from_route_plan(route_plan, ["snap-1"])
         assert len(results) == 1
         assert results[0].score_chain.route_sources == ["fts_bm25"]
 
@@ -652,7 +636,7 @@ class TestEvidenceGroupUnit:
 
         group_a = next(g for g in groups if g.document_snapshot_id == "snap-A")
         assert "item-1" in group_a.item_ids
-        # rel-1 connects item-1 ↔ item-2, so it's in group A (from_id matches)
+        # rel-1 connects item-1 <-> item-2, so it's in group A (from_id matches)
         assert "rel-1" in group_a.relation_ids
         # rel-2 is unrelated to group A's items
         assert "rel-2" not in group_a.relation_ids

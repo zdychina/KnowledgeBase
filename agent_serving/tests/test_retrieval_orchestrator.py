@@ -1,5 +1,5 @@
 """Tests for RetrievalOrchestrator — verifies full query semantics passthrough."""
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -60,13 +60,13 @@ def _make_candidate(
 
 
 def _mock_retriever(return_value=None, side_effect=None) -> MagicMock:
-    """Create a mock retriever with an async .retrieve() method.
+    """Create a mock retriever with a sync .retrieve() method.
 
     The orchestrator calls retriever.retrieve(query, snapshot_ids, top_k=...),
     so we need to mock the .retrieve attribute, not the mock itself.
     """
     mock = MagicMock()
-    mock.retrieve = AsyncMock(
+    mock.retrieve = MagicMock(
         return_value=return_value if return_value is not None else [],
         side_effect=side_effect,
     )
@@ -76,8 +76,7 @@ def _mock_retriever(return_value=None, side_effect=None) -> MagicMock:
 class TestKeywordsReachBm25:
     """Keywords from QueryUnderstanding reach the BM25 retriever."""
 
-    @pytest.mark.asyncio
-    async def test_keywords_passed(self):
+    def test_keywords_passed(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
         entity = _mock_retriever()
         dense = _mock_retriever()
@@ -90,7 +89,7 @@ class TestKeywordsReachBm25:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -104,8 +103,7 @@ class TestKeywordsReachBm25:
 class TestEntitiesReachEntityRetriever:
     """Entities from QueryUnderstanding reach the entity retriever."""
 
-    @pytest.mark.asyncio
-    async def test_entities_passed(self):
+    def test_entities_passed(self):
         bm25 = _mock_retriever()
         entity = _mock_retriever(
             return_value=[_make_candidate(retrieval_unit_id="ru-e1", source=ROUTE_ENTITY_EXACT)]
@@ -120,7 +118,7 @@ class TestEntitiesReachEntityRetriever:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -135,8 +133,7 @@ class TestEntitiesReachEntityRetriever:
 class TestDenseSkippedWithoutEmbedding:
     """Dense vector route is auto-skipped when no embedding is provided."""
 
-    @pytest.mark.asyncio
-    async def test_dense_skipped(self):
+    def test_dense_skipped(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
         entity = _mock_retriever()
         dense = _mock_retriever()
@@ -149,7 +146,7 @@ class TestDenseSkippedWithoutEmbedding:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=None,
             snapshot_ids=["snap-1"],
@@ -171,8 +168,7 @@ class TestDenseSkippedWithoutEmbedding:
 class TestTopKFromRouteConfig:
     """top_k from route config is passed correctly to each retriever."""
 
-    @pytest.mark.asyncio
-    async def test_top_k_passed(self):
+    def test_top_k_passed(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
         entity = _mock_retriever()
         dense = _mock_retriever()
@@ -190,7 +186,7 @@ class TestTopKFromRouteConfig:
         ])
 
         understanding = _make_understanding()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -205,8 +201,7 @@ class TestTopKFromRouteConfig:
 class TestEmptySnapshotIdsReturnsEmpty:
     """Empty snapshot_ids returns an empty result immediately."""
 
-    @pytest.mark.asyncio
-    async def test_empty_snapshots(self):
+    def test_empty_snapshots(self):
         bm25 = _mock_retriever()
         entity = _mock_retriever()
         dense = _mock_retriever()
@@ -219,7 +214,7 @@ class TestEmptySnapshotIdsReturnsEmpty:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=[],
@@ -235,8 +230,7 @@ class TestEmptySnapshotIdsReturnsEmpty:
 class TestFailedRetrieverDoesNotCrash:
     """A retriever that raises does not crash the orchestrator."""
 
-    @pytest.mark.asyncio
-    async def test_retriever_failure_handled(self):
+    def test_retriever_failure_handled(self):
         bm25 = _mock_retriever(side_effect=RuntimeError("index corrupted"))
         entity = _mock_retriever(
             return_value=[_make_candidate(retrieval_unit_id="ru-e1", source=ROUTE_ENTITY_EXACT)]
@@ -251,7 +245,7 @@ class TestFailedRetrieverDoesNotCrash:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -275,8 +269,7 @@ class TestFailedRetrieverDoesNotCrash:
 class TestSourceNormalization:
     """Candidate source is normalized to the canonical route name."""
 
-    @pytest.mark.asyncio
-    async def test_source_overridden(self):
+    def test_source_overridden(self):
         # Retriever returns candidates with wrong source
         bm25 = _mock_retriever(
             return_value=[_make_candidate(retrieval_unit_id="ru-1", source="wrong_source")]
@@ -292,7 +285,7 @@ class TestSourceNormalization:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -304,8 +297,7 @@ class TestSourceNormalization:
 class TestSubQueriesPassed:
     """Sub-queries from understanding are extracted and passed in RetrievalQuery."""
 
-    @pytest.mark.asyncio
-    async def test_sub_queries(self):
+    def test_sub_queries(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
         entity = _mock_retriever()
         dense = _mock_retriever()
@@ -323,7 +315,7 @@ class TestSubQueriesPassed:
             ]
         )
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -336,8 +328,7 @@ class TestSubQueriesPassed:
 class TestUnregisteredRouteSkipped:
     """Routes without a registered retriever are auto-skipped."""
 
-    @pytest.mark.asyncio
-    async def test_unregistered_skipped(self):
+    def test_unregistered_skipped(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
 
         # Only BM25 registered, but route plan includes entity and dense
@@ -347,7 +338,7 @@ class TestUnregisteredRouteSkipped:
 
         understanding = _make_understanding()
         route_plan = _make_route_plan()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=[0.1, 0.2],
             snapshot_ids=["snap-1"],
@@ -370,8 +361,7 @@ class TestUnregisteredRouteSkipped:
 class TestDisabledRouteSkipped:
     """Disabled routes in the route plan are not executed."""
 
-    @pytest.mark.asyncio
-    async def test_disabled_route(self):
+    def test_disabled_route(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
         entity = _mock_retriever()
 
@@ -386,7 +376,7 @@ class TestDisabledRouteSkipped:
         ])
 
         understanding = _make_understanding()
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=None,
             snapshot_ids=["snap-1"],
@@ -403,8 +393,7 @@ class TestDisabledRouteSkipped:
 class TestIntentAndScopePassed:
     """Intent and scope from understanding are carried through to RetrievalQuery."""
 
-    @pytest.mark.asyncio
-    async def test_intent_scope(self):
+    def test_intent_scope(self):
         bm25 = _mock_retriever(return_value=[_make_candidate(source=ROUTE_LEXICAL_BM25)])
 
         orchestrator = RetrievalOrchestrator({
@@ -419,7 +408,7 @@ class TestIntentAndScopePassed:
             intent="troubleshooting",
             scope={"domain": "cloud_core_network", "product": "SMF"},
         )
-        result = await orchestrator.execute(
+        result = orchestrator.execute(
             understanding, route_plan,
             query_embedding=None,
             snapshot_ids=["snap-1"],
