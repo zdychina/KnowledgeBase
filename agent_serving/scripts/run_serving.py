@@ -8,6 +8,11 @@ Usage:
 import argparse
 import asyncio
 import sys
+from pathlib import Path
+
+# Load .env into os.environ BEFORE any app imports
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 # Must be set BEFORE any async import on Windows
 if sys.platform == "win32":
