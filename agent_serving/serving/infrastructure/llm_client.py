@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 SERVING_TEMPLATES: list[dict[str, Any]] = [
     {
         "template_key": "serving-query-understanding",
-        "template_version": "1",
+        "template_version": "2",
         "purpose": "理解用户查询，提取意图、实体、关键词和证据需求",
         "system_prompt": (
             "你是一个知识库查询理解系统。你的任务是分析用户的查询，提取以下信息：\n"
@@ -31,7 +31,11 @@ SERVING_TEMPLATES: list[dict[str, Any]] = [
             "2. 命名实体（网络元素如SMF/AMF/UPF、命令如ADD/MOD/DEL、产品名如UDG/UNC/CloudCore）\n"
             "3. 关键词（去除停用词后的核心词）\n"
             "4. 证据需求（需要什么类型的证据来回答）\n\n"
-            "输出严格的 JSON 格式，不要添加任何其他文本。"
+            "## JSON Schema 结构定义\n"
+            "{output_schema}\n\n"
+            "## 输出要求\n"
+            "输出严格的 JSON 格式，不要添加任何其他文本。下面是一个输出示例（仅供参考格式，请根据实际内容生成）：\n"
+            "{example}"
         ),
         "user_prompt_template": "分析以下查询：\n\n$query",
         "output_schema_json": json.dumps({
@@ -87,16 +91,40 @@ SERVING_TEMPLATES: list[dict[str, Any]] = [
             },
             "required": ["intent", "entities", "keywords"],
         }),
+        "_example_json": json.dumps({
+            "intent": "procedural",
+            "entities": [
+                {"type": "network_element", "name": "SMF", "normalized_name": "SMF"},
+                {"type": "command", "name": "ADD UPF", "normalized_name": "ADD UPF"},
+            ],
+            "keywords": ["SMF", "UPF", "配置"],
+            "scope": {
+                "products": ["UDG"],
+                "network_elements": ["SMF", "UPF"],
+            },
+            "evidence_need": {
+                "preferred_roles": ["procedure_step", "example"],
+                "preferred_blocks": ["command_format", "parameter"],
+                "needs_comparison": False,
+                "needs_citation": False,
+            },
+            "sub_queries": [],
+            "ambiguities": [],
+        }, ensure_ascii=False, indent=2),
     },
     {
         "template_key": "serving-reranker",
-        "template_version": "1",
+        "template_version": "2",
         "purpose": "对检索结果进行 LLM 相关性重排序",
         "system_prompt": (
             "你是一个文档相关性评估系统。你的任务是根据查询对候选文档进行相关性排序。\n"
             "对于每个候选文档，给出一个0-1之间的相关性分数。\n"
-            "按相关性从高到低排列。\n"
-            "输出严格的 JSON 格式，不要添加任何其他文本。"
+            "按相关性从高到低排列。\n\n"
+            "## JSON Schema 结构定义\n"
+            "{output_schema}\n\n"
+            "## 输出要求\n"
+            "输出严格的 JSON 格式，不要添加任何其他文本。下面是一个输出示例（仅供参考格式，请根据实际内容生成）：\n"
+            "{example}"
         ),
         "user_prompt_template": (
             "查询：$query\n\n"
@@ -120,6 +148,13 @@ SERVING_TEMPLATES: list[dict[str, Any]] = [
             },
             "required": ["ranking"],
         }),
+        "_example_json": json.dumps({
+            "ranking": [
+                {"index": 0, "score": 0.95},
+                {"index": 2, "score": 0.78},
+                {"index": 1, "score": 0.45},
+            ],
+        }, ensure_ascii=False, indent=2),
     },
 ]
 
@@ -147,7 +182,15 @@ class ServingLlmClient:
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             for tpl in SERVING_TEMPLATES:
                 try:
-                    resp = await client.post(f"{self._base_url}/api/v1/templates", json=tpl)
+                    # Resolve {output_schema} and {example} in system_prompt
+                    payload = dict(tpl)
+                    schema_str = payload.get("output_schema_json", "")
+                    example_str = payload.pop("_example_json", "")
+                    payload["system_prompt"] = payload["system_prompt"].format(
+                        output_schema=schema_str,
+                        example=example_str,
+                    )
+                    resp = await client.post(f"{self._base_url}/api/v1/templates", json=payload)
                     if resp.status_code in (200, 201, 409):
                         logger.info("Registered template: %s", tpl["template_key"])
                     else:
