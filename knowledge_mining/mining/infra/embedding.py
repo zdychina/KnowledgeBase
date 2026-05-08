@@ -49,7 +49,7 @@ class ZhipuEmbeddingGenerator:
         *,
         model: str = "embedding-3",
         base_url: str = "https://open.bigmodel.cn/api/paas/v4",
-        dimensions: int = 1024,
+        dimensions: int | None = None,
         timeout: int = 60,
     ) -> None:
         self._api_key = api_key
@@ -63,7 +63,7 @@ class ZhipuEmbeddingGenerator:
         return self._model
 
     @property
-    def dimensions(self) -> int:
+    def dimensions(self) -> int | None:
         return self._dimensions
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -135,7 +135,7 @@ class LLMServiceEmbeddingGenerator:
         *,
         base_url: str = "http://localhost:8900",
         model: str = "embedding-3",
-        dimensions: int = 1024,
+        dimensions: int | None = None,
         timeout: int = 60,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -148,7 +148,7 @@ class LLMServiceEmbeddingGenerator:
         return self._model
 
     @property
-    def dimensions(self) -> int:
+    def dimensions(self) -> int | None:
         return self._dimensions
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -158,8 +158,9 @@ class LLMServiceEmbeddingGenerator:
         payload: dict[str, Any] = {
             "input": texts,
             "model": self._model,
-            "dimensions": self._dimensions,
         }
+        if self._dimensions is not None:
+            payload["dimensions"] = self._dimensions
         try:
             with httpx.Client(base_url=self._base_url, timeout=self._timeout) as client:
                 resp = client.post("/api/v1/models/embeddings", json=payload)

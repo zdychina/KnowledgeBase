@@ -32,7 +32,7 @@ class MiningConfig(BaseSettings):
 
     # Embedding (via llm_service)
     embedding_model: str = "embedding-3"
-    embedding_dimensions: int = 1024
+    embedding_dimensions: int | None = None
 
     # Pipeline defaults
     domain_pack: str = "cloud_core_network"

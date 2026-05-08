@@ -268,7 +268,7 @@ def _init_embedding(
     api_key: str | None,
     model: str,
     base_url: str,
-    dimensions: int,
+    dimensions: int | None,
 ) -> Any | None:
     """Prefer shared llm_service embedding endpoint, fallback to direct Zhipu client.
 
