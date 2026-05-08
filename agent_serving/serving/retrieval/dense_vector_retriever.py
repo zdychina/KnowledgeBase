@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any
 
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.schemas.constants import ROUTE_DENSE_VECTOR
 from agent_serving.serving.schemas.models import (
@@ -28,13 +28,13 @@ class DenseVectorRetriever(Retriever):
 
     def __init__(
         self,
-        pool: AsyncConnectionPool,
+        pool: ConnectionPool,
         embedding_dimensions: int | None = None,
     ) -> None:
         self._pool = pool
         self._dimensions = embedding_dimensions
 
-    async def retrieve(
+    def retrieve(
         self,
         query: RetrievalQuery,
         snapshot_ids: list[str],
@@ -80,9 +80,9 @@ class DenseVectorRetriever(Retriever):
         params: list[Any] = [vec_literal, *snapshot_ids, *scope_params, top_k]
 
         try:
-            async with self._pool.connection() as conn:
-                cursor = await conn.execute(sql, params)
-                rows = await cursor.fetchall()
+            with self._pool.connection() as conn:
+                cursor = conn.execute(sql, params)
+                rows = cursor.fetchall()
         except Exception:
             logger.warning("pgvector query failed", exc_info=True)
             return []
@@ -93,9 +93,9 @@ class DenseVectorRetriever(Retriever):
             no_scope_sql = sql.replace(scope_filter, "")
             no_scope_params = [vec_literal, *snapshot_ids, top_k]
             try:
-                async with self._pool.connection() as conn:
-                    cursor = await conn.execute(no_scope_sql, no_scope_params)
-                    rows = await cursor.fetchall()
+                with self._pool.connection() as conn:
+                    cursor = conn.execute(no_scope_sql, no_scope_params)
+                    rows = cursor.fetchall()
             except Exception:
                 pass
 

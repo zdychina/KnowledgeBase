@@ -10,9 +10,8 @@ from __future__ import annotations
 import os
 
 import pytest
-import pytest_asyncio
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.infrastructure.pg_config import ServingDbConfig
 
@@ -70,14 +69,14 @@ SEED_IDS = {
 }
 
 
-@pytest_asyncio.fixture
-async def pg_pool():
-    """AsyncConnectionPool for tests (reads PG_* from .env)."""
+@pytest.fixture
+def pg_pool():
+    """ConnectionPool for tests (reads PG_* from .env)."""
     config = ServingDbConfig()
     pool = config.create_pool()
-    await pool.open()
+    pool.open()
     yield pool
-    await pool.close()
+    pool.close()
 
 
 @pytest.fixture

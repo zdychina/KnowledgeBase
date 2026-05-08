@@ -1,4 +1,4 @@
-"""Read-only repository for asset_core tables — PostgreSQL async pool backend.
+"""Read-only repository for asset_core tables — PostgreSQL sync pool backend.
 
 Query path: active release → build → document snapshots → retrieval_units.
 source_refs_json is parsed for content-level drill-down, not passthrough.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.schemas.models import ActiveScope, QueryPlan
 from agent_serving.serving.schemas.json_utils import parse_source_refs
@@ -20,23 +20,23 @@ logger = logging.getLogger(__name__)
 class AssetRepository:
     """Read-only repo over asset_core PostgreSQL tables."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
+    def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
 
-    async def resolve_active_scope(self, channel: str = "default") -> ActiveScope:
+    def resolve_active_scope(self, channel: str = "default") -> ActiveScope:
         """Resolve active release → build → snapshots.
 
         Raises ValueError when:
         - 0 active releases (no data to serve)
         - >1 active releases (data integrity error)
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(
+        with self._pool.connection() as conn:
+            cursor = conn.execute(
                 "SELECT id FROM asset_publish_releases "
                 "WHERE status = 'active' AND channel = %s",
                 (channel,),
             )
-            rows = await cursor.fetchall()
+            rows = cursor.fetchall()
 
             if len(rows) == 0:
                 raise ValueError("no_active_release")
@@ -46,21 +46,21 @@ class AssetRepository:
             release_id = rows[0]["id"]
 
             # Get build for this release
-            cursor = await conn.execute(
+            cursor = conn.execute(
                 "SELECT build_id FROM asset_publish_releases WHERE id = %s",
                 (release_id,),
             )
-            release_row = await cursor.fetchone()
+            release_row = cursor.fetchone()
             build_id = release_row["build_id"]
 
             # Get document snapshots for this build (only active selections)
-            cursor = await conn.execute(
+            cursor = conn.execute(
                 "SELECT document_snapshot_id, document_id "
                 "FROM asset_build_document_snapshots "
                 "WHERE build_id = %s AND selection_status = 'active'",
                 (build_id,),
             )
-            snapshot_rows = await cursor.fetchall()
+            snapshot_rows = cursor.fetchall()
             snapshot_ids = [r["document_snapshot_id"] for r in snapshot_rows]
 
             # Build document_snapshot_map: document_id → snapshot_id (active only)
@@ -76,7 +76,7 @@ class AssetRepository:
             document_snapshot_map=document_snapshot_map,
         )
 
-    async def resolve_segments_by_ids(
+    def resolve_segments_by_ids(
         self,
         segment_ids: list[str],
         snapshot_ids: list[str] | None = None,
@@ -115,11 +115,11 @@ class AssetRepository:
             WHERE rs.id IN ({placeholders})
             {snapshot_filter}
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            return [dict(row) for row in await cursor.fetchall()]
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
 
-    async def resolve_source_segments(
+    def resolve_source_segments(
         self,
         source_refs_json: str | None,
         snapshot_ids: list[str] | None = None,
@@ -159,11 +159,11 @@ class AssetRepository:
             WHERE rs.id IN ({placeholders})
             {snapshot_filter}
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            return [dict(row) for row in await cursor.fetchall()]
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
 
-    async def get_relations_for_segments(
+    def get_relations_for_segments(
         self,
         segment_ids: list[str],
         relation_types: list[str] | None = None,
@@ -192,11 +192,11 @@ class AssetRepository:
                OR rel.target_segment_id IN ({placeholders})
             {type_filter}
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            return [dict(row) for row in await cursor.fetchall()]
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]
 
-    async def get_document_sources(
+    def get_document_sources(
         self,
         document_ids: list[str],
         snapshot_ids: list[str] | None = None,
@@ -227,6 +227,6 @@ class AssetRepository:
             WHERE d.id IN ({placeholders})
             {snapshot_filter}
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            return [dict(row) for row in await cursor.fetchall()]
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]

@@ -15,7 +15,7 @@ class Retriever(ABC):
     """Base class for retrieval strategies."""
 
     @abstractmethod
-    async def retrieve(
+    def retrieve(
         self,
         query: RetrievalQuery,
         snapshot_ids: list[str],

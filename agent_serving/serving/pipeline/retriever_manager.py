@@ -7,7 +7,6 @@ Supports query_embedding for dense_vector retrieval.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -36,7 +35,7 @@ class RetrieverManager:
     def register(self, name: str, retriever: Retriever) -> None:
         self._retrievers[name] = retriever
 
-    async def retrieve(
+    def retrieve(
         self,
         plan: QueryPlan,
         snapshot_ids: list[str],
@@ -49,9 +48,9 @@ class RetrieverManager:
         if not enabled:
             enabled = list(self._retrievers.keys())
 
-        return await self._run_retrievers(enabled, plan, snapshot_ids)
+        return self._run_retrievers(enabled, plan, snapshot_ids)
 
-    async def retrieve_from_route_plan(
+    def retrieve_from_route_plan(
         self,
         route_plan: RetrievalRoutePlan,
         snapshot_ids: list[str],
@@ -65,13 +64,13 @@ class RetrieverManager:
         route_config = {r.name: r for r in enabled_routes}
         enabled_names = [r.name for r in enabled_routes]
         plan = QueryPlan()
-        return await self._run_retrievers(
+        return self._run_retrievers(
             enabled_names, plan, snapshot_ids,
             route_config=route_config,
             query_embedding=query_embedding,
         )
 
-    async def _run_retrievers(
+    def _run_retrievers(
         self,
         enabled_names: list[str],
         plan: QueryPlan,
@@ -79,11 +78,18 @@ class RetrieverManager:
         route_config: dict[str, Any] | None = None,
         query_embedding: list[float] | None = None,
     ) -> list[RetrievalCandidate]:
-        """Run specified retrievers concurrently."""
+        """Run specified retrievers sequentially."""
         if not snapshot_ids:
             return []
 
-        async def _safe_retrieve(name: str, retriever: Retriever) -> list[RetrievalCandidate]:
+        all_candidates: list[RetrievalCandidate] = []
+
+        for name in enabled_names:
+            retriever = self._retrievers.get(name)
+            if not retriever:
+                logger.warning("Retriever '%s' not registered, skipping", name)
+                continue
+
             try:
                 top_k = 50
                 if route_config and name in route_config:
@@ -98,26 +104,12 @@ class RetrieverManager:
                     intent=plan.intent,
                     scope=plan.scope_constraints,
                 )
-                return await retriever.retrieve(rq, snapshot_ids, top_k=top_k)
-            except asyncio.CancelledError:
-                raise
+                batch = retriever.retrieve(rq, snapshot_ids, top_k=top_k)
             except Exception:
                 logger.warning("Retriever '%s' failed", name, exc_info=True)
-                return []
-
-        tasks = []
-        for name in enabled_names:
-            retriever = self._retrievers.get(name)
-            if not retriever:
-                logger.warning("Retriever '%s' not registered, skipping", name)
                 continue
-            tasks.append(_safe_retrieve(name, retriever))
 
-        results = await asyncio.gather(*tasks)
-
-        # Collect all candidates, annotate with route_source
-        all_candidates: list[RetrievalCandidate] = []
-        for name, batch in zip(enabled_names, results):
+            # Annotate with route_source
             for c in batch:
                 chain = c.score_chain or ScoreChain(
                     raw_score=c.score,

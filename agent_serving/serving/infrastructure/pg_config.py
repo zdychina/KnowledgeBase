@@ -1,13 +1,13 @@
 """Serving PostgreSQL configuration and connection pool factory.
 
 Reads PG_* and EMBEDDING_DIMENSIONS from .env via pydantic-settings.
-Creates an AsyncConnectionPool with dict_row factory and autocommit.
+Creates a sync ConnectionPool with dict_row factory and autocommit.
 """
 from __future__ import annotations
 
 from pydantic_settings import BaseSettings
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 
 class ServingDbConfig(BaseSettings):
@@ -35,12 +35,12 @@ class ServingDbConfig(BaseSettings):
         )
 
     @staticmethod
-    async def _configure_connection(conn) -> None:
+    def _configure_connection(conn) -> None:
         """Set autocommit on each connection pulled from the pool."""
-        await conn.set_autocommit(True)
+        conn.autocommit = True
 
-    def create_pool(self) -> AsyncConnectionPool:
-        return AsyncConnectionPool(
+    def create_pool(self) -> ConnectionPool:
+        return ConnectionPool(
             self.conninfo,
             min_size=self.pg_pool_min,
             max_size=self.pg_pool_max,

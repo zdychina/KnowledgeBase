@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.schemas.json_utils import (
     parse_source_refs,
@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 class GraphExpander:
     """BFS graph expander for raw segment relations."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
+    def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
 
-    async def expand(
+    def expand(
         self,
         seed_segment_ids: list[str],
         max_depth: int = 2,
@@ -55,7 +55,7 @@ class GraphExpander:
                 break
 
             # Get neighbors of current frontier
-            neighbors = await self._get_neighbors(
+            neighbors = self._get_neighbors(
                 current_frontier, relation_types, snapshot_ids,
             )
 
@@ -81,7 +81,7 @@ class GraphExpander:
 
         return all_expanded
 
-    async def fetch_expanded_segments(
+    def fetch_expanded_segments(
         self,
         expansions: list[dict[str, Any]],
         snapshot_ids: list[str] | None = None,
@@ -122,9 +122,9 @@ class GraphExpander:
             WHERE rs.id IN ({placeholders})
             {snapshot_filter}
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
 
         results = []
         for row in rows:
@@ -137,7 +137,7 @@ class GraphExpander:
 
         return results
 
-    async def _get_neighbors(
+    def _get_neighbors(
         self,
         segment_ids: list[str],
         relation_types: list[str] | None = None,
@@ -206,6 +206,6 @@ class GraphExpander:
             {type_filter}
             {snapshot_filter}
         """
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            return [dict(row) for row in await cursor.fetchall()]
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            return [dict(row) for row in cursor.fetchall()]

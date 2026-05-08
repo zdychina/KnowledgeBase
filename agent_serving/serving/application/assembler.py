@@ -71,7 +71,7 @@ class ContextAssembler:
         self._graph = graph
         self._role_classifier = EvidenceRoleClassifier()
 
-    async def assemble(
+    def assemble(
         self,
         *,
         query: str,
@@ -119,7 +119,7 @@ class ContextAssembler:
 
         # 3. Fetch source segments
         if unique_seg_ids and scope.snapshot_ids:
-            source_segments = await self._repo.resolve_segments_by_ids(
+            source_segments = self._repo.resolve_segments_by_ids(
                 unique_seg_ids, snapshot_ids=scope.snapshot_ids,
             )
         else:
@@ -142,7 +142,7 @@ class ContextAssembler:
             max_results = route_plan.assembly.max_expanded
             relation_types = route_plan.assembly.relation_types or None
 
-            expansions = await self._graph.expand(
+            expansions = self._graph.expand(
                 seed_segment_ids=unique_seg_ids,
                 max_depth=max_depth,
                 relation_types=relation_types,
@@ -150,7 +150,7 @@ class ContextAssembler:
                 snapshot_ids=scope.snapshot_ids,
             )
 
-            expanded_data = await self._graph.fetch_expanded_segments(
+            expanded_data = self._graph.fetch_expanded_segments(
                 expansions, snapshot_ids=scope.snapshot_ids,
             )
             expanded_items = self._build_expanded_items(expanded_data)
@@ -166,7 +166,7 @@ class ContextAssembler:
 
         # 5. Fetch direct relations
         if unique_seg_ids:
-            direct_relations = await self._repo.get_relations_for_segments(
+            direct_relations = self._repo.get_relations_for_segments(
                 unique_seg_ids,
                 relation_types=route_plan.assembly.relation_types or None,
             )
@@ -193,7 +193,7 @@ class ContextAssembler:
         for seg in source_segments:
             if seg.get("document_id"):
                 document_ids.add(str(seg["document_id"]))
-        doc_sources = await self._repo.get_document_sources(
+        doc_sources = self._repo.get_document_sources(
             list(document_ids), snapshot_ids=scope.snapshot_ids,
         )
         sources = self._build_sources(doc_sources)

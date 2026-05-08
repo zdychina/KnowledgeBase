@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Any
 
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.schemas.constants import ROUTE_ENTITY_EXACT
 from agent_serving.serving.schemas.models import (
@@ -33,10 +33,10 @@ _PARTIAL_MATCH_SCORE = 0.7
 class EntityExactRetriever(Retriever):
     """Retrieves candidates by matching entity names in retrieval units."""
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
+    def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
 
-    async def retrieve(
+    def retrieve(
         self,
         query: RetrievalQuery,
         snapshot_ids: list[str],
@@ -54,10 +54,10 @@ class EntityExactRetriever(Retriever):
         if not entity_names:
             return []
 
-        candidates = await self._retrieve_by_entities(entity_names, snapshot_ids, query.scope)
+        candidates = self._retrieve_by_entities(entity_names, snapshot_ids, query.scope)
         return candidates[:top_k]
 
-    async def _retrieve_by_entities(
+    def _retrieve_by_entities(
         self,
         entity_names: list[str],
         snapshot_ids: list[str],
@@ -72,7 +72,7 @@ class EntityExactRetriever(Retriever):
 
         for name in entity_names:
             # Strategy 1: entity_card units with exact name match
-            card_candidates = await self._match_entity_cards(
+            card_candidates = self._match_entity_cards(
                 name, snapshot_ids, placeholders, scope_filter, scope_params,
             )
             for c in card_candidates:
@@ -81,7 +81,7 @@ class EntityExactRetriever(Retriever):
                     all_candidates.append(c)
 
             # Strategy 2: entity_refs_json LIKE → JSON parse
-            ref_candidates = await self._match_entity_refs(
+            ref_candidates = self._match_entity_refs(
                 name, snapshot_ids, placeholders, scope_filter, scope_params,
             )
             for c in ref_candidates:
@@ -90,7 +90,7 @@ class EntityExactRetriever(Retriever):
                     all_candidates.append(c)
 
             # Strategy 3: generated_question containing entity name
-            q_candidates = await self._match_generated_questions(
+            q_candidates = self._match_generated_questions(
                 name, snapshot_ids, placeholders, scope_filter, scope_params,
             )
             for c in q_candidates:
@@ -100,7 +100,7 @@ class EntityExactRetriever(Retriever):
 
         return all_candidates
 
-    async def _match_entity_cards(
+    def _match_entity_cards(
         self,
         entity_name: str,
         snapshot_ids: list[str],
@@ -120,12 +120,12 @@ class EntityExactRetriever(Retriever):
               {scope_filter}
         """
         params: list[Any] = [f"%{entity_name}%", *snapshot_ids, *(scope_params or [])]
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
         return self._rows_to_candidates(rows, entity_name, source=ROUTE_ENTITY_EXACT)
 
-    async def _match_entity_refs(
+    def _match_entity_refs(
         self,
         entity_name: str,
         snapshot_ids: list[str],
@@ -145,9 +145,9 @@ class EntityExactRetriever(Retriever):
               {scope_filter}
         """
         params: list[Any] = [f"%{entity_name}%", *snapshot_ids, *(scope_params or [])]
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
 
         # JSON parse exact match filter
         candidates = []
@@ -159,7 +159,7 @@ class EntityExactRetriever(Retriever):
                 candidates.append(self._row_to_candidate(r, score, ROUTE_ENTITY_EXACT))
         return candidates
 
-    async def _match_generated_questions(
+    def _match_generated_questions(
         self,
         entity_name: str,
         snapshot_ids: list[str],
@@ -179,9 +179,9 @@ class EntityExactRetriever(Retriever):
               {scope_filter}
         """
         params: list[Any] = [f"%{entity_name}%", *snapshot_ids, *(scope_params or [])]
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
         return self._rows_to_candidates(rows, entity_name, source=ROUTE_ENTITY_EXACT)
 
     def _has_exact_entity(self, entity_refs_json: str, name: str) -> bool:

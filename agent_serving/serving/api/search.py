@@ -188,7 +188,7 @@ async def search(
     # 4. Resolve active scope
     trace.start_stage("resolve_scope")
     try:
-        scope = await repo.resolve_active_scope()
+        scope = repo.resolve_active_scope()
     except ValueError as e:
         if str(e) == "no_active_release":
             raise HTTPException(
@@ -216,7 +216,7 @@ async def search(
 
     # 6. Retrieve from all configured routes
     trace.start_stage("retrieve")
-    orch_result = await orchestrator.execute(
+    orch_result = orchestrator.execute(
         understanding, route_plan,
         query_embedding=query_embedding,
         snapshot_ids=scope.snapshot_ids,
@@ -260,7 +260,7 @@ async def search(
         expansion=route_plan.expansion,
     )
     assembler = ContextAssembler(repo, expander)
-    pack = await assembler.assemble(
+    pack = assembler.assemble(
         query=body.query,
         understanding=understanding,
         plan=legacy_plan,

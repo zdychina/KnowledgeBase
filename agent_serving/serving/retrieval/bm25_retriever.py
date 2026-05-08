@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Any
 
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.schemas.constants import ROUTE_LEXICAL_BM25
 from agent_serving.serving.schemas.models import RetrievalCandidate, RetrievalQuery
@@ -39,10 +39,10 @@ class FTS5BM25Retriever(Retriever):
     and budget truncation are handled by the Reranker stage.
     """
 
-    def __init__(self, pool: AsyncConnectionPool) -> None:
+    def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
 
-    async def retrieve(
+    def retrieve(
         self,
         query: RetrievalQuery,
         snapshot_ids: list[str],
@@ -107,12 +107,12 @@ class FTS5BM25Retriever(Retriever):
         params: list[Any] = [query_text, query_text, *snapshot_ids, *scope_params, recall_limit]
 
         try:
-            async with self._pool.connection() as conn:
-                cursor = await conn.execute(sql, params)
-                rows = await cursor.fetchall()
+            with self._pool.connection() as conn:
+                cursor = conn.execute(sql, params)
+                rows = cursor.fetchall()
         except Exception:
             logger.warning("tsvector query failed, falling back to trigram similarity", exc_info=True)
-            return await self._fallback_trigram(query, snapshot_ids, top_k)
+            return self._fallback_trigram(query, snapshot_ids, top_k)
 
         # If scope filter eliminated all results, retry without scope
         if not rows and scope_filter:
@@ -120,18 +120,18 @@ class FTS5BM25Retriever(Retriever):
             no_scope_sql = sql.replace(scope_filter, "")
             no_scope_params = [query_text, query_text, *snapshot_ids, recall_limit]
             try:
-                async with self._pool.connection() as conn:
-                    cursor = await conn.execute(no_scope_sql, no_scope_params)
-                    rows = await cursor.fetchall()
+                with self._pool.connection() as conn:
+                    cursor = conn.execute(no_scope_sql, no_scope_params)
+                    rows = cursor.fetchall()
             except Exception:
                 pass
 
         if not rows:
-            return await self._fallback_trigram(query, snapshot_ids, top_k)
+            return self._fallback_trigram(query, snapshot_ids, top_k)
 
         return self._rows_to_candidates(rows, source=ROUTE_LEXICAL_BM25)
 
-    async def _fallback_trigram(
+    def _fallback_trigram(
         self,
         query: RetrievalQuery,
         snapshot_ids: list[str],
@@ -182,12 +182,12 @@ class FTS5BM25Retriever(Retriever):
         params: list[Any] = [query_text, query_text, *snapshot_ids, *scope_params, recall_limit]
 
         try:
-            async with self._pool.connection() as conn:
-                cursor = await conn.execute(sql, params)
-                rows = await cursor.fetchall()
+            with self._pool.connection() as conn:
+                cursor = conn.execute(sql, params)
+                rows = cursor.fetchall()
         except Exception:
             logger.warning("Trigram query also failed", exc_info=True)
-            return await self._fallback_like(query, snapshot_ids, top_k)
+            return self._fallback_like(query, snapshot_ids, top_k)
 
         # If scope filter eliminated all results, retry without scope
         if not rows and scope_filter:
@@ -195,9 +195,9 @@ class FTS5BM25Retriever(Retriever):
             no_scope_sql = sql.replace(scope_filter, "")
             no_scope_params = [query_text, query_text, *snapshot_ids, recall_limit]
             try:
-                async with self._pool.connection() as conn:
-                    cursor = await conn.execute(no_scope_sql, no_scope_params)
-                    rows = await cursor.fetchall()
+                with self._pool.connection() as conn:
+                    cursor = conn.execute(no_scope_sql, no_scope_params)
+                    rows = cursor.fetchall()
             except Exception:
                 pass
 
@@ -208,7 +208,7 @@ class FTS5BM25Retriever(Retriever):
             candidates.append(self._row_to_candidate(r, score, source="trigram_fallback"))
         return candidates
 
-    async def _fallback_like(
+    def _fallback_like(
         self,
         query: RetrievalQuery,
         snapshot_ids: list[str],
@@ -263,9 +263,9 @@ class FTS5BM25Retriever(Retriever):
         params.extend(scope_params)
         params.append(recall_limit)
 
-        async with self._pool.connection() as conn:
-            cursor = await conn.execute(sql, params)
-            rows = await cursor.fetchall()
+        with self._pool.connection() as conn:
+            cursor = conn.execute(sql, params)
+            rows = cursor.fetchall()
 
         candidates = []
         for row in rows:

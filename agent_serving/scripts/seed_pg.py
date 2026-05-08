@@ -12,7 +12,7 @@ import random
 import sys
 
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.infrastructure.pg_config import ServingDbConfig
 
@@ -58,7 +58,7 @@ def _random_vector(dim: int) -> list[float]:
     return [v / norm for v in vec]
 
 
-async def _clean(pool: AsyncConnectionPool) -> None:
+def _clean(pool: ConnectionPool) -> None:
     """Truncate all seeded tables."""
     tables = [
         "asset_publish_releases",
@@ -73,23 +73,23 @@ async def _clean(pool: AsyncConnectionPool) -> None:
         "asset_documents",
         "asset_source_batches",
     ]
-    async with pool.connection() as conn:
+    with pool.connection() as conn:
         for t in tables:
-            await conn.execute(f"TRUNCATE TABLE {t} CASCADE")
+            conn.execute(f"TRUNCATE TABLE {t} CASCADE")
 
 
-async def _seed(pool: AsyncConnectionPool) -> None:
+def _seed(pool: ConnectionPool) -> None:
     """Insert all seed data."""
-    async with pool.connection() as conn:
+    with pool.connection() as conn:
         # source_batch
-        await conn.execute(
+        conn.execute(
             "INSERT INTO asset_source_batches (id, batch_code, source_type, description, created_at, metadata_json) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (BATCH_ID, "BATCH-2026-04-21-001", "folder_scan", "v1.1 test batch", NOW, "{}"),
         )
 
         # documents
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_documents (id, document_key, document_name, document_type, metadata_json, created_at) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             [
@@ -100,7 +100,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # document_snapshots
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_document_snapshots "
             "(id, normalized_content_hash, raw_content_hash, mime_type, title, scope_json, tags_json, "
             "parser_profile_json, metadata_json, created_at) "
@@ -116,7 +116,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # document_snapshot_links
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_document_snapshot_links "
             "(id, document_id, document_snapshot_id, source_batch_id, relative_path, source_uri, title, "
             "scope_json, tags_json, linked_at, metadata_json) "
@@ -132,7 +132,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # raw_segments
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_raw_segments "
             "(id, document_snapshot_id, segment_key, segment_index, section_path, section_title, "
             "block_type, semantic_role, raw_text, normalized_text, content_hash, normalized_hash, "
@@ -167,7 +167,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # raw_segment_relations
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_raw_segment_relations "
             "(id, document_snapshot_id, source_segment_id, target_segment_id, relation_type, weight, confidence, metadata_json) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -178,7 +178,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # retrieval_units
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_retrieval_units "
             "(id, document_snapshot_id, unit_key, unit_type, target_type, target_ref_json, title, "
             "text, search_text, block_type, semantic_role, facets_json, entity_refs_json, "
@@ -253,7 +253,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         for i, ru_id in enumerate(ru_ids):
             vec = _random_vector(EMB_DIM)
             vec_str = "[" + ",".join(str(v) for v in vec) + "]"
-            await conn.execute(
+            conn.execute(
                 "INSERT INTO asset_retrieval_embeddings "
                 "(id, retrieval_unit_id, embedding_model, embedding_provider, text_kind, "
                 "embedding_dim, embedding_vector, embedding_vector_vec, content_hash, created_at) "
@@ -264,7 +264,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
             )
 
         # build
-        await conn.execute(
+        conn.execute(
             "INSERT INTO asset_builds "
             "(id, build_code, status, build_mode, source_batch_id, summary_json, validation_json, created_at) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -272,7 +272,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # build_document_snapshots
-        await conn.executemany(
+        conn.executemany(
             "INSERT INTO asset_build_document_snapshots "
             "(build_id, document_id, document_snapshot_id, selection_status, reason, metadata_json) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
@@ -284,7 +284,7 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
         # publish_release
-        await conn.execute(
+        conn.execute(
             "INSERT INTO asset_publish_releases "
             "(id, release_code, build_id, channel, status, released_by, activated_at, metadata_json) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
@@ -292,25 +292,24 @@ async def _seed(pool: AsyncConnectionPool) -> None:
         )
 
 
-async def main() -> None:
+def main() -> None:
     clean = "--clean" in sys.argv
     config = ServingDbConfig()
     pool = config.create_pool()
-    await pool.open()
+    pool.open()
 
     try:
         if clean:
             print("Cleaning existing data...")
-            await _clean(pool)
+            _clean(pool)
             print("Cleaned.")
 
         print("Seeding data...")
-        await _seed(pool)
+        _seed(pool)
         print("Seed complete.")
     finally:
-        await pool.close()
+        pool.close()
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()

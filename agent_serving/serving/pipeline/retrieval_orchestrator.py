@@ -5,7 +5,6 @@ Routes that lack required input (e.g. no embedding for dense) are auto-skipped.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -47,7 +46,7 @@ class RetrievalOrchestrator:
     def __init__(self, retrievers: dict[str, Retriever]) -> None:
         self._retrievers = retrievers
 
-    async def execute(
+    def execute(
         self,
         understanding: QueryUnderstanding,
         route_plan: RetrievalRoutePlan,
@@ -72,7 +71,7 @@ class RetrievalOrchestrator:
         route_config = {r.name: r for r in route_plan.routes if r.enabled}
 
         traces: list[RouteTrace] = []
-        tasks: list[tuple[str, asyncio.Task]] = []
+        all_candidates: list[RetrievalCandidate] = []
 
         for route_name, route_cfg in route_config.items():
             retriever = self._retrievers.get(route_name)
@@ -86,34 +85,25 @@ class RetrievalOrchestrator:
                 continue
 
             top_k = route_cfg.top_k
-            task = asyncio.ensure_future(
-                self._safe_retrieve(retriever, retrieval_query, snapshot_ids, top_k)
-            )
-            tasks.append((route_name, task))
+            try:
+                candidates = self._safe_retrieve(retriever, retrieval_query, snapshot_ids, top_k)
+            except Exception as exc:
+                traces.append(RouteTrace(name=route_name, attempted=True, candidate_count=0, skipped_reason=str(exc)))
+                logger.warning("Route %s failed: %s", route_name, exc)
+                continue
 
-        # Execute concurrently
-        results = await asyncio.gather(*[t for _, t in tasks], return_exceptions=True)
-
-        # Collect candidates
-        all_candidates: list[RetrievalCandidate] = []
-        for (route_name, task), result in zip(tasks, results):
-            if isinstance(result, Exception):
-                traces.append(RouteTrace(name=route_name, attempted=True, candidate_count=0, skipped_reason=str(result)))
-                logger.warning("Route %s failed: %s", route_name, result)
-            else:
-                candidates = result
-                # Normalize source to canonical route name
-                annotated = []
-                for c in candidates:
-                    if c.source != route_name:
-                        c = c.model_copy(update={"source": route_name})
-                    annotated.append(c)
-                all_candidates.extend(annotated)
-                traces.append(RouteTrace(name=route_name, attempted=True, candidate_count=len(candidates)))
+            # Normalize source to canonical route name
+            annotated = []
+            for c in candidates:
+                if c.source != route_name:
+                    c = c.model_copy(update={"source": route_name})
+                annotated.append(c)
+            all_candidates.extend(annotated)
+            traces.append(RouteTrace(name=route_name, attempted=True, candidate_count=len(candidates)))
 
         return OrchestratorResult(candidates=all_candidates, route_traces=traces)
 
-    async def _safe_retrieve(
+    def _safe_retrieve(
         self,
         retriever: Retriever,
         query: RetrievalQuery,
@@ -121,6 +111,7 @@ class RetrievalOrchestrator:
         top_k: int,
     ) -> list[RetrievalCandidate]:
         try:
-            return await retriever.retrieve(query, snapshot_ids, top_k=top_k)
-        except asyncio.CancelledError:
-            raise
+            return retriever.retrieve(query, snapshot_ids, top_k=top_k)
+        except Exception:
+            logger.warning("Retriever failed", exc_info=True)
+            return []

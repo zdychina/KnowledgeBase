@@ -1,22 +1,16 @@
 """FastAPI application with PostgreSQL backend.
 
 Reads PG connection from .env (PG_HOST, PG_PORT, etc.) via ServingDbConfig.
-Uses psycopg async pool for all database operations.
+Uses psycopg sync pool for all database operations.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 
-# Windows: psycopg async requires SelectorEventLoop, not ProactorEventLoop
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
 from fastapi import FastAPI, Request
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import ConnectionPool
 
 from agent_serving.serving.api.health import router as health_router
 from agent_serving.serving.api.search import router as search_router
@@ -30,7 +24,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     config = ServingDbConfig()
     pool = config.create_pool()
-    await pool.open()
+    pool.open()
     app.state.pool = pool
     app.state.embedding_dimensions = config.embedding_dimensions
 
@@ -77,7 +71,7 @@ async def lifespan(app: FastAPI):
     # Cleanup
     if app.state.llm_client:
         await app.state.llm_client.close()
-    await pool.close()
+    pool.close()
 
 
 async def get_repo(request: Request) -> AssetRepository:
