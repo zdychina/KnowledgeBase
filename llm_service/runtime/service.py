@@ -182,59 +182,37 @@ class LLMService:
                     return existing["id"]
 
             in_transaction = False
-            attempts = 0
-            max_retries = 5
-            backoff = 0.05
-            while True:
-                try:
-                    await self._db.execute("BEGIN IMMEDIATE")
-                    in_transaction = True
-                    task_id = await self._mgr.insert_task_row(
-                        caller_domain, pipeline_stage,
-                        idempotency_key=idempotency_key,
-                        max_attempts=max_attempts, priority=priority,
-                        metadata=metadata,
-                    )
-                    now = datetime.now(timezone.utc).isoformat()
-                    request_id = str(uuid.uuid4())
-                    provider_instance = self._executor._provider
-                    await self._db.execute(
-                        """INSERT INTO agent_llm_requests
-                           (id, task_id, provider, model, prompt_template_key, messages_json, input_json,
-                            params_json, expected_output_type, output_schema_json, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            request_id, task_id, provider_instance.provider_name,
-                            provider_instance.default_model, template_key,
-                            json.dumps(actual_messages or []), json.dumps(input or {}),
-                            json.dumps(params or {}), actual_expected_type,
-                            json.dumps(actual_schema or {}), now,
-                        ),
-                    )
-                    await self._db.execute("COMMIT")
-                    in_transaction = False
-                    break
-                except aiosqlite.OperationalError as exc:
-                    if in_transaction:
-                        try:
-                            await self._db.execute("ROLLBACK")
-                        except Exception:
-                            pass
-                        in_transaction = False
-                    msg = str(exc).lower()
-                    if "locked" in msg and attempts < max_retries:
-                        attempts += 1
-                        await asyncio.sleep(backoff)
-                        backoff = min(backoff * 2, 1.0)
-                        continue
-                    raise
-                except Exception:
-                    if in_transaction:
-                        try:
-                            await self._db.execute("ROLLBACK")
-                        except Exception:
-                            pass
-                    raise
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
+                in_transaction = True
+                task_id = await self._mgr.insert_task_row(
+                    caller_domain, pipeline_stage,
+                    idempotency_key=idempotency_key,
+                    max_attempts=max_attempts, priority=priority,
+                    metadata=metadata,
+                )
+                now = datetime.now(timezone.utc).isoformat()
+                request_id = str(uuid.uuid4())
+                provider_instance = self._executor._provider
+                await self._db.execute(
+                    """INSERT INTO agent_llm_requests
+                       (id, task_id, provider, model, prompt_template_key, messages_json, input_json,
+                        params_json, expected_output_type, output_schema_json, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        request_id, task_id, provider_instance.provider_name,
+                        provider_instance.default_model, template_key,
+                        json.dumps(actual_messages or []), json.dumps(input or {}),
+                        json.dumps(params or {}), actual_expected_type,
+                        json.dumps(actual_schema or {}), now,
+                    ),
+                )
+                await self._db.execute("COMMIT")
+                in_transaction = False
+            except Exception:
+                if in_transaction:
+                    await self._db.execute("ROLLBACK")
+                raise
 
             await self._bus.emit(task_id, "submitted", "task submitted")
 

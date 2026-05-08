@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from knowledge_mining_zym.mining.db import MiningDB
-from knowledge_mining_zym.mining.models import (
+from knowledge_mining.mining.db import MiningDB
+from knowledge_mining.mining.models import (
     BatchParams,
     CanonicalSegmentData,
     RawDocumentData,

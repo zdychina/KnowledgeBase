@@ -5,8 +5,8 @@ import hashlib
 import tempfile
 from pathlib import Path
 
-from knowledge_mining_zym.mining.ingestion import ingest_directory
-from knowledge_mining_zym.mining.models import BatchParams
+from knowledge_mining.mining.ingestion import ingest_directory
+from knowledge_mining.mining.models import BatchParams
 
 
 def _write_files(tmp: Path, files: dict[str, str | bytes]) -> None:

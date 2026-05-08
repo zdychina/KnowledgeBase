@@ -1,5 +1,5 @@
 """Verify structure parser: heading, table, html_table, code, list, raw_html."""
-from knowledge_mining_zym.mining.structure import parse_structure
+from knowledge_mining.mining.structure import parse_structure
 
 
 def test_simple_heading_and_paragraph():

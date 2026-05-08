@@ -1,8 +1,8 @@
 """Test extractor implementations: RuleBasedEntityExtractor, DefaultRoleClassifier, NoOp variants."""
 from __future__ import annotations
 
-import knowledge_mining_zym.mining.extractors as _ext
-from knowledge_mining_zym.mining.extractors import (
+import knowledge_mining.mining.extractors as _ext
+from knowledge_mining.mining.extractors import (
     DefaultRoleClassifier,
     EntityExtractor,
     NoOpEntityExtractor,
@@ -10,7 +10,7 @@ from knowledge_mining_zym.mining.extractors import (
     RoleClassifier,
     SegmentEnricher,
 )
-from knowledge_mining_zym.mining.models import CanonicalSegmentData, RawSegmentData
+from knowledge_mining.mining.models import CanonicalSegmentData, RawSegmentData
 
 
 class TestRuleBasedEntityExtractor:

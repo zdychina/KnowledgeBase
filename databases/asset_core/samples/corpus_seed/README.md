@@ -9,7 +9,7 @@
 > **注意：** 以下命令为 M2+ 计划入口，当前 M0 尚未实现 `knowledge_mining.mining.jobs.run` 模块。
 
 ```bash
-python -m knowledge_mining_zym.mining.jobs.run --input databases/asset_core/samples/corpus_seed/
+python -m knowledge_mining.mining.jobs.run --input databases/asset_core/samples/corpus_seed/
 ```
 
 ## 要求

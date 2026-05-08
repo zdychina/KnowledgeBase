@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from markdown_it import MarkdownIt
 
-from knowledge_mining_zym.mining.models import ContentBlock, SectionNode
+from knowledge_mining.mining.models import ContentBlock, SectionNode
 
 _RE_TABLE_TAG = "<table"
 

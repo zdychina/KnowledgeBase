@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from knowledge_mining_zym.mining.models import (
+from knowledge_mining.mining.models import (
     CanonicalSegmentData,
     DocumentProfile,
     RawSegmentData,
     SourceMappingData,
 )
-from knowledge_mining_zym.mining.text_utils import (
+from knowledge_mining.mining.text_utils import (
     hamming_distance,
     jaccard_similarity,
     simhash_fingerprint,
