@@ -1,10 +1,10 @@
 """Test segmentation: v0.5 field output — document_key, semantic_role, section_path, etc."""
 from __future__ import annotations
 
-from knowledge_mining_zym.mining.document_profile import build_profile
-from knowledge_mining_zym.mining.models import ContentBlock, RawDocumentData, RawSegmentData, SectionNode
-from knowledge_mining_zym.mining.segmentation import segment_document
-from knowledge_mining_zym.mining.structure import parse_structure
+from knowledge_mining.mining.document_profile import build_profile
+from knowledge_mining.mining.models import ContentBlock, RawDocumentData, RawSegmentData, SectionNode
+from knowledge_mining.mining.segmentation import segment_document
+from knowledge_mining.mining.structure import parse_structure
 
 
 def _make_segments(

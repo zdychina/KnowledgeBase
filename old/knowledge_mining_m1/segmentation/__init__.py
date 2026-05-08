@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from knowledge_mining_zym.mining.extractors import (
+from knowledge_mining.mining.extractors import (
     DefaultRoleClassifier,
     EntityExtractor,
     NoOpEntityExtractor,
     RoleClassifier,
 )
-from knowledge_mining_zym.mining.models import ContentBlock, DocumentProfile, RawSegmentData, SectionNode
-from knowledge_mining_zym.mining.text_utils import (
+from knowledge_mining.mining.models import ContentBlock, DocumentProfile, RawSegmentData, SectionNode
+from knowledge_mining.mining.text_utils import (
     content_hash,
     normalized_hash,
     token_count,

@@ -1,5 +1,5 @@
 """Verify text utility functions."""
-from knowledge_mining_zym.mining.text_utils import (
+from knowledge_mining.mining.text_utils import (
     content_hash,
     hamming_distance,
     jaccard_similarity,

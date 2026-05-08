@@ -57,19 +57,12 @@ CREATE TABLE IF NOT EXISTS mining_run_stage_events (
             'parse',
             'segment',
             'enrich',
-            'relations',
-            'discourse',
-            'retrieval_units',
-            'segment_persist',
-            'relations_persist',
-            'retrieval_units_persist',
             'build_relations',
             'build_retrieval_units',
             'select_snapshot',
             'assemble_build',
             'validate_build',
-            'publish_release',
-            'discourse_relations'
+            'publish_release'
         )
     ),
     status           TEXT NOT NULL CHECK (status IN ('started', 'completed', 'failed', 'skipped')),

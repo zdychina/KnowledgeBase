@@ -1,8 +1,8 @@
 """Test document profile: batch params inheritance for v0.5."""
 from __future__ import annotations
 
-from knowledge_mining_zym.mining.document_profile import build_profile
-from knowledge_mining_zym.mining.models import BatchParams, RawDocumentData
+from knowledge_mining.mining.document_profile import build_profile
+from knowledge_mining.mining.models import BatchParams, RawDocumentData
 
 
 class TestBuildProfile:

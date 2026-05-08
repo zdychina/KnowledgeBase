@@ -15,19 +15,19 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from knowledge_mining_zym.mining.canonicalization import canonicalize
-from knowledge_mining_zym.mining.document_profile import build_profile
-from knowledge_mining_zym.mining.models import (
+from knowledge_mining.mining.canonicalization import canonicalize
+from knowledge_mining.mining.document_profile import build_profile
+from knowledge_mining.mining.models import (
     BatchParams,
     DocumentProfile,
     RawDocumentData,
     RawSegmentData,
 )
-from knowledge_mining_zym.mining.parsers import create_parser
-from knowledge_mining_zym.mining.publishing import publish
-from knowledge_mining_zym.mining.segmentation import segment_document
-from knowledge_mining_zym.mining.structure import parse_structure
-from knowledge_mining_zym.mining.text_utils import (
+from knowledge_mining.mining.parsers import create_parser
+from knowledge_mining.mining.publishing import publish
+from knowledge_mining.mining.segmentation import segment_document
+from knowledge_mining.mining.structure import parse_structure
+from knowledge_mining.mining.text_utils import (
     content_hash,
     normalized_hash,
     token_count,
@@ -261,7 +261,7 @@ def _write_md(path: Path, content: str) -> None:
 
 
 def _run_mini_pipeline(tmp: Path):
-    from knowledge_mining_zym.mining.ingestion import ingest_directory
+    from knowledge_mining.mining.ingestion import ingest_directory
     docs, _ = ingest_directory(tmp)
     profiles = [build_profile(d) for d in docs]
     profile_map = {p.document_key: p for p in profiles}

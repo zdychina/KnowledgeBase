@@ -19,7 +19,7 @@ from agent_serving.serving.eval.runner import EvalRunner
 
 DOMAIN_YAML_PATH = (
     Path(__file__).resolve().parents[2]
-    / "knowledge_mining_zym" / "domain_packs" / "cloud_core_network" / "domain.yaml"
+    / "knowledge_mining" / "domain_packs" / "cloud_core_network" / "domain.yaml"
 )
 
 pytestmark = pytest.mark.skipif(
