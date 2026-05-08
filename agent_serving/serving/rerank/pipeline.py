@@ -123,8 +123,16 @@ class RerankPipeline:
         result = self._annotate_rerank_scores(result)
 
         # 2. Minimum score threshold filter
-        MIN_RERANK_SCORE = 0.1
+        MIN_RERANK_SCORE = 0.01
+        before_filter = len(result)
         result = [c for c in result if c.score >= MIN_RERANK_SCORE]
+        if len(result) < before_filter:
+            logger.info(
+                "Rerank score filter: %d → %d (threshold=%.3f, min_score=%.4f, max_score=%.4f)",
+                before_filter, len(result), MIN_RERANK_SCORE,
+                min(c.score for c in result) if result else 0,
+                max(c.score for c in result) if result else 0,
+            )
 
         # 3. Truncate to max_items
         max_items = route_plan.assembly.max_items if route_plan else 10
