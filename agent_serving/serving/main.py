@@ -47,13 +47,14 @@ async def lifespan(app: FastAPI):
 
     # Initialize LLM client (lazy — no health check at startup)
     app.state.llm_client = None
+    llm_base_url = os.environ.get("LLM_SERVICE_URL")
     if llm_base_url:
         try:
             from agent_serving.serving.infrastructure.llm_client import ServingLlmClient
             app.state.llm_client = ServingLlmClient(base_url=llm_base_url)
             logger.info("LLM client configured for %s (availability checked at first use)", llm_base_url)
-    except Exception:
-        logger.warning("Failed to initialize LLM client, using rule fallback", exc_info=True)
+        except Exception:
+            logger.warning("Failed to initialize LLM client, using rule fallback", exc_info=True)
 
     # Initialize embedding generator
     app.state.embedding_generator = None
