@@ -22,7 +22,7 @@ class ServingDbConfig(BaseSettings):
     pg_gssencmode: str = "disable"
     pg_pool_min: int = 2
     pg_pool_max: int = 10
-    embedding_dimensions: int = 1024
+    embedding_dimensions: int | None = None
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

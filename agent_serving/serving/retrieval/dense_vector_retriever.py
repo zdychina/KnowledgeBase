@@ -29,7 +29,7 @@ class DenseVectorRetriever(Retriever):
     def __init__(
         self,
         pool: AsyncConnectionPool,
-        embedding_dimensions: int = 1024,
+        embedding_dimensions: int | None = None,
     ) -> None:
         self._pool = pool
         self._dimensions = embedding_dimensions

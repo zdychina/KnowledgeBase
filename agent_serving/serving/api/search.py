@@ -53,7 +53,7 @@ def _get_repo(request: Request) -> AssetRepository:
 
 def _get_orchestrator(request: Request) -> RetrievalOrchestrator:
     pool = request.app.state.pool
-    embedding_dimensions = getattr(request.app.state, "embedding_dimensions", 1024)
+    embedding_dimensions = getattr(request.app.state, "embedding_dimensions", None)
     bm25 = FTS5BM25Retriever(pool)
     dense = DenseVectorRetriever(pool, embedding_dimensions=embedding_dimensions)
     return RetrievalOrchestrator({
@@ -85,7 +85,7 @@ def _get_rerank_pipeline(request: Request) -> RerankPipeline:
             from agent_serving.serving.rerank.service_reranker import LLMServiceReranker
             model_reranker = LLMServiceReranker(
                 llm_client=llm_client,
-                model=os.environ.get("RERANK_MODEL", "rerank-pro"),
+                model=os.environ.get("RERANK_MODEL"),
             )
         except Exception:
             logger.warning("Failed to create LLMServiceReranker", exc_info=True)
@@ -100,7 +100,7 @@ def _get_rerank_pipeline(request: Request) -> RerankPipeline:
                     base_url=os.environ.get(
                         "RERANK_BASE_URL", "https://open.bigmodel.cn/api/paas/v4",
                     ),
-                    model=os.environ.get("RERANK_MODEL", "rerank-pro"),
+                    model=os.environ.get("RERANK_MODEL"),
                 )
             except Exception:
                 logger.warning("Failed to create ZhipuReranker", exc_info=True)
@@ -128,10 +128,11 @@ async def _generate_query_embedding(
     llm_client = getattr(request.app.state, "llm_client", None)
     if llm_client:
         try:
+            embed_dim = os.environ.get("EMBEDDING_DIMENSIONS")
             response = await llm_client.embed(
                 [query],
-                model=os.environ.get("EMBEDDING_MODEL", "embedding-3"),
-                dimensions=int(os.environ.get("EMBEDDING_DIMENSIONS", "1024")),
+                model=os.environ.get("EMBEDDING_MODEL"),
+                dimensions=int(embed_dim) if embed_dim else None,
             )
             if response and response.get("data"):
                 return response["data"][0]["embedding"]

@@ -27,7 +27,7 @@ class EmbeddingGenerator:
         *,
         model: str = "embedding-3",
         base_url: str = "https://open.bigmodel.cn/api/paas/v4",
-        dimensions: int = 1024,
+        dimensions: int | None = None,
         timeout: int = 60,
     ) -> None:
         self._api_key = api_key
@@ -41,7 +41,7 @@ class EmbeddingGenerator:
         return self._model
 
     @property
-    def dimensions(self) -> int:
+    def dimensions(self) -> int | None:
         return self._dimensions
 
     def embed(self, texts: list[str]) -> list[list[float]]:
