@@ -14,7 +14,7 @@ import asyncio
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from agent_serving.serving.schemas.models import (
     ContextPack,
@@ -49,31 +49,6 @@ router = APIRouter(prefix="/api/v1", tags=["search"])
 
 def _get_repo(request: Request) -> AssetRepository:
     return AssetRepository(request.app.state.pool)
-
-
-def _get_orchestrator(request: Request) -> RetrievalOrchestrator:
-    pool = request.app.state.pool
-    embedding_dimensions = getattr(request.app.state, "embedding_dimensions", None)
-    bm25 = FTS5BM25Retriever(pool)
-    dense = DenseVectorRetriever(pool, embedding_dimensions=embedding_dimensions)
-    return RetrievalOrchestrator({
-        "lexical_bm25": bm25,
-        "dense_vector": dense,
-    })
-
-
-def _get_expander(request: Request) -> GraphExpander:
-    return GraphExpander(request.app.state.pool)
-
-
-def _get_qu_engine(request: Request) -> QueryUnderstandingEngine:
-    return QueryUnderstandingEngine(
-        llm_client=getattr(request.app.state, "llm_client", None),
-    )
-
-
-def _get_router() -> RetrievalRouter:
-    return RetrievalRouter()
 
 
 def _get_rerank_pipeline(request: Request) -> RerankPipeline:
@@ -150,132 +125,146 @@ async def _generate_query_embedding(
     return None
 
 
-@router.post("/search", response_model=ContextPack)
+@router.post("/search")
 async def search(
     body: SearchRequest,
     request: Request,
-    repo: AssetRepository = Depends(_get_repo),
-    orchestrator: RetrievalOrchestrator = Depends(_get_orchestrator),
-    expander: GraphExpander = Depends(_get_expander),
-    qu_engine: QueryUnderstandingEngine = Depends(_get_qu_engine),
-    route_router: RetrievalRouter = Depends(_get_router),
-) -> ContextPack:
+) -> dict:
+    """Search endpoint — all dependencies resolved inside handler to avoid sync-blocking in Depends."""
+    logger.info("[search] ENTERED query=%s", body.query)
     trace = TraceCollector()
 
-    # 1. Load Domain Profile
-    domain_profile = None
-    if body.domain:
-        domain_profile = load_serving_profile(body.domain)
-    elif hasattr(request.app.state, "domain_profile"):
-        domain_profile = request.app.state.domain_profile
+    pool = request.app.state.pool
+    embedding_dimensions = getattr(request.app.state, "embedding_dimensions", None)
 
-    # 2. Query Understanding (LLM-first, rule fallback)
-    trace.start_stage("query_understanding")
-    understanding = await qu_engine.understand(body.query, domain_profile)
-    trace.end_stage(
-        "query_understanding",
-        output_summary=f"intent={understanding.intent}, entities={len(understanding.entities)}, source={understanding.source}",
+    repo = AssetRepository(pool)
+    orchestrator = RetrievalOrchestrator({
+        "lexical_bm25": FTS5BM25Retriever(pool),
+        "dense_vector": DenseVectorRetriever(pool, embedding_dimensions=embedding_dimensions),
+    })
+    expander = GraphExpander(pool)
+    qu_engine = QueryUnderstandingEngine(
+        llm_client=getattr(request.app.state, "llm_client", None),
     )
+    route_router = RetrievalRouter()
 
-    # 3. Retrieval Router
-    trace.start_stage("retrieval_router")
-    route_plan = route_router.route(understanding, domain_profile)
-    trace.end_stage(
-        "retrieval_router",
-        output_summary=f"routes={len(route_plan.routes)}, fusion={route_plan.fusion.method}",
-    )
-
-    # 4. Resolve active scope
-    trace.start_stage("resolve_scope")
     try:
-        scope = repo.resolve_active_scope()
-    except ValueError as e:
-        if str(e) == "no_active_release":
-            raise HTTPException(
-                status_code=503,
-                detail="No active release — knowledge base is empty",
-            )
-        if str(e) == "multiple_active_releases":
-            raise HTTPException(
-                status_code=500,
-                detail="Data integrity error: multiple active releases",
-            )
-        raise
-    trace.end_stage("resolve_scope", output_summary=f"snapshots={len(scope.snapshot_ids)}")
+        # 1. Load Domain Profile
+        domain_profile = None
+        if body.domain:
+            domain_profile = load_serving_profile(body.domain)
+        elif hasattr(request.app.state, "domain_profile"):
+            domain_profile = request.app.state.domain_profile
 
-    # 5. Generate query embedding for dense vector route
-    query_embedding = None
-    dense_enabled = any(r.name == "dense_vector" and r.enabled for r in route_plan.routes)
-    if dense_enabled:
-        trace.start_stage("embedding")
-        query_embedding = await _generate_query_embedding(request, body.query)
+        # 2. Query Understanding (LLM-first, rule fallback)
+        trace.start_stage("query_understanding")
+        understanding = await qu_engine.understand(body.query, domain_profile)
         trace.end_stage(
-            "embedding",
-            output_summary=f"dim={len(query_embedding) if query_embedding else 0}",
+            "query_understanding",
+            output_summary=f"intent={understanding.intent}, entities={len(understanding.entities)}, source={understanding.source}",
         )
 
-    # 6. Retrieve from all configured routes
-    trace.start_stage("retrieve")
-    orch_result = orchestrator.execute(
-        understanding, route_plan,
-        query_embedding=query_embedding,
-        snapshot_ids=scope.snapshot_ids,
-    )
-    raw_candidates = orch_result.candidates
-    trace.end_stage("retrieve", output_summary=f"candidates={len(raw_candidates)}")
+        # 3. Retrieval Router
+        trace.start_stage("retrieval_router")
+        route_plan = route_router.route(understanding, domain_profile)
+        trace.end_stage(
+            "retrieval_router",
+            output_summary=f"routes={len(route_plan.routes)}, fusion={route_plan.fusion.method}",
+        )
 
-    # 7. Fuse
-    trace.start_stage("fusion")
-    fusion_method = route_plan.fusion.method
-    if fusion_method == "weighted_rrf":
-        fusion = WeightedRRFFusion(k=route_plan.fusion.k)
-        fused = await fusion.fuse(raw_candidates, QueryPlan(), route_plan)
-    elif fusion_method == "rrf":
-        fusion = RRFFusion(k=route_plan.fusion.k)
-        fused = await fusion.fuse(raw_candidates, QueryPlan())
-    else:
-        fusion = IdentityFusion()
-        fused = await fusion.fuse(raw_candidates, QueryPlan())
-    trace.end_stage("fusion", output_summary=f"fused={len(fused)}, method={fusion_method}")
+        # 4. Resolve active scope (sync PG — run in thread to avoid blocking event loop)
+        trace.start_stage("resolve_scope")
+        try:
+            scope = await asyncio.to_thread(repo.resolve_active_scope)
+        except ValueError as e:
+            if str(e) == "no_active_release":
+                raise HTTPException(
+                    status_code=503,
+                    detail="No active release — knowledge base is empty",
+                )
+            if str(e) == "multiple_active_releases":
+                raise HTTPException(
+                    status_code=500,
+                    detail="Data integrity error: multiple active releases",
+                )
+            raise
+        trace.end_stage("resolve_scope", output_summary=f"snapshots={len(scope.snapshot_ids)}")
 
-    # 8. Rerank (cascading: Zhipu → LLM → Score)
-    trace.start_stage("rerank")
-    rerank_pipeline = _get_rerank_pipeline(request)
-    ranked, rerank_traces = await rerank_pipeline.rerank(
-        fused, route_plan, understanding,
-    )
-    rerank_method = "model" if rerank_pipeline._model_reranker else "score"
-    trace.end_stage("rerank", output_summary=f"ranked={len(ranked)}, method={rerank_method}")
+        # 5. Generate query embedding for dense vector route
+        query_embedding = None
+        dense_enabled = any(r.name == "dense_vector" and r.enabled for r in route_plan.routes)
+        if dense_enabled:
+            trace.start_stage("embedding")
+            query_embedding = await _generate_query_embedding(request, body.query)
+            trace.end_stage(
+                "embedding",
+                output_summary=f"dim={len(query_embedding) if query_embedding else 0}",
+            )
 
-    # 9. Assemble ContextPack
-    trace.start_stage("assembly")
-    legacy_plan = QueryPlan(
-        intent=understanding.intent,
-        keywords=understanding.keywords,
-        desired_roles=understanding.evidence_need.preferred_roles,
-        budget=RetrievalBudget(
-            max_items=route_plan.assembly.max_items,
-            max_expanded=route_plan.assembly.max_expanded,
-        ),
-        expansion=route_plan.expansion,
-    )
-    assembler = ContextAssembler(repo, expander)
-    pack = assembler.assemble(
-        query=body.query,
-        understanding=understanding,
-        plan=legacy_plan,
-        scope=scope,
-        candidates=ranked,
-        route_plan=route_plan,
-    )
-    trace.end_stage("assembly", output_summary=f"items={len(pack.items)}")
+        # 6. Retrieve from all configured routes (sync PG — run in thread)
+        trace.start_stage("retrieve")
+        orch_result = await asyncio.to_thread(
+            orchestrator.execute,
+            understanding, route_plan,
+            query_embedding,
+            scope.snapshot_ids,
+        )
+        raw_candidates = orch_result.candidates
+        trace.end_stage("retrieve", output_summary=f"candidates={len(raw_candidates)}")
 
-    # 10. Build trace for debug
-    full_trace = trace.build_trace()
+        # 7. Fuse
+        trace.start_stage("fusion")
+        fusion_method = route_plan.fusion.method
+        if fusion_method == "weighted_rrf":
+            fusion = WeightedRRFFusion(k=route_plan.fusion.k)
+            fused = await fusion.fuse(raw_candidates, QueryPlan(), route_plan)
+        elif fusion_method == "rrf":
+            fusion = RRFFusion(k=route_plan.fusion.k)
+            fused = await fusion.fuse(raw_candidates, QueryPlan())
+        else:
+            fusion = IdentityFusion()
+            fused = await fusion.fuse(raw_candidates, QueryPlan())
+        trace.end_stage("fusion", output_summary=f"fused={len(fused)}, method={fusion_method}")
 
-    if body.debug:
-        pack = pack.model_copy(update={
-            "debug": {
+        # 8. Rerank (cascading: Zhipu → LLM → Score)
+        trace.start_stage("rerank")
+        rerank_pipeline = _get_rerank_pipeline(request)
+        ranked, rerank_traces = await rerank_pipeline.rerank(
+            fused, route_plan, understanding,
+        )
+        rerank_method = "model" if rerank_pipeline._model_reranker else "score"
+        trace.end_stage("rerank", output_summary=f"ranked={len(ranked)}, method={rerank_method}")
+
+        # 9. Assemble ContextPack (sync PG — run in thread)
+        trace.start_stage("assembly")
+        legacy_plan = QueryPlan(
+            intent=understanding.intent,
+            keywords=understanding.keywords,
+            desired_roles=understanding.evidence_need.preferred_roles,
+            budget=RetrievalBudget(
+                max_items=route_plan.assembly.max_items,
+                max_expanded=route_plan.assembly.max_expanded,
+            ),
+            expansion=route_plan.expansion,
+        )
+        assembler = ContextAssembler(repo, expander)
+        pack = await asyncio.to_thread(
+            assembler.assemble,
+            query=body.query,
+            understanding=understanding,
+            plan=legacy_plan,
+            scope=scope,
+            candidates=ranked,
+            route_plan=route_plan,
+        )
+        trace.end_stage("assembly", output_summary=f"items={len(pack.items)}")
+
+        # 10. Build trace for debug
+        full_trace = trace.build_trace()
+
+        result = pack.model_dump()
+        if body.debug:
+            result["debug"] = {
                 "understanding": understanding.model_dump(),
                 "route_plan": route_plan.model_dump(),
                 "scope": scope.model_dump(),
@@ -286,7 +275,13 @@ async def search(
                 "query_embedding_dim": len(query_embedding) if query_embedding else 0,
                 "route_traces": [{"name": t.name, "attempted": t.attempted, "candidates": t.candidate_count, "skipped_reason": t.skipped_reason} for t in orch_result.route_traces],
                 "rerank_traces": [t.model_dump() for t in rerank_traces],
-            },
-        })
+            }
 
-    return pack
+        logger.info("[search] OK items=%d", len(pack.items))
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("[search] FAILED: %s", e)
+        raise HTTPException(status_code=500, detail=str(e)[:500])

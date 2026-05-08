@@ -31,7 +31,8 @@ class ServingDbConfig(BaseSettings):
         return (
             f"host={self.pg_host} port={self.pg_port} dbname={self.pg_dbname} "
             f"user={self.pg_user} password={self.pg_password} "
-            f"sslmode={self.pg_sslmode} gssencmode={self.pg_gssencmode}"
+            f"sslmode={self.pg_sslmode} gssencmode={self.pg_gssencmode} "
+            f"connect_timeout=5 options='-c statement_timeout=10000'"
         )
 
     @staticmethod
