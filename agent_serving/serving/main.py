@@ -23,8 +23,43 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = ServingDbConfig()
+
+    # --- PG startup diagnostics ---
+    print("=" * 60)
+    print("[PG Diagnostics]")
+    print(f"  host:     {config.pg_host}")
+    print(f"  port:     {config.pg_port}")
+    print(f"  dbname:   {config.pg_dbname}")
+    print(f"  user:     {config.pg_user}")
+    print(f"  sslmode:  {config.pg_sslmode}")
+    print(f"  gssenc:   {config.pg_gssencmode}")
+    print(f"  pool:     {config.pg_pool_min}-{config.pg_pool_max}")
+    print(f"  conninfo: {config.conninfo.replace(config.pg_password, '***') if config.pg_password else config.conninfo}")
+    print("=" * 60)
+
     pool = config.create_pool()
-    pool.open()
+
+    try:
+        pool.open()
+        print("[PG] Pool opened — testing connection ...")
+        with pool.connection() as conn:
+            result = conn.execute("SELECT version()").fetchone()
+            print(f"[PG] Connected! {result['version']}")
+            tables = conn.execute(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+            ).fetchall()
+            print(f"[PG] Tables ({len(tables)}): {[t['tablename'] for t in tables]}")
+            release = conn.execute(
+                "SELECT id, status, channel FROM asset_publish_releases WHERE status = 'active' LIMIT 5"
+            ).fetchall()
+            print(f"[PG] Active releases: {len(release)}")
+            for r in release:
+                print(f"       - id={r['id'][:12]}... status={r['status']} channel={r['channel']}")
+    except Exception as e:
+        print(f"[PG] CONNECTION FAILED: {type(e).__name__}: {e}")
+        print("[PG] Service will start but search WILL NOT work!")
+    print("=" * 60)
+
     app.state.pool = pool
     app.state.embedding_dimensions = config.embedding_dimensions
 
