@@ -70,7 +70,7 @@
 ## 已执行验证
 
 ```bash
-python -m pytest knowledge_mining/tests/ -q
+python -m pytest knowledge_mining_zym/tests/ -q
 # 197 passed (184 原有 + 13 新增)
 ```
 

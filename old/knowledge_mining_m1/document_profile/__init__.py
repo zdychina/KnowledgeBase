@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from knowledge_mining.mining.models import BatchParams, DocumentProfile, RawDocumentData
+from knowledge_mining_zym.mining.models import BatchParams, DocumentProfile, RawDocumentData
 
 
 def build_profile(doc: RawDocumentData) -> DocumentProfile:

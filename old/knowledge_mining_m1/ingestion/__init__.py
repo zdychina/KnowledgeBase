@@ -10,7 +10,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from knowledge_mining.mining.models import BatchParams, RawDocumentData
+from knowledge_mining_zym.mining.models import BatchParams, RawDocumentData
 
 # Recognized file extensions → file_type mapping
 _EXTENSION_MAP: dict[str, str] = {

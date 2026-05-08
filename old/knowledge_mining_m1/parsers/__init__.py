@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from knowledge_mining.mining.models import ContentBlock, SectionNode
-from knowledge_mining.mining.text_utils import token_count as _token_count
+from knowledge_mining_zym.mining.models import ContentBlock, SectionNode
+from knowledge_mining_zym.mining.text_utils import token_count as _token_count
 
 # Re-export structure parser for MarkdownParser
-from knowledge_mining.mining.structure import parse_structure as _parse_md_structure
+from knowledge_mining_zym.mining.structure import parse_structure as _parse_md_structure
 
 
 @runtime_checkable

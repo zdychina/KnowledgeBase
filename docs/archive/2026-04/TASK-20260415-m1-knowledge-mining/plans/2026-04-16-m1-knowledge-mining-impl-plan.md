@@ -149,12 +149,12 @@ class CanonicalSegmentData:
 **Step 1: 写测试**
 
 ```python
-# knowledge_mining/tests/test_db.py
+# knowledge_mining_zym/tests/test_db.py
 """Verify SQLite schema creation from shared DDL and basic CRUD."""
 import tempfile
 from pathlib import Path
 
-from knowledge_mining.mining.db import MiningDB
+from knowledge_mining_zym.mining.db import MiningDB
 
 
 def test_create_tables_from_shared_ddl():
@@ -256,9 +256,9 @@ class MiningDB:
 **Step 1: 写测试**
 
 ```python
-# knowledge_mining/tests/test_text_utils.py
+# knowledge_mining_zym/tests/test_text_utils.py
 """Verify text utility functions."""
-from knowledge_mining.mining.text_utils import (
+from knowledge_mining_zym.mining.text_utils import (
     content_hash,
     normalize_text,
     normalized_hash,
@@ -337,7 +337,7 @@ Expected: FAIL
 **Step 3: 写实现**
 
 ```python
-# knowledge_mining/mining/text_utils.py
+# knowledge_mining_zym/mining/text_utils.py
 """Text hashing, normalization, and similarity utilities."""
 from __future__ import annotations
 
@@ -444,7 +444,7 @@ Expected: 全部 passed
 **Step 5: Commit**
 
 ```bash
-git add knowledge_mining/mining/text_utils.py knowledge_mining/tests/test_text_utils.py
+git add knowledge_mining_zym/mining/text_utils.py knowledge_mining_zym/tests/test_text_utils.py
 git commit -m "[claude-mining]: add text hashing, normalization, and simhash utilities"
 ```
 
@@ -683,7 +683,7 @@ Expected: 全部 passed
 **Step 4: Commit**
 
 ```bash
-git add knowledge_mining/
+git add knowledge_mining_zym/
 git commit -m "[claude-mining]: complete M1 mining pipeline v1.1 with real corpus"
 ```
 

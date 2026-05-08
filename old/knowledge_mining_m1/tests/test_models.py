@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from knowledge_mining.mining.models import (
+from knowledge_mining_zym.mining.models import (
     BatchParams,
     CanonicalSegmentData,
     ContentBlock,

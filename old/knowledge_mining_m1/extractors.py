@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol, runtime_checkable
 
-from knowledge_mining.mining.models import CanonicalSegmentData, RawSegmentData
+from knowledge_mining_zym.mining.models import CanonicalSegmentData, RawSegmentData
 
 
 @runtime_checkable

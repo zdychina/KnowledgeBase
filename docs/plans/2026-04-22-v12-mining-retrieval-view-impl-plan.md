@@ -69,7 +69,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add databases/asset_core/schemas/001_asset_core.sqlite.sql knowledge_mining/tests/test_v11_pipeline.py
+git add databases/asset_core/schemas/001_asset_core.sqlite.sql knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): add source_segment_id column to asset_retrieval_units schema"
 ```
 
@@ -165,7 +165,7 @@ Expected: All tests PASS
 **Step 6: Commit**
 
 ```bash
-git add knowledge_mining/mining/db.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/db.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): db.py supports source_segment_id + count_segments_by_snapshot"
 ```
 
@@ -219,7 +219,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add knowledge_mining/mining/models.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/models.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): add source_segment_id to RetrievalUnitData model"
 ```
 
@@ -294,7 +294,7 @@ Expected: All PASS
 **Step 6: Commit**
 
 ```bash
-git add knowledge_mining/mining/retrieval_units/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/retrieval_units/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): build_retrieval_units passes source_segment_id to units"
 ```
 
@@ -311,7 +311,7 @@ git commit -m "[claude-mining]: feat(v1.2): build_retrieval_units passes source_
 ```python
 def test_tokenize_for_search_chinese():
     """tokenize_for_search 应对中文做 jieba 分词。"""
-    from knowledge_mining.mining.text_utils import tokenize_for_search
+    from knowledge_mining_zym.mining.text_utils import tokenize_for_search
     result = tokenize_for_search("PDU会话建立流程")
     # jieba 分词后空格连接
     assert "PDU" in result
@@ -322,7 +322,7 @@ def test_tokenize_for_search_chinese():
 
 def test_tokenize_for_search_fallback():
     """无 jieba 时应回退到原文。"""
-    from knowledge_mining.mining.text_utils import tokenize_for_search
+    from knowledge_mining_zym.mining.text_utils import tokenize_for_search
     # 即使没有 jieba 也不崩溃
     result = tokenize_for_search("hello world")
     assert "hello" in result
@@ -372,7 +372,7 @@ Expected: PASS
 Run: `python -m pytest knowledge_mining/tests/test_v11_pipeline.py -v`
 
 ```bash
-git add knowledge_mining/mining/text_utils.py knowledge_mining/mining/retrieval_units/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/text_utils.py knowledge_mining_zym/mining/retrieval_units/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): jieba pre-tokenization for search_text in FTS5"
 ```
 
@@ -390,14 +390,14 @@ git commit -m "[claude-mining]: feat(v1.2): jieba pre-tokenization for search_te
 ```python
 def test_llm_question_generator_protocol():
     """LlmQuestionGenerator 实现 QuestionGenerator Protocol。"""
-    from knowledge_mining.mining.retrieval_units import QuestionGenerator, LlmQuestionGenerator
+    from knowledge_mining_zym.mining.retrieval_units import QuestionGenerator, LlmQuestionGenerator
     gen = LlmQuestionGenerator(base_url="http://localhost:8000")
     assert isinstance(gen, QuestionGenerator)
 
 
 def test_llm_question_generator_failure_returns_empty():
     """LLM 失败时返回空列表。"""
-    from knowledge_mining.mining.retrieval_units import LlmQuestionGenerator
+    from knowledge_mining_zym.mining.retrieval_units import LlmQuestionGenerator
     gen = LlmQuestionGenerator(base_url="http://localhost:99999")
     seg = RawSegmentData(
         document_key="doc:/test.md", segment_index=0,
@@ -410,14 +410,14 @@ def test_llm_question_generator_failure_returns_empty():
 
 def test_llm_templates_has_question_gen():
     """llm_templates 必须包含 mining-question-gen 模板。"""
-    from knowledge_mining.mining.llm_templates import TEMPLATES
+    from knowledge_mining_zym.mining.llm_templates import TEMPLATES
     keys = [t["template_key"] for t in TEMPLATES]
     assert "mining-question-gen" in keys
 
 
 def test_llm_client_submit_task():
     """LlmClient.submit_task 发送正确请求。"""
-    from knowledge_mining.mining.llm_client import LlmClient
+    from knowledge_mining_zym.mining.llm_client import LlmClient
     client = LlmClient(base_url="http://localhost:99999")
     # Should not crash, just fail gracefully
     result = client.submit_task(
@@ -470,7 +470,7 @@ class LlmQuestionGenerator:
     """v1.2: LLM-backed question generation via llm_service."""
 
     def __init__(self, base_url: str = "http://localhost:8000", timeout: int = 30) -> None:
-        from knowledge_mining.mining.llm_client import LlmClient
+        from knowledge_mining_zym.mining.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url)
         self._timeout = timeout
 
@@ -504,7 +504,7 @@ Expected: All PASS
 Run: `python -m pytest knowledge_mining/tests/test_v11_pipeline.py -v`
 
 ```bash
-git add knowledge_mining/mining/llm_client.py knowledge_mining/mining/llm_templates.py knowledge_mining/mining/retrieval_units/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/llm_client.py knowledge_mining_zym/mining/llm_templates.py knowledge_mining_zym/mining/retrieval_units/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): LLM client + LlmQuestionGenerator + template for generated_question"
 ```
 
@@ -589,7 +589,7 @@ Expected: PASS
 Run: `python -m pytest knowledge_mining/tests/test_v11_pipeline.py -v`
 
 ```bash
-git add knowledge_mining/mining/jobs/run.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/jobs/run.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): pipeline passes seg_ids and source_segment_id to retrieval units"
 ```
 
@@ -605,7 +605,7 @@ git commit -m "[claude-mining]: feat(v1.2): pipeline passes seg_ids and source_s
 ```python
 def test_same_section_distance_limit():
     """same_section 关系不应超过 max_distance。"""
-    from knowledge_mining.mining.relations import build_relations
+    from knowledge_mining_zym.mining.relations import build_relations
 
     # 20 segments in same section
     segments = []
@@ -655,7 +655,7 @@ for i in range(len(seg_keys)):
 Run: `python -m pytest knowledge_mining/tests/test_v11_pipeline.py -v`
 
 ```bash
-git add knowledge_mining/mining/relations/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/relations/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): same_section distance limit (max_distance=5)"
 ```
 
@@ -671,7 +671,7 @@ git commit -m "[claude-mining]: feat(v1.2): same_section distance limit (max_dis
 ```python
 def test_validate_build_rejects_empty_build(tmp_path):
     """空 build 应无法通过 validate_build。"""
-    from knowledge_mining.mining.publishing import validate_build
+    from knowledge_mining_zym.mining.publishing import validate_build
     asset_db, _, _ = _setup_dbs(tmp_path)
     # Create a build with no snapshots
     asset_db.insert_build(
@@ -709,7 +709,7 @@ def validate_build(asset_db: AssetCoreDB, build_id: str) -> None:
 **Step 4: Run tests + commit**
 
 ```bash
-git add knowledge_mining/mining/publishing/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/publishing/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): validate_build checks for active snapshots with segments"
 ```
 
@@ -783,7 +783,7 @@ elif seg.section_title:
 **Step 4: Run tests + commit**
 
 ```bash
-git add knowledge_mining/mining/retrieval_units/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/retrieval_units/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): entity_card includes entity context from raw text"
 ```
 
@@ -864,7 +864,7 @@ if action == "UPDATE":
 **Step 4: Run tests + commit**
 
 ```bash
-git add knowledge_mining/mining/jobs/run.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/jobs/run.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): UPDATE scenario cleans old snapshot data"
 ```
 
@@ -880,11 +880,12 @@ git commit -m "[claude-mining]: feat(v1.2): UPDATE scenario cleans old snapshot 
 ```python
 def test_enricher_protocol_has_enrich_batch():
     """Enricher Protocol 必须有 enrich_batch 方法。"""
-    from knowledge_mining.mining.enrich import Enricher
+    from knowledge_mining_zym.mining.enrich import Enricher
 
     class TestEnricher:
         def enrich(self, segments, **kwargs):
             return segments
+
         def enrich_batch(self, segments, **kwargs):
             return segments
 
@@ -893,7 +894,7 @@ def test_enricher_protocol_has_enrich_batch():
 
 def test_rule_based_enricher_has_enrich_batch():
     """RuleBasedEnricher 必须有 enrich_batch 方法。"""
-    from knowledge_mining.mining.enrich import RuleBasedEnricher
+    from knowledge_mining_zym.mining.enrich import RuleBasedEnricher
     enricher = RuleBasedEnricher()
     assert hasattr(enricher, "enrich_batch")
     segs = [RawSegmentData(
@@ -930,7 +931,7 @@ def enrich_batch(self, segments: list[RawSegmentData], **kwargs: Any) -> list[Ra
 **Step 4: Run tests + commit**
 
 ```bash
-git add knowledge_mining/mining/enrich/__init__.py knowledge_mining/tests/test_v11_pipeline.py
+git add knowledge_mining_zym/mining/enrich/__init__.py knowledge_mining_zym/tests/test_v11_pipeline.py
 git commit -m "[claude-mining]: feat(v1.2): enrich Protocol adds enrich_batch for LLM batch support"
 ```
 
@@ -946,7 +947,7 @@ Expected: All tests PASS (30+ original + ~15 new)
 **Step 2: Run end-to-end with real corpus**
 
 ```python
-from knowledge_mining.mining.jobs.run import run
+from knowledge_mining_zym.mining.jobs.run import run
 
 result = run(
     "data/knowledge_base",

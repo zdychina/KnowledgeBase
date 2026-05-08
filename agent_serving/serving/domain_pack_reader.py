@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _DOMAIN_PACKS_DIR = Path(
     os.environ.get(
         "DOMAIN_PACKS_DIR",
-        str(Path(__file__).resolve().parents[2] / "knowledge_mining" / "domain_packs"),
+        str(Path(__file__).resolve().parents[2] / "knowledge_mining_zym" / "domain_packs"),
     )
 )
 

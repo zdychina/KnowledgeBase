@@ -122,7 +122,7 @@ if not entity_names:
 `agent_serving/serving/domain_pack_reader.py`：
 
 ```python
-_PACKS_ROOT = Path(__file__).resolve().parent.parent / "knowledge_mining" / "domain_packs"
+_PACKS_ROOT = Path(__file__).resolve().parent.parent / "knowledge_mining_zym" / "domain_packs"
 ```
 
 `__file__` 位于 `agent_serving/serving/domain_pack_reader.py`，`parent.parent` 是 `agent_serving`，因此实际查找路径是：

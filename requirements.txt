@@ -1,0 +1,39 @@
+# Runtime dependencies for cloud-core-knowledge-backend
+# Python: >=3.11 (see pyproject.toml)
+#
+# 子项目用途速查：
+#   agent_serving / knowledge_mining_zym / llm_service / scripts
+# 安装：
+#   pip install -r requirements.txt
+
+# ---- Web framework / ASGI ----
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# ---- Validation & settings ----
+pydantic>=2.7
+pydantic-settings>=2.3
+jsonschema>=4.21
+
+# ---- HTTP client ----
+httpx>=0.27
+
+# ---- Templating ----
+jinja2>=3.1
+
+# ---- Markdown / parsing ----
+markdown-it-py>=3.0
+
+# ---- Config ----
+python-dotenv>=1.0
+PyYAML>=6.0
+
+# ---- Databases ----
+psycopg[binary]>=3.1
+psycopg-pool>=3.2
+aiosqlite>=0.20
+
+# ---- Mining UI (scripts/mining_ui.py) ----
+# gradio 5.x 不再依赖 huggingface_hub.HfFolder，与新版 hf_hub 兼容
+gradio>=5.0
+pandas>=2.0

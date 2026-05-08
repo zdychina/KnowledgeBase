@@ -6,20 +6,20 @@ import time
 import tempfile
 from pathlib import Path
 
-from knowledge_mining.mining.canonicalization import canonicalize
-from knowledge_mining.mining.db import MiningDB
-from knowledge_mining.mining.document_profile import build_profile
-from knowledge_mining.mining.ingestion import ingest_directory
-from knowledge_mining.mining.models import (
+from knowledge_mining_zym.mining.canonicalization import canonicalize
+from knowledge_mining_zym.mining.db import MiningDB
+from knowledge_mining_zym.mining.document_profile import build_profile
+from knowledge_mining_zym.mining.ingestion import ingest_directory
+from knowledge_mining_zym.mining.models import (
     BatchParams,
     CanonicalSegmentData,
     RawDocumentData,
     RawSegmentData,
     SourceMappingData,
 )
-from knowledge_mining.mining.parsers import create_parser
-from knowledge_mining.mining.publishing import publish
-from knowledge_mining.mining.segmentation import segment_document
+from knowledge_mining_zym.mining.parsers import create_parser
+from knowledge_mining_zym.mining.publishing import publish
+from knowledge_mining_zym.mining.segmentation import segment_document
 
 
 def _write_files(tmp: Path, files: dict[str, str | bytes]) -> None:

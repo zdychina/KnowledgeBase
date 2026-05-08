@@ -4,8 +4,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from knowledge_mining.mining.models import ContentBlock, SectionNode
-from knowledge_mining.mining.parsers import (
+from knowledge_mining_zym.mining.models import ContentBlock, SectionNode
+from knowledge_mining_zym.mining.parsers import (
     MarkdownParser,
     PassthroughParser,
     PlainTextParser,

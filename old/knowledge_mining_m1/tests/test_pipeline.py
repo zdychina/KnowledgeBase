@@ -5,9 +5,9 @@ import tempfile
 import time
 from pathlib import Path
 
-from knowledge_mining.mining.db import MiningDB
-from knowledge_mining.mining.jobs.run import run_pipeline
-from knowledge_mining.mining.models import BatchParams
+from knowledge_mining_zym.mining.db import MiningDB
+from knowledge_mining_zym.mining.jobs.run import run_pipeline
+from knowledge_mining_zym.mining.models import BatchParams
 
 
 def _write_files(tmp: Path, files: dict[str, str | bytes]) -> None:

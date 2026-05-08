@@ -10,20 +10,20 @@ import json
 from pathlib import Path
 from typing import Any
 
-from knowledge_mining.mining.canonicalization import canonicalize
-from knowledge_mining.mining.document_profile import build_profile
-from knowledge_mining.mining.extractors import DefaultRoleClassifier
-from knowledge_mining.mining.extractors import EntityExtractor
-from knowledge_mining.mining.extractors import NoOpSegmentEnricher
-from knowledge_mining.mining.extractors import RoleClassifier
-from knowledge_mining.mining.extractors import SegmentEnricher
-import knowledge_mining.mining.extractors as _extractors_mod
+from knowledge_mining_zym.mining.canonicalization import canonicalize
+from knowledge_mining_zym.mining.document_profile import build_profile
+from knowledge_mining_zym.mining.extractors import DefaultRoleClassifier
+from knowledge_mining_zym.mining.extractors import EntityExtractor
+from knowledge_mining_zym.mining.extractors import NoOpSegmentEnricher
+from knowledge_mining_zym.mining.extractors import RoleClassifier
+from knowledge_mining_zym.mining.extractors import SegmentEnricher
+import knowledge_mining_zym.mining.extractors as _extractors_mod
 RuleBasedEntityExtractor = _extractors_mod.RuleBasedEntityExtractor
-from knowledge_mining.mining.ingestion import ingest_directory
-from knowledge_mining.mining.models import BatchParams, RawSegmentData
-from knowledge_mining.mining.parsers import create_parser
-from knowledge_mining.mining.publishing import publish
-from knowledge_mining.mining.segmentation import segment_document
+from knowledge_mining_zym.mining.ingestion import ingest_directory
+from knowledge_mining_zym.mining.models import BatchParams, RawSegmentData
+from knowledge_mining_zym.mining.parsers import create_parser
+from knowledge_mining_zym.mining.publishing import publish
+from knowledge_mining_zym.mining.segmentation import segment_document
 
 
 def run_pipeline(

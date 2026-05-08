@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_mining.mining.db import MiningDB
+from knowledge_mining_zym.mining.db import MiningDB
 
 
 @pytest.fixture()

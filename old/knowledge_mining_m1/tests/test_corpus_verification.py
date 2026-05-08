@@ -4,13 +4,13 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from knowledge_mining.mining.canonicalization import canonicalize
-from knowledge_mining.mining.document_profile import build_profile
-from knowledge_mining.mining.ingestion import ingest_directory
-from knowledge_mining.mining.jobs.run import run_pipeline
-from knowledge_mining.mining.models import BatchParams
-from knowledge_mining.mining.parsers import create_parser
-from knowledge_mining.mining.segmentation import segment_document
+from knowledge_mining_zym.mining.canonicalization import canonicalize
+from knowledge_mining_zym.mining.document_profile import build_profile
+from knowledge_mining_zym.mining.ingestion import ingest_directory
+from knowledge_mining_zym.mining.jobs.run import run_pipeline
+from knowledge_mining_zym.mining.models import BatchParams
+from knowledge_mining_zym.mining.parsers import create_parser
+from knowledge_mining_zym.mining.segmentation import segment_document
 
 
 def _write_files(tmp: Path, files: dict[str, str]) -> None:
