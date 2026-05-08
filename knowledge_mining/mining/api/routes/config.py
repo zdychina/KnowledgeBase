@@ -1,10 +1,9 @@
 """Configuration management routes."""
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter, Request
 
+from knowledge_mining.mining.infra.mining_config import MiningConfig
 from knowledge_mining.mining.infra.pg_config import MiningDbConfig
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -14,12 +13,13 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 async def get_config(request: Request) -> dict:
     """Current mining configuration (non-sensitive)."""
     cfg: MiningDbConfig = request.app.state.db_config
+    mining_cfg = MiningConfig()
     return {
-        "domain_pack": os.environ.get("DOMAIN_PACK", "cloud_core_network"),
-        "max_workers": int(os.environ.get("MAX_WORKERS", "4")),
-        "embedding_model": os.environ.get("EMBEDDING_MODEL", "embedding-3"),
-        "embedding_dimensions": int(os.environ.get("EMBEDDING_DIMENSIONS", "1024")),
-        "llm_service_url": os.environ.get("LLM_SERVICE_URL", "http://localhost:8900"),
+        "domain_pack": mining_cfg.domain_pack,
+        "max_workers": mining_cfg.max_workers,
+        "embedding_model": mining_cfg.embedding_model,
+        "embedding_dimensions": mining_cfg.embedding_dimensions,
+        "llm_service_url": mining_cfg.llm_service_url,
         "database": {
             "host": cfg.pg_host,
             "port": cfg.pg_port,

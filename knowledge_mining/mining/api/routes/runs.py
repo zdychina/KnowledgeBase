@@ -22,12 +22,14 @@ _run_lock = threading.Lock()
 
 class CreateRunRequest(BaseModel):
     input_path: str
-    domain_pack: str = "cloud_core_network"
-    max_workers: int = 4
+    domain_pack: str | None = None
+    max_workers: int | None = None
     phase1_only: bool = False
     publish_on_partial_failure: bool = False
     llm_base_url: str | None = None
     embedding_api_key: str | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
 
 
 class RunResponse(BaseModel):
@@ -50,10 +52,11 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
     pool = request.app.state.pg_pool
     db_config: MiningDbConfig = request.app.state.db_config
 
-    # Read embedding env vars
-    import os
-    embedding_api_key = body.embedding_api_key or os.environ.get("EMBEDDING_API_KEY")
-    llm_base_url = body.llm_base_url or os.environ.get("LLM_SERVICE_URL", "http://localhost:8900")
+    # Load defaults from MiningConfig (env vars)
+    from knowledge_mining.mining.infra.mining_config import MiningConfig
+    cfg = MiningConfig()
+    embedding_api_key = body.embedding_api_key
+    llm_base_url = body.llm_base_url or cfg.llm_service_url
 
     # Prevent concurrent mining runs
     if not _run_lock.acquire(blocking=False):
@@ -69,6 +72,8 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
                 publish_on_partial_failure=body.publish_on_partial_failure,
                 llm_base_url=llm_base_url,
                 embedding_api_key=embedding_api_key,
+                embedding_model=body.embedding_model,
+                embedding_dimensions=body.embedding_dimensions,
                 max_workers=body.max_workers,
                 domain_pack=body.domain_pack,
             )

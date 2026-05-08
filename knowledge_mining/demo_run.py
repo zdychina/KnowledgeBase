@@ -3,14 +3,11 @@
 Usage:
     python knowledge_mining/demo_run.py
 
-All PG connection params come from .env (PG_HOST, PG_PORT, PG_DBNAME, etc.).
-LLM service URL is read from LLM_BASE_URL env var (default: http://localhost:8900).
-Embedding API key is read from EMBEDDING_API_KEY env var.
+All config comes from .env via MiningConfig / MiningDbConfig.
 """
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -22,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("demo_run")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = REPO_ROOT / "data" / "knowledge_base" / "业务感知功能描述"
+DATA_DIR = REPO_ROOT / "data" / "knowledge_base" / "5G核心网基础"
 
 # Tables to drop (reverse order — children first for FK constraints)
 _ASSET_TABLES = [
@@ -90,28 +87,25 @@ def recreate_all_tables(cfg) -> None:
 
 def main() -> None:
     from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining.mining.infra.mining_config import MiningConfig
     from knowledge_mining.mining.jobs.run import run
 
-    cfg = MiningDbConfig()
+    db_cfg = MiningDbConfig()
+    mining_cfg = MiningConfig()
 
     # Step 1: Drop & recreate all tables from schema files
-    recreate_all_tables(cfg)
+    recreate_all_tables(db_cfg)
 
     # Step 2: Run mining pipeline
-    llm_base_url = os.environ.get("LLM_BASE_URL", "http://localhost:8900")
-    embedding_api_key = os.environ.get("EMBEDDING_API_KEY", "")
-
     logger.info("Starting demo mining run...")
-    logger.info("  input_path:  %s", DATA_DIR)
-    logger.info("  llm_base_url: %s", llm_base_url)
-    logger.info("  embedding_api_key: %s", "***provided***" if embedding_api_key else "(none)")
+    logger.info("  input_path:       %s", DATA_DIR)
+    logger.info("  llm_base_url:     %s", mining_cfg.llm_service_url)
+    logger.info("  embedding_model:  %s", mining_cfg.embedding_model)
+    logger.info("  embedding_dims:   %d", mining_cfg.embedding_dimensions)
 
     t0 = time.perf_counter()
     result = run(
         input_path=DATA_DIR,
-        llm_base_url=llm_base_url,
-        embedding_api_key=embedding_api_key or None,
-        domain_pack="cloud_core_network",
         publish_on_partial_failure=True,
     )
     elapsed = time.perf_counter() - t0
