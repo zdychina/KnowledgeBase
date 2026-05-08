@@ -20,7 +20,7 @@ class LLMServiceReranker:
         llm_client,
         *,
         model: str = "rerank",
-        top_n: int = 20,
+        top_n: int = 100,
     ) -> None:
         self._llm_client = llm_client
         self._model = model
@@ -61,6 +61,7 @@ class LLMServiceReranker:
         if not response or not response.get("results"):
             return None
 
+        # Only return candidates that received rerank scores, sorted by relevance
         reordered: list[RetrievalCandidate] = []
         seen_indices: set[int] = set()
         for item in response["results"]:
@@ -71,9 +72,5 @@ class LLMServiceReranker:
                 score = item.get("relevance_score", candidate.score)
                 reordered.append(candidate.model_copy(update={"score": float(score)}))
 
-        for idx, candidate in enumerate(working_set):
-            if idx not in seen_indices:
-                reordered.append(candidate)
-
-        reordered.extend(candidates[top_n:])
+        # Result is already sorted by relevance_score from the API
         return reordered

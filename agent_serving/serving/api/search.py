@@ -281,6 +281,7 @@ async def search(
                 "scope": scope.model_dump(),
                 "trace": full_trace.model_dump(),
                 "candidate_count": len(ranked),
+                "rerank_after_filter": len(ranked),
                 "fusion_method": fusion_method,
                 "query_embedding_dim": len(query_embedding) if query_embedding else 0,
                 "route_traces": [{"name": t.name, "attempted": t.attempted, "candidates": t.candidate_count, "skipped_reason": t.skipped_reason} for t in orch_result.route_traces],

@@ -94,7 +94,7 @@ class RetrievalRouter:
             rerank=RerankConfig(method=rerank_method),
             assembly=AssemblyConfig(
                 max_items=10,
-                max_expanded=20,
+                max_expanded=10,
             ),
             expansion=ExpansionConfig(),
         )

@@ -206,6 +206,13 @@ class ContextAssembler:
         max_items = route_plan.assembly.max_items + route_plan.assembly.max_expanded
         all_items = all_items[:max_items]
 
+        # Filter relations: only keep edges where both endpoints exist in final items
+        item_ids = {item.id for item in all_items}
+        unique_relations = [
+            r for r in unique_relations
+            if r.from_id in item_ids and r.to_id in item_ids
+        ]
+
         # Build ContextQuery from understanding or normalized
         if understanding:
             context_query = ContextQuery(

@@ -44,7 +44,7 @@ class NormalizedQuery(BaseModel):
 
 class RetrievalBudget(BaseModel):
     max_items: int = 10
-    max_expanded: int = 20
+    max_expanded: int = 10
     recall_multiplier: int = 5
 
 
@@ -244,7 +244,7 @@ class AssemblyConfig(BaseModel):
     source_drilldown: bool = True
     relation_expansion: bool = True
     max_items: int = 10
-    max_expanded: int = 20
+    max_expanded: int = 10
     max_relation_depth: int = 2
     relation_types: list[str] = Field(default_factory=lambda: [
         # Structural relations

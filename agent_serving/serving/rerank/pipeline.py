@@ -42,12 +42,16 @@ class RerankPipeline:
         route_plan: RetrievalRoutePlan | None = None,
         understanding: QueryUnderstanding | None = None,
     ) -> tuple[list[RetrievalCandidate], list[RerankTraceStep]]:
-        """Rerank candidates using cascading strategies with real trace."""
+        """Rerank candidates using cascading strategies with real trace.
+
+        All paths converge to unified post-processing: threshold filter + truncation.
+        """
         if not candidates:
             return [], []
 
         trace: list[RerankTraceStep] = []
         count_before = len(candidates)
+        result: list[RetrievalCandidate] | None = None
 
         # 1. Try model-based reranker (Zhipu rerank) if available
         if self._model_reranker:
@@ -63,53 +67,70 @@ class RerankPipeline:
                 if result:
                     step.succeeded = True
                     step.count_after = len(result)
-                    trace.append(step)
-                    return self._annotate_rerank_scores(result), trace
-                step.fallback_reason = "model_reranker returned empty"
+                else:
+                    step.fallback_reason = "model_reranker returned empty"
+                    result = None
             except Exception as exc:
                 step.latency_ms = (time.perf_counter() - t0) * 1000
                 step.fallback_reason = str(exc)[:200]
                 logger.warning("Model reranker failed: %s", exc)
+                result = None
             trace.append(step)
 
-        # 2. Try LLM reranker if route plan allows
-        method = "score"
-        if route_plan:
-            method = route_plan.rerank.method
+        # 2. Try LLM reranker if route plan allows and model reranker didn't succeed
+        if result is None:
+            method = "score"
+            if route_plan:
+                method = route_plan.rerank.method
 
-        if method in ("llm", "cascade") and self._llm_reranker:
-            step = RerankTraceStep(
-                provider="llm", attempted=True, count_before=count_before,
-            )
-            t0 = time.perf_counter()
-            try:
-                result = await self._llm_reranker.rerank(
-                    candidates, understanding,
+            if method in ("llm", "cascade") and self._llm_reranker:
+                step = RerankTraceStep(
+                    provider="llm", attempted=True, count_before=count_before,
                 )
-                step.latency_ms = (time.perf_counter() - t0) * 1000
-                if result:
-                    step.succeeded = True
-                    step.count_after = len(result)
-                    trace.append(step)
-                    return self._annotate_rerank_scores(result), trace
-                step.fallback_reason = "llm_reranker returned empty"
-            except Exception as exc:
-                step.latency_ms = (time.perf_counter() - t0) * 1000
-                step.fallback_reason = str(exc)[:200]
-                logger.warning("LLM reranker failed: %s", exc)
-            trace.append(step)
+                t0 = time.perf_counter()
+                try:
+                    result = await self._llm_reranker.rerank(
+                        candidates, understanding,
+                    )
+                    step.latency_ms = (time.perf_counter() - t0) * 1000
+                    if result:
+                        step.succeeded = True
+                        step.count_after = len(result)
+                    else:
+                        step.fallback_reason = "llm_reranker returned empty"
+                        result = None
+                except Exception as exc:
+                    step.latency_ms = (time.perf_counter() - t0) * 1000
+                    step.fallback_reason = str(exc)[:200]
+                    logger.warning("LLM reranker failed: %s", exc)
+                    result = None
+                trace.append(step)
 
         # 3. Score-based fallback (always succeeds)
-        step = RerankTraceStep(
-            provider="score", attempted=True, count_before=count_before,
-        )
-        t0 = time.perf_counter()
-        result = await self._score_reranker.rerank(candidates, route_plan=route_plan)
-        step.latency_ms = (time.perf_counter() - t0) * 1000
-        step.succeeded = True
-        step.count_after = len(result)
-        trace.append(step)
-        return self._annotate_rerank_scores(result), trace
+        if result is None:
+            step = RerankTraceStep(
+                provider="score", attempted=True, count_before=count_before,
+            )
+            t0 = time.perf_counter()
+            result = await self._score_reranker.rerank(candidates, route_plan=route_plan)
+            step.latency_ms = (time.perf_counter() - t0) * 1000
+            step.succeeded = True
+            step.count_after = len(result)
+            trace.append(step)
+
+        # === Unified post-processing ===
+        # 1. Annotate rerank scores first
+        result = self._annotate_rerank_scores(result)
+
+        # 2. Minimum score threshold filter
+        MIN_RERANK_SCORE = 0.1
+        result = [c for c in result if c.score >= MIN_RERANK_SCORE]
+
+        # 3. Truncate to max_items
+        max_items = route_plan.assembly.max_items if route_plan else 10
+        result = result[:max_items]
+
+        return result, trace
 
     def _annotate_rerank_scores(
         self,
