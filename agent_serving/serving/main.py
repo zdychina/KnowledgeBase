@@ -123,17 +123,30 @@ app = FastAPI(
 
 @app.middleware("http")
 async def reencode_body_to_utf8(request: Request, call_next):
-    """Auto-detect GBK body and re-encode to UTF-8 for Windows curl clients."""
+    """Auto-detect GBK body and re-encode to UTF-8 for Windows curl clients.
+
+    Intercepts the ASGI receive function so the body stream is NOT consumed
+    before FastAPI reads it. This keeps the request debuggable in PyCharm.
+    """
     if request.method == "POST" and request.headers.get("content-type", "").startswith("application/json"):
-        body = await request.body()
-        try:
-            body.decode("utf-8")
-        except UnicodeDecodeError:
-            try:
-                body = body.decode("gbk").encode("utf-8")
-                request._body = body
-            except (UnicodeDecodeError, LookupError):
-                pass
+        original_receive = request.receive
+
+        async def _gbk_safe_receive():
+            message = await original_receive()
+            if message.get("type") == "http.request":
+                raw = message.get("body", b"")
+                try:
+                    raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    try:
+                        raw = raw.decode("gbk").encode("utf-8")
+                        return {**message, "body": raw}
+                    except (UnicodeDecodeError, LookupError):
+                        pass
+            return message
+
+        request.receive = _gbk_safe_receive
+
     return await call_next(request)
 
 
