@@ -27,13 +27,13 @@ PACKS_ROOT = Path(__file__).resolve().parent.parent / "domain_packs"
 
 @pytest.fixture
 def cloud_profile():
-    from knowledge_mining.mining.domain_pack import load_domain_pack
+    from knowledge_mining.mining.infra.domain_pack import load_domain_pack
     return load_domain_pack("cloud_core_network", packs_root=PACKS_ROOT)
 
 
 @pytest.fixture
 def generic_profile():
-    from knowledge_mining.mining.domain_pack import load_domain_pack
+    from knowledge_mining.mining.infra.domain_pack import load_domain_pack
     return load_domain_pack("generic", packs_root=PACKS_ROOT)
 
 
@@ -53,7 +53,7 @@ class TestDomainPackLoader:
         assert generic_profile.strong_entity_types == frozenset()
 
     def test_load_nonexistent_raises(self):
-        from knowledge_mining.mining.domain_pack import load_domain_pack
+        from knowledge_mining.mining.infra.domain_pack import load_domain_pack
         with pytest.raises(FileNotFoundError):
             load_domain_pack("nonexistent_domain", packs_root=PACKS_ROOT)
 
@@ -73,7 +73,7 @@ class TestDomainPackLoader:
 
 class TestDomainEntitySchema:
     def test_cloud_schema_has_entity_types(self, cloud_profile):
-        from knowledge_mining.mining.llm_templates import build_templates_from_profile
+        from knowledge_mining.mining.infra.llm_templates import build_templates_from_profile
         templates = build_templates_from_profile(cloud_profile)
         seg_tpl = next(t for t in templates if t["template_key"] == "mining-segment-understanding")
         schema = json.loads(seg_tpl["output_schema_json"])
@@ -82,7 +82,7 @@ class TestDomainEntitySchema:
         assert "network_element" in entity_type_enum
 
     def test_generic_schema_has_concept_only(self, generic_profile):
-        from knowledge_mining.mining.llm_templates import build_templates_from_profile
+        from knowledge_mining.mining.infra.llm_templates import build_templates_from_profile
         templates = build_templates_from_profile(generic_profile)
         seg_tpl = next(t for t in templates if t["template_key"] == "mining-segment-understanding")
         schema = json.loads(seg_tpl["output_schema_json"])
@@ -91,7 +91,7 @@ class TestDomainEntitySchema:
 
     def test_backward_compat_templates(self):
         """TEMPLATES import still works (loads cloud_core_network by default)."""
-        from knowledge_mining.mining.llm_templates import TEMPLATES
+        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
         assert len(TEMPLATES) >= 4
         keys = [t["template_key"] for t in TEMPLATES]
         assert "mining-question-gen" in keys
@@ -104,13 +104,13 @@ class TestDomainEntitySchema:
 
 class TestDomainRuleExtractor:
     def test_cloud_extracts_commands(self, cloud_profile):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor(profile=cloud_profile)
         refs = ext.extract("ADD SMF instance-name", {})
         assert any(r["type"] == "command" and "ADD" in r["name"] for r in refs)
 
     def test_cloud_extracts_network_elements(self, cloud_profile):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor(profile=cloud_profile)
         refs = ext.extract("Configure SMF and UPF for 5GC", {})
         types = {r["type"] for r in refs}
@@ -120,7 +120,7 @@ class TestDomainRuleExtractor:
         assert "UPF" in names
 
     def test_cloud_extracts_interfaces(self, cloud_profile):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor(profile=cloud_profile)
         refs = ext.extract("N4 interface between SMF and UPF", {})
         iface_refs = [r for r in refs if r["type"] == "interface"]
@@ -128,20 +128,20 @@ class TestDomainRuleExtractor:
         assert "N4" in iface_refs[0]["name"]
 
     def test_cloud_extracts_alarms(self, cloud_profile):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor(profile=cloud_profile)
         refs = ext.extract("ALM-SMF-001 occurred", {})
         assert any(r["type"] == "alarm" for r in refs)
 
     def test_generic_no_regex_extractions(self, generic_profile):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor(profile=generic_profile)
         refs = ext.extract("ADD SMF instance-name", {})
         # Generic has no extractor rules, so no regex extractions
         assert len(refs) == 0
 
     def test_section_title_extraction(self, cloud_profile):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor(profile=cloud_profile)
         result = ext.extract_from_section_title("ADD SMF")
         assert result is not None
@@ -155,8 +155,8 @@ class TestDomainRuleExtractor:
 
 class TestDomainRetrievalPolicy:
     def test_cloud_entity_card_only_strong(self, cloud_profile):
-        from knowledge_mining.mining.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.models import RawSegmentData
+        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
+        from knowledge_mining.mining.contracts.models import RawSegmentData
 
         seg = RawSegmentData(
             document_key="doc:test",
@@ -173,8 +173,8 @@ class TestDomainRetrievalPolicy:
         assert entity_cards[0].title == "SMF"
 
     def test_generic_no_entity_cards(self, generic_profile):
-        from knowledge_mining.mining.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.models import RawSegmentData
+        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
+        from knowledge_mining.mining.contracts.models import RawSegmentData
 
         seg = RawSegmentData(
             document_key="doc:test",
@@ -197,8 +197,8 @@ class TestDomainRetrievalPolicy:
 class TestToyDomainPack:
     def test_toy_domain_works(self):
         """Create a toy domain pack and verify extraction works without core code changes."""
-        from knowledge_mining.mining.domain_pack import load_domain_pack
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.domain_pack import load_domain_pack
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
 
         # Write toy domain pack to temp dir
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -284,7 +284,7 @@ class TestEvalQuestionsContract:
 
 class TestRoleClassifier:
     def test_cloud_role_classification(self, cloud_profile):
-        from knowledge_mining.mining.extractors import DefaultRoleClassifier
+        from knowledge_mining.mining.infra.extractors import DefaultRoleClassifier
         clf = DefaultRoleClassifier(profile=cloud_profile)
         assert clf.classify("text", "参数说明", "paragraph", {}) == "parameter"
         assert clf.classify("text", "使用实例", "paragraph", {}) == "example"
@@ -292,7 +292,7 @@ class TestRoleClassifier:
         assert clf.classify("text", "some random title", "paragraph", {}) == "unknown"
 
     def test_generic_role_classification(self, generic_profile):
-        from knowledge_mining.mining.extractors import DefaultRoleClassifier
+        from knowledge_mining.mining.infra.extractors import DefaultRoleClassifier
         clf = DefaultRoleClassifier(profile=generic_profile)
         assert clf.classify("text", "parameter settings", "paragraph", {}) == "parameter"
         assert clf.classify("text", "some title", "paragraph", {}) == "unknown"
@@ -304,8 +304,8 @@ class TestRoleClassifier:
 
 class TestEnricherProfile:
     def test_enricher_uses_profile(self, cloud_profile):
-        from knowledge_mining.mining.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.models import RawSegmentData
+        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
+        from knowledge_mining.mining.contracts.models import RawSegmentData
 
         enricher = RuleBasedEnricher(profile=cloud_profile)
         seg = RawSegmentData(
@@ -319,8 +319,8 @@ class TestEnricherProfile:
         assert any(r["type"] == "command" for r in result[0].entity_refs_json)
 
     def test_enricher_heading_role(self, cloud_profile):
-        from knowledge_mining.mining.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.models import RawSegmentData
+        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
+        from knowledge_mining.mining.contracts.models import RawSegmentData
 
         enricher = RuleBasedEnricher(profile=cloud_profile)
         seg = RawSegmentData(
@@ -341,18 +341,18 @@ class TestEnricherProfile:
 class TestBackwardCompat:
     def test_models_strong_entity_types_empty(self):
         """STRONG_ENTITY_TYPES is now empty (deprecated)."""
-        from knowledge_mining.mining.models import STRONG_ENTITY_TYPES
+        from knowledge_mining.mining.contracts.models import STRONG_ENTITY_TYPES
         assert STRONG_ENTITY_TYPES == frozenset()
 
     def test_default_profile_loads(self):
-        from knowledge_mining.mining.domain_pack import get_default_profile
+        from knowledge_mining.mining.infra.domain_pack import get_default_profile
         profile = get_default_profile()
         assert profile.domain_id == "cloud_core_network"
         assert "command" in profile.strong_entity_types
 
     def test_extractors_without_profile(self):
         """RuleBasedEntityExtractor works without explicit profile (loads default)."""
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor()
         refs = ext.extract("ADD SMF instance-name", {})
         assert any(r["type"] == "command" for r in refs)

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from knowledge_mining.mining.models import (
+from knowledge_mining.mining.contracts.models import (
     BatchParams,
     ContentBlock,
     DocumentProfile,
@@ -26,15 +26,15 @@ from knowledge_mining.mining.models import (
     VALID_SOURCE_TYPES,
     VALID_UNIT_TYPES,
 )
-from knowledge_mining.mining.hash_utils import (
+from knowledge_mining.mining.infra.hash_utils import (
     compute_raw_hash,
     compute_snapshot_hash,
     content_hash,
     normalize_for_snapshot,
     normalized_hash,
 )
-from knowledge_mining.mining.db import AssetCoreDB, MiningRuntimeDB
-from knowledge_mining.mining.text_utils import token_count, normalize_text, jaccard_similarity
+from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
+from knowledge_mining.mining.infra.text_utils import token_count, normalize_text, jaccard_similarity
 
 
 # ===================================================================
@@ -48,20 +48,7 @@ def tmp_dir():
     shutil.rmtree(d)
 
 
-@pytest.fixture
-def asset_db(tmp_dir):
-    db = AssetCoreDB(tmp_dir / "asset_core.sqlite")
-    db.open()
-    yield db
-    db.close()
-
-
-@pytest.fixture
-def runtime_db(tmp_dir):
-    db = MiningRuntimeDB(tmp_dir / "mining_runtime.sqlite")
-    db.open()
-    yield db
-    db.close()
+# asset_db and runtime_db fixtures are provided by conftest.py (PostgreSQL)
 
 
 @pytest.fixture
@@ -189,7 +176,9 @@ class TestMiningRuntimeDB:
         r = runtime_db.get_run("r2")
         assert r["status"] == "completed"
         import json
-        meta = json.loads(r["metadata_json"])
+        meta = r["metadata_json"]
+        if isinstance(meta, str):
+            meta = json.loads(meta)
         assert meta["has_failures"] is True
         assert meta["failed_count"] == 2
 
@@ -261,13 +250,13 @@ class TestIngestion:
 
 class TestStructure:
     def test_parse_heading_tree(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
+        from knowledge_mining.mining.infra.structure import parse_structure
         tree = parse_structure(md_content)
         assert tree.title == "Test Command"
         assert any(c.title == "Parameters" for c in tree.children)
 
     def test_table_structure(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
+        from knowledge_mining.mining.infra.structure import parse_structure
         tree = parse_structure(md_content)
         all_blocks = _collect_blocks(tree)
         tables = [b for b in all_blocks if b.block_type == "table"]
@@ -278,16 +267,16 @@ class TestStructure:
 
 class TestSegmentation:
     def test_heading_segments(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         headings = [s for s in segments if s.block_type == "heading"]
         assert len(headings) >= 4
 
     def test_segment_hashes(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         for seg in segments:
@@ -297,7 +286,7 @@ class TestSegmentation:
 
 class TestExtractors:
     def test_command_extraction(self):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor()
         refs = ext.extract('ADD APN command for SMF network element', {})
         types = {r["type"] for r in refs}
@@ -305,7 +294,7 @@ class TestExtractors:
         assert "network_element" in types
 
     def test_interface_extraction(self):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor()
         refs = ext.extract('配置N4接口，使用PFCP协议建立连接。Sxb接口也需要配置。', {})
         names = {r["name"] for r in refs if r["type"] == "interface"}
@@ -313,7 +302,7 @@ class TestExtractors:
         assert "Sxb" in names
 
     def test_alarm_extraction(self):
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
         ext = RuleBasedEntityExtractor()
         refs = ext.extract('告警ALM-PFCP-PEER-DOWN需要处理，还有ALM-POOL-THRESHOLD。', {})
         names = {r["name"] for r in refs if r["type"] == "alarm"}
@@ -321,7 +310,7 @@ class TestExtractors:
         assert "ALM-POOL-THRESHOLD" in names
 
     def test_role_classifier(self):
-        from knowledge_mining.mining.extractors import DefaultRoleClassifier
+        from knowledge_mining.mining.infra.extractors import DefaultRoleClassifier
         cls = DefaultRoleClassifier()
         assert cls.classify("", "参数说明", "paragraph", {}) == "parameter"
         assert cls.classify("", "使用实例", "paragraph", {}) == "example"
@@ -333,10 +322,10 @@ class TestExtractors:
 
 class TestEnrich:
     def test_enrich_adds_metadata(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
-        from knowledge_mining.mining.enrich import enrich_segments
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining.mining.stages.enrich import enrich_segments
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         enriched = enrich_segments(
@@ -355,9 +344,9 @@ class TestEnrich:
 
 class TestRelations:
     def test_build_relations(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
-        from knowledge_mining.mining.relations import build_relations
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining.mining.stages.relations import build_relations
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         relations, seg_ids = build_relations(segments)
@@ -367,9 +356,9 @@ class TestRelations:
         assert "section_header_of" in types
 
     def test_section_header_of_only_from_heading(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
-        from knowledge_mining.mining.relations import build_relations
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining.mining.stages.relations import build_relations
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         relations, seg_ids = build_relations(segments)
@@ -381,11 +370,11 @@ class TestRelations:
 
 class TestRetrievalUnits:
     def test_build_units(self, md_content):
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
-        from knowledge_mining.mining.enrich import enrich_segments
-        from knowledge_mining.mining.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining.mining.stages.enrich import enrich_segments
+        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
+        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         segments = enrich_segments(
@@ -405,7 +394,7 @@ class TestRetrievalUnits:
 
     def test_source_refs_with_segment_id(self):
         """source_refs_json should include raw_segment_ids when source_seg_id provided."""
-        from knowledge_mining.mining.retrieval_units import _build_source_refs
+        from knowledge_mining.mining.stages.retrieval_units import _build_source_refs
         seg = RawSegmentData(
             document_key="doc:/a.md", segment_index=3,
             source_offsets_json={"start": 10, "end": 50},
@@ -417,14 +406,14 @@ class TestRetrievalUnits:
 
     def test_source_refs_without_segment_id(self):
         """source_refs_json should have empty raw_segment_ids when source_seg_id is None."""
-        from knowledge_mining.mining.retrieval_units import _build_source_refs
+        from knowledge_mining.mining.stages.retrieval_units import _build_source_refs
         seg = RawSegmentData(document_key="doc:/a.md", segment_index=1)
         refs = _build_source_refs(seg)
         assert refs["raw_segment_ids"] == []
 
     def test_generated_question_unit_has_task_id(self):
         """llm_result_refs_json should include task_id from LLM."""
-        from knowledge_mining.mining.retrieval_units import _make_generated_question_unit
+        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
         seg = RawSegmentData(document_key="doc:/a.md", segment_index=0, raw_text="test content")
         unit = _make_generated_question_unit(seg, "What is X?", 0, "seg-1", "task-abc-123")
         assert unit.llm_result_refs_json["task_id"] == "task-abc-123"
@@ -448,7 +437,7 @@ class TestSnapshot:
 
 class TestPublishing:
     def test_assemble_and_publish(self, asset_db):
-        from knowledge_mining.mining.publishing import assemble_build, publish_release
+        from knowledge_mining.mining.stages.publishing import assemble_build, publish_release
         asset_db.upsert_document("d1", "doc:/a.md", "a.md")
         asset_db.upsert_snapshot("s1", "nh1", "rh1", "text/markdown")
         asset_db.insert_raw_segment(
@@ -476,14 +465,26 @@ class TestPublishing:
 # T14: End-to-End Pipeline
 # ===================================================================
 
+def _make_db(cls):
+    """Create a PG-backed database adapter for testing."""
+    from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining.mining.infra.pg_schema import ensure_schema
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    cfg = MiningDbConfig()
+    ensure_schema(cfg)
+    pool = ConnectionPool(
+        cfg.conninfo, min_size=1, max_size=2, open=True,
+        kwargs={"row_factory": dict_row},
+    )
+    return cls(pool)
+
+
 class TestEndToEndPipeline:
     def test_full_pipeline(self, input_dir, tmp_dir):
         from knowledge_mining.mining.jobs.run import run
-        result = run(
-            str(input_dir),
-            asset_core_db_path=str(tmp_dir / "asset_core.sqlite"),
-            mining_runtime_db_path=str(tmp_dir / "mining_runtime.sqlite"),
-        )
+        result = run(str(input_dir))
         assert result["status"] == "completed"
         assert result["committed_count"] == 2
         assert result["build_id"] is not None
@@ -491,26 +492,16 @@ class TestEndToEndPipeline:
 
     def test_phase1_only(self, input_dir, tmp_dir):
         from knowledge_mining.mining.jobs.run import run
-        result = run(
-            str(input_dir),
-            asset_core_db_path=str(tmp_dir / "asset_core.sqlite"),
-            mining_runtime_db_path=str(tmp_dir / "mining_runtime.sqlite"),
-            phase1_only=True,
-        )
+        result = run(str(input_dir), phase1_only=True)
         assert result["status"] == "completed"
         assert result["build_id"] is None
         assert result["release_id"] is None
 
     def test_publish_after_phase1(self, input_dir, tmp_dir):
         from knowledge_mining.mining.jobs.run import run, publish
-        result = run(
-            str(input_dir),
-            asset_core_db_path=str(tmp_dir / "asset_core.sqlite"),
-            mining_runtime_db_path=str(tmp_dir / "mining_runtime.sqlite"),
-        )
+        result = run(str(input_dir))
         assert result["release_id"] is not None
-        db = AssetCoreDB(tmp_dir / "asset_core.sqlite")
-        db.open()
+        db = _make_db(AssetCoreDB)
         ar = db.get_active_release()
         assert ar is not None
         db.close()
@@ -518,13 +509,8 @@ class TestEndToEndPipeline:
     def test_stage_events_recorded(self, input_dir, tmp_dir):
         """Verify stage events are recorded for each document."""
         from knowledge_mining.mining.jobs.run import run
-        result = run(
-            str(input_dir),
-            asset_core_db_path=str(tmp_dir / "asset_core.sqlite"),
-            mining_runtime_db_path=str(tmp_dir / "mining_runtime.sqlite"),
-        )
-        rdb = MiningRuntimeDB(tmp_dir / "mining_runtime.sqlite")
-        rdb.open()
+        result = run(str(input_dir))
+        rdb = _make_db(MiningRuntimeDB)
         events = rdb.get_stage_events(result["run_id"])
         stages = {e["stage"] for e in events}
         assert "select_snapshot" in stages

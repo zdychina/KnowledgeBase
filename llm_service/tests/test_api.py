@@ -120,3 +120,34 @@ async def test_idempotent_submit(api_client):
     r1 = await api_client.post("/api/v1/tasks", json=payload)
     r2 = await api_client.post("/api/v1/tasks", json=payload)
     assert r1.json()["task_id"] == r2.json()["task_id"]
+
+
+async def test_embeddings_endpoint(api_client):
+    resp = await api_client.post(
+        "/api/v1/models/embeddings",
+        json={
+            "input": ["alpha", "beta"],
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model"] == "embedding-3"
+    assert [item["index"] for item in body["data"]] == [0, 1]
+    assert len(body["data"][0]["embedding"]) == 2
+
+
+async def test_rerank_endpoint(api_client):
+    resp = await api_client.post(
+        "/api/v1/models/rerank",
+        json={
+            "query": "how to configure amf",
+            "documents": ["doc-a", "doc-b", "doc-c"],
+            "top_n": 2,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model"] == "rerank-pro"
+    assert len(body["results"]) == 2
+    assert body["results"][0]["index"] == 0
+    assert body["results"][0]["document"] == "doc-a"

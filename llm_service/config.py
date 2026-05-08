@@ -8,12 +8,23 @@ class LLMServiceConfig(BaseSettings):
 
     db_path: str = "data/llm_service.sqlite"
 
-    provider_base_url: str = "https://api.deepseek.com"
+    provider_base_url: str = "https://api.deepseek.com/chat/completions"
     provider_api_key: str = ""
     provider_model: str = "deepseek-chat"
     provider_headers: dict = Field(default_factory=dict)
     provider_timeout: int = 30
     provider_bypass_proxy: bool = False
+
+    embedding_base_url: str = "https://open.bigmodel.cn/api/paas/v4/embeddings"
+    embedding_api_key: str = ""
+    embedding_model: str = "embedding-3"
+    embedding_dimensions: int = 1024
+    rerank_base_url: str = "https://open.bigmodel.cn/api/paas/v4/rerank"
+    rerank_api_key: str = ""
+    rerank_model: str = ""
+    model_timeout: int = 60
+    model_bypass_proxy: bool = False
+    model_extra_headers: dict = Field(default_factory=dict)
 
     worker_concurrency: int = 4
     default_max_attempts: int = 3

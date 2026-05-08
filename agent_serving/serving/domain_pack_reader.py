@@ -12,6 +12,7 @@ Does NOT modify Mining's domain_pack.py.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,12 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-_PACKS_ROOT = Path(__file__).resolve().parent.parent / "knowledge_mining" / "domain_packs"
+_DOMAIN_PACKS_DIR = Path(
+    os.environ.get(
+        "DOMAIN_PACKS_DIR",
+        str(Path(__file__).resolve().parents[2] / "knowledge_mining" / "domain_packs"),
+    )
+)
 
 # Built-in default route policy
 _DEFAULT_ROUTE_POLICY: dict[str, dict[str, dict[str, float]]] = {
@@ -61,6 +67,7 @@ class ServingDomainProfile:
     route_policy: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
     extractor_rules: tuple[dict[str, Any], ...] = ()
     eval_questions: tuple[dict[str, Any], ...] = ()
+    query_understanding: dict[str, Any] = field(default_factory=dict)
 
 
 def load_serving_profile(
@@ -74,7 +81,7 @@ def load_serving_profile(
     if not domain_id:
         return _build_default_profile()
 
-    root = packs_root or _PACKS_ROOT
+    root = packs_root or _DOMAIN_PACKS_DIR
     yaml_path = root / domain_id / "domain.yaml"
 
     if not yaml_path.exists():
@@ -91,6 +98,7 @@ def load_serving_profile(
         route_policy=_parse_route_policy(data.get("serving", {})),
         extractor_rules=tuple(data.get("extractor_rules", [])),
         eval_questions=tuple(data.get("eval_questions", [])),
+        query_understanding=data.get("serving", {}).get("query_understanding", {}),
     )
 
 

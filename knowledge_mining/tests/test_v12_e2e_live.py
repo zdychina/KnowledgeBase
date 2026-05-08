@@ -7,22 +7,37 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from knowledge_mining.mining.jobs.run import run
-from knowledge_mining.mining.db import AssetCoreDB, MiningRuntimeDB
+from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
 
 
-def _row_to_dict(row: sqlite3.Row) -> dict:
-    """Convert sqlite3.Row to dict so .get() works."""
+def _make_db(cls):
+    """Create a PG-backed database adapter for testing."""
+    from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining.mining.infra.pg_schema import ensure_schema
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    cfg = MiningDbConfig()
+    ensure_schema(cfg)
+    pool = ConnectionPool(
+        cfg.conninfo, min_size=1, max_size=2, open=True,
+        kwargs={"row_factory": dict_row},
+    )
+    return cls(pool)
+
+
+def _row_to_dict(row) -> dict:
+    """Convert row to dict so .get() works."""
     return dict(row)
 
 
-def _rows_to_dicts(rows: list[sqlite3.Row]) -> list[dict]:
+def _rows_to_dicts(rows) -> list[dict]:
     return [dict(r) for r in rows]
 
 
@@ -133,12 +148,10 @@ def _create_test_docs(tmpdir: str) -> str:
     return str(docs_dir)
 
 
-def _dump_audit(result, asset_db_path, runtime_db_path):
+def _dump_audit(result):
     """Print full pipeline audit to stdout for the audit MD."""
-    db = AssetCoreDB(asset_db_path)
-    rdb = MiningRuntimeDB(runtime_db_path)
-    db.open()
-    rdb.open()
+    db = _make_db(AssetCoreDB)
+    rdb = _make_db(MiningRuntimeDB)
 
     print("\n" + "=" * 60)
     print("PIPELINE AUDIT")
@@ -225,20 +238,17 @@ class TestLiveLLMPipeline:
 
             result = run(
                 docs_dir,
-                asset_core_db_path=asset_db_path,
-                mining_runtime_db_path=runtime_db_path,
                 llm_base_url="http://localhost:8900",
             )
 
-            _dump_audit(result, asset_db_path, runtime_db_path)
+            _dump_audit(result)
 
             # === Run-level assertions ===
             assert result["status"] == "completed", f"Expected completed, got {result['status']}"
             assert result["committed_count"] >= 1
             assert result["build_id"] is not None
 
-            db = AssetCoreDB(asset_db_path)
-            db.open()
+            db = _make_db(AssetCoreDB)
 
             snapshots = _rows_to_dicts(db.get_build_snapshots(result["build_id"]))
             snap_id = snapshots[0]["document_snapshot_id"]
@@ -301,8 +311,7 @@ class TestLiveLLMPipeline:
                 assert "raw_segment_ids" in src_refs, f"raw_text unit missing raw_segment_ids: {u['unit_key']}"
 
             # === Stage events ===
-            rdb = MiningRuntimeDB(runtime_db_path)
-            rdb.open()
+            rdb = _make_db(MiningRuntimeDB)
             events = _rows_to_dicts(rdb.get_stage_events(result["run_id"]))
             stages = {e["stage"] for e in events}
             assert "segment" in stages
@@ -320,13 +329,10 @@ class TestLiveLLMPipeline:
             docs_dir = _create_test_docs(tmpdir)
             result = run(
                 docs_dir,
-                asset_core_db_path=os.path.join(tmpdir, "asset_core.sqlite"),
-                mining_runtime_db_path=os.path.join(tmpdir, "mining_runtime.sqlite"),
                 llm_base_url="http://localhost:8900",
             )
 
-            db = AssetCoreDB(os.path.join(tmpdir, "asset_core.sqlite"))
-            db.open()
+            db = _make_db(AssetCoreDB)
             snapshots = _rows_to_dicts(db.get_build_snapshots(result["build_id"]))
             snap_id = snapshots[0]["document_snapshot_id"]
             segments = _rows_to_dicts(db.get_segments_by_snapshot(snap_id))
@@ -347,13 +353,10 @@ class TestLiveLLMPipeline:
             docs_dir = _create_test_docs(tmpdir)
             result = run(
                 docs_dir,
-                asset_core_db_path=os.path.join(tmpdir, "asset_core.sqlite"),
-                mining_runtime_db_path=os.path.join(tmpdir, "mining_runtime.sqlite"),
                 llm_base_url="http://localhost:8900",
             )
 
-            db = AssetCoreDB(os.path.join(tmpdir, "asset_core.sqlite"))
-            db.open()
+            db = _make_db(AssetCoreDB)
             snapshots = _rows_to_dicts(db.get_build_snapshots(result["build_id"]))
             snap_id = snapshots[0]["document_snapshot_id"]
             units = _rows_to_dicts(db.get_retrieval_units_by_snapshot(snap_id))
@@ -378,13 +381,10 @@ class TestLiveLLMPipeline:
             docs_dir = _create_test_docs(tmpdir)
             result = run(
                 docs_dir,
-                asset_core_db_path=os.path.join(tmpdir, "asset_core.sqlite"),
-                mining_runtime_db_path=os.path.join(tmpdir, "mining_runtime.sqlite"),
                 llm_base_url="http://localhost:8900",
             )
 
-            db = AssetCoreDB(os.path.join(tmpdir, "asset_core.sqlite"))
-            db.open()
+            db = _make_db(AssetCoreDB)
             snapshots = _rows_to_dicts(db.get_build_snapshots(result["build_id"]))
             snap_id = snapshots[0]["document_snapshot_id"]
             units = _rows_to_dicts(db.get_retrieval_units_by_snapshot(snap_id))

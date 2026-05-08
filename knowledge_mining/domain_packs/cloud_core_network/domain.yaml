@@ -112,10 +112,11 @@ section_title_command_pattern: "^(ADD|SHOW|MOD|DEL|DSP|LST|REG|DEREG)\\s+(\\S+)"
 retrieval_policy:
   raw_text: primary
   generated_question: auxiliary
-  entity_card: strong_entities_only
-  table_row: structured_tables
+  entity_card: "off"
+  table_row: "off"
   max_questions_per_segment: 2
-  max_entity_cards_per_segment: 3
+  max_entity_cards_per_segment: 0
+  contextual_retrieval: "off"
 
 # ---------------------------------------------------------------------------
 # LLM templates
@@ -443,6 +444,40 @@ eval_questions:
 # ---------------------------------------------------------------------------
 
 serving:
+  # Query understanding configuration (moved from hardcoded defaults)
+  query_understanding:
+    command_regex: "(ADD|MOD|DEL|SET|SHOW|LST|DSP|REG|DEREG)\\s+([A-Z][A-Z0-9_]*)"
+    op_map:
+      "\u65b0\u589e": ADD
+      "\u6dfb\u52a0": ADD
+      "\u521b\u5efa": ADD
+      "\u4fee\u6539": MOD
+      "\u66f4\u6539": MOD
+      "\u7f16\u8f91": MOD
+      "\u5220\u9664": DEL
+      "\u79fb\u9664": DEL
+      "\u67e5\u8be2": SHOW
+      "\u67e5\u770b": DSP
+      "\u663e\u793a": LST
+      "\u8bbe\u7f6e": SET
+      "\u914d\u7f6e": SET
+    network_elements:
+      - AMF
+      - SMF
+      - UPF
+      - UDM
+      - PCF
+      - NRF
+      - AUSF
+      - BSF
+      - NSSF
+      - SCP
+      - UDSF
+      - UDR
+    products:
+      - UDG
+      - UNC
+      - CloudCore
   route_policy:
     default:
       lexical_bm25: {weight: 1.0, top_k: 50}

@@ -2,13 +2,9 @@
 import json
 
 import pytest
-import pytest_asyncio
-import aiosqlite
 
 from agent_serving.serving.eval.runner import EvalRunner
 from agent_serving.serving.schemas.models import ContextPack, ContextQuery
-from agent_serving.serving.repositories.schema_adapter import create_asset_tables_sqlite
-from agent_serving.tests.conftest import _seed_v11_data
 
 
 class TestEvalFramework:

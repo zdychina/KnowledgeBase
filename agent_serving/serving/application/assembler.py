@@ -20,6 +20,7 @@ from agent_serving.serving.schemas.models import (
     ContextPack,
     ContextQuery,
     ContextRelation,
+    EvidenceGroup,
     Issue,
     NormalizedQuery,
     QueryPlan,
@@ -37,16 +38,29 @@ from agent_serving.serving.schemas.constants import (
     ROLE_SEED,
     ROLE_SUPPORT,
 )
-from agent_serving.serving.schemas.json_utils import safe_json_parse
+from agent_serving.serving.schemas.json_utils import safe_json_parse, parse_source_refs, parse_target_ref
 from agent_serving.serving.repositories.asset_repo import AssetRepository
-from agent_serving.serving.retrieval.graph_expander import (
-    GraphExpander,
-    parse_source_refs,
-    parse_target_ref,
-)
+from agent_serving.serving.retrieval.graph_expander import GraphExpander
 from agent_serving.serving.evidence.role_classifier import EvidenceRoleClassifier
 
 logger = logging.getLogger(__name__)
+
+# RST relation type → evidence role mapping for expansion
+_RST_ROLE_MAP: dict[str, str] = {
+    "elaborates": "support",
+    "conditions": "support",
+    "causes": "support",
+    "results_in": "support",
+    "backgrounds": "background",
+    "enables": "support",
+    "parallels": "context",
+    "contrasts_with": "contrast",
+    "previous": "context",
+    "next": "context",
+    "same_section": "context",
+    "same_parent_section": "context",
+    "section_header_of": "context",
+}
 
 
 class ContextAssembler:
@@ -219,6 +233,7 @@ class ContextAssembler:
             items=all_items,
             relations=unique_relations,
             sources=sources,
+            evidence_groups=self._build_evidence_groups(all_items, unique_relations),
             issues=issues,
             suggestions=self._build_suggestions(issues),
         )
@@ -317,6 +332,8 @@ class ContextAssembler:
     ) -> list[ContextItem]:
         items = []
         for seg in expanded:
+            relation_type = seg.get("expansion_relation_type", "")
+            evidence_role = _RST_ROLE_MAP.get(relation_type, "background")
             items.append(ContextItem(
                 id=str(seg["id"]),
                 kind=KIND_RAW_SEGMENT,
@@ -327,8 +344,8 @@ class ContextAssembler:
                 block_type=seg.get("block_type", "unknown"),
                 semantic_role=seg.get("semantic_role", "unknown"),
                 source_id=str(seg.get("document_id", "")),
-                relation_to_seed=seg.get("expansion_relation_type", ""),
-                evidence_role="background",
+                relation_to_seed=relation_type,
+                evidence_role=evidence_role,
             ))
         return items
 
@@ -401,3 +418,33 @@ class ContextAssembler:
             parts.append(f"{e.type}={e.name}")
         parts.extend(understanding.keywords)
         return " ".join(parts)
+
+    def _build_evidence_groups(
+        self,
+        items: list[ContextItem],
+        relations: list[ContextRelation],
+    ) -> list[EvidenceGroup]:
+        """Group evidence items by document_snapshot_id from metadata."""
+        snapshot_items: dict[str, list[str]] = {}
+        for item in items:
+            snap_id = item.metadata.get("document_snapshot_id", "")
+            if snap_id:
+                snapshot_items.setdefault(snap_id, []).append(item.id)
+
+        if not snapshot_items:
+            return []
+
+        groups = []
+        for snap_id, item_ids in snapshot_items.items():
+            # Only include relations connected to this group's items
+            item_id_set = set(item_ids)
+            group_rel_ids = [
+                r.id for r in relations
+                if r.from_id in item_id_set or r.to_id in item_id_set
+            ]
+            groups.append(EvidenceGroup(
+                document_snapshot_id=snap_id,
+                item_ids=item_ids,
+                relation_ids=group_rel_ids,
+            ))
+        return groups

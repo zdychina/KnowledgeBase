@@ -42,6 +42,36 @@ def _mock_provider():
     )
 
 
+def _mock_model_provider():
+    class MockModelProvider:
+        async def embed(self, texts, *, model=None, dimensions=None):
+            return {
+                "model": model or "embedding-3",
+                "data": [
+                    {"index": idx, "embedding": [float(idx + 1), float(len(text))]}
+                    for idx, text in enumerate(texts)
+                ],
+                "usage": {"prompt_tokens": sum(len(text) for text in texts)},
+            }
+
+        async def rerank(self, query, documents, *, model=None, top_n=None):
+            limit = top_n or len(documents)
+            results = [
+                {
+                    "index": idx,
+                    "relevance_score": float(limit - idx) / float(limit),
+                    "document": documents[idx],
+                }
+                for idx in range(min(limit, len(documents)))
+            ]
+            return {
+                "model": model or "rerank",
+                "results": results,
+            }
+
+    return MockModelProvider()
+
+
 @pytest.fixture
 async def api_client(tmp_path):
     """HTTP client pointing at a test ASGI app with MockProvider."""
@@ -56,7 +86,12 @@ async def api_client(tmp_path):
         provider_api_key="test-key",
         provider_model="test-model",
     )
-    app = create_app(cfg, provider_factory=_mock_provider, start_worker=False)
+    app = create_app(
+        cfg,
+        provider_factory=_mock_provider,
+        model_provider_factory=_mock_model_provider,
+        start_worker=False,
+    )
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:

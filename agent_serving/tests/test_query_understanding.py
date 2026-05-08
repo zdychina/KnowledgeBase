@@ -49,7 +49,7 @@ class TestRuleUnderstanding:
     async def test_comparison_intent(self):
         engine = QueryUnderstandingEngine()
         result = await engine.understand("SMF和UPF的区别")
-        assert result.intent == "comparative"
+        assert result.intent == "comparison"
 
     @pytest.mark.asyncio
     async def test_entity_extraction(self):

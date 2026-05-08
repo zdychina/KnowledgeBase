@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KnowledgeBase 架构概览</title>
+<style>
+:root {
+  --bg-page:#f6f4f0;--bg-surface:#fff;--bg-surface-alt:#faf9f7;
+  --bg-code:#f0eeea;--bg-highlight:#e8f4f8;--bg-accent:#eef2ff;
+  --bg-warn:#fef3c7;--bg-ok:#ecfdf5;--bg-flow:#f8fafc;
+  --text-1:#1a1a2e;--text-2:#4a4a6a;--text-3:#7c7c9a;--text-inv:#fff;
+  --c-blue:#2563eb;--c-teal:#0d9488;--c-amber:#b45309;--c-rose:#be123c;
+  --c-violet:#7c3aed;--c-emerald:#059669;--c-orange:#c2410c;--c-slate:#475569;
+  --c-indigo:#4338ca;
+  --border:#e5e2dc;--border-m:#d4d0c8;
+  --fd:'Georgia','Noto Serif SC',serif;
+  --fb:'Segoe UI','Noto Sans SC',system-ui,sans-serif;
+  --fm:'Cascadia Code','JetBrains Mono','Fira Code',monospace;
+  --r:8px;--rl:12px;
+  --sh:0 1px 3px rgba(0,0,0,.06);--shm:0 4px 12px rgba(0,0,0,.08);
+  --mw:1200px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;font-size:15px}
+body{font-family:var(--fb);background:var(--bg-page);color:var(--text-1);line-height:1.7;-webkit-font-smoothing:antialiased}
+nav{position:sticky;top:0;z-index:100;background:rgba(246,244,240,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:8px 0}
+nav .ni{max-width:var(--mw);margin:0 auto;padding:0 24px;display:flex;align-items:center;gap:20px;overflow-x:auto;white-space:nowrap}
+nav .nb{font-family:var(--fm);font-size:.85rem;font-weight:700;color:var(--c-blue);flex-shrink:0}
+nav .nl{display:flex;gap:12px;list-style:none}
+nav .nl a{font-size:.82rem;color:var(--text-3);text-decoration:none;padding:4px 8px;border-radius:var(--r);transition:color .2s,background .2s}
+nav .nl a:hover{color:var(--c-blue);background:var(--bg-accent)}
+.pc{max-width:var(--mw);margin:0 auto;padding:0 24px}
+.hero{padding:80px 0 56px;border-bottom:2px solid var(--border);position:relative}
+.hero::before{content:'';position:absolute;top:0;right:0;width:340px;height:340px;background:radial-gradient(circle,rgba(37,99,235,.06) 0%,transparent 70%);pointer-events:none}
+.hero h1{font-family:var(--fd);font-size:clamp(2.1rem,4vw,3.25rem);font-weight:700;line-height:1.15;margin-bottom:14px;max-width:980px}
+.hero .sub{font-size:1.08rem;color:var(--text-2);max-width:840px;line-height:1.8}
+.hero .vb{display:inline-block;background:var(--c-blue);color:var(--text-inv);font-family:var(--fm);font-size:.75rem;font-weight:600;padding:3px 12px;border-radius:20px;margin-bottom:14px}
+.sec{padding:56px 0;border-bottom:1px solid var(--border)}
+.sh{margin-bottom:28px}
+.sh h2{font-family:var(--fd);font-size:1.65rem;font-weight:700;margin-bottom:6px}
+.sh .sn{font-family:var(--fm);font-size:.8rem;color:var(--c-blue);font-weight:600;display:block;margin-bottom:4px;letter-spacing:1px}
+.sh p{font-size:.95rem;color:var(--text-2);max-width:860px}
+.cg{display:grid;gap:16px}
+.cg2{grid-template-columns:repeat(2,1fr)}
+.cg3{grid-template-columns:repeat(3,1fr)}
+.cg4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:980px){.cg4,.cg3,.cg2{grid-template-columns:1fr}}
+.card{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--rl);padding:20px;box-shadow:var(--sh)}
+.card h3{font-size:1rem;font-weight:600;margin-bottom:8px}
+.card p,.card li{font-size:.9rem;color:var(--text-2)}
+.card ul{padding-left:18px}
+.co{border-left:3px solid var(--c-blue);background:var(--bg-accent);padding:14px 20px;border-radius:0 var(--r) var(--r) 0;margin:20px 0;font-size:.9rem;color:var(--text-2)}
+.co strong{color:var(--text-1)}
+.co.w{border-color:var(--c-amber);background:var(--bg-warn)}
+.co.g{border-color:var(--c-emerald);background:var(--bg-ok)}
+.co.v{border-color:var(--c-violet);background:#f5f3ff}
+.mets{display:flex;gap:28px;flex-wrap:wrap;margin:24px 0}
+.met{text-align:center;flex:1;min-width:160px}
+.met-v{font-family:var(--fd);font-size:2rem;font-weight:700;line-height:1}
+.met-l{font-size:.82rem;color:var(--text-3);margin-top:4px}
+.tw{overflow-x:auto;margin:20px 0;border-radius:var(--rl);border:1px solid var(--border);background:var(--bg-surface)}
+table{width:100%;border-collapse:collapse;font-size:.88rem}
+th{background:var(--bg-surface-alt);font-weight:600;text-align:left;padding:10px 14px;border-bottom:2px solid var(--border);color:var(--text-2);font-size:.82rem;text-transform:uppercase;letter-spacing:.5px}
+td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg-surface-alt)}
+.dia{background:var(--bg-flow);border:1px solid var(--border);border-radius:var(--rl);padding:28px;margin:20px 0;overflow-x:auto}
+.dia-t{font-size:.82rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px}
+.fb{background:var(--bg-surface);border:1.5px solid var(--border-m);border-radius:var(--r);padding:12px 14px;text-align:center;min-width:110px;flex-shrink:0}
+.fb.pri{border-color:var(--c-blue);background:var(--bg-accent)}
+.fb.hi{border-color:var(--c-teal);background:var(--bg-highlight)}
+.fb.wa{border-color:var(--c-amber);background:var(--bg-warn)}
+.fb.ok{border-color:var(--c-emerald);background:var(--bg-ok)}
+.fb.vi{border-color:var(--c-violet);background:#f5f3ff}
+.fb.ro{border-color:var(--c-rose);background:#fff1f2}
+.fb .fl{font-size:.72rem;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.5px}
+.fb .fv{font-size:.88rem;font-weight:600;margin-top:2px}
+.fa{display:flex;align-items:center;padding:0 4px;color:var(--text-3);font-size:1.1rem;flex-shrink:0}
+.b{display:inline-block;font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:4px}
+.bb{background:#dbeafe;color:#1e40af}.bt{background:#ccfbf1;color:#0f766e}
+.ba{background:#fef3c7;color:#92400e}.br{background:#ffe4e6;color:#9f1239}
+.bv{background:#ede9fe;color:#5b21b6}.be{background:#d1fae5;color:#065f46}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;background:var(--bg-surface-alt);border:1px solid var(--border);font-size:.76rem;color:var(--text-3);margin-right:6px}
+.stack{display:flex;flex-direction:column;gap:14px}
+.line{height:1px;background:var(--border);margin:8px 0}
+.split{display:grid;grid-template-columns:1.1fr .9fr;gap:16px}
+.journey{display:grid;gap:14px}
+.journey-step{display:grid;grid-template-columns:88px 1fr;gap:14px;align-items:start}
+.journey-n{width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--c-blue);color:#fff;font:700 .92rem var(--fm);box-shadow:var(--sh)}
+.journey-c{background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;box-shadow:var(--sh)}
+.journey-c h3{font-size:1rem;margin-bottom:4px}
+.journey-c p{font-size:.9rem;color:var(--text-2)}
+.badge-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chip{display:inline-block;padding:4px 10px;border-radius:999px;background:var(--bg-surface-alt);border:1px solid var(--border);font-size:.75rem;color:var(--text-3)}
+.rail{display:grid;gap:16px}
+.mini-title{font:700 .82rem var(--fm);color:var(--text-3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.ix-grid{display:grid;grid-template-columns:1.05fr 1fr 320px;gap:0;border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;background:var(--bg-surface);box-shadow:var(--sh)}
+.ix-col{display:flex;flex-direction:column;min-height:620px}
+.ix-col + .ix-col{border-left:1px solid var(--border)}
+.ix-head{padding:12px 16px;background:var(--bg-surface-alt);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.ix-dot{width:10px;height:10px;border-radius:50%;background:var(--c-blue)}
+.ix-head h3{font-size:.9rem;font-weight:600}
+.ix-head .ix-mini{margin-left:auto;font:600 .72rem var(--fm);color:var(--text-3)}
+.ix-chat{padding:16px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+.ix-msg{display:flex;gap:10px}
+.ix-msg.user{flex-direction:row-reverse}
+.ix-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.76rem;flex-shrink:0}
+.ix-msg.agent .ix-avatar{background:var(--c-blue)}
+.ix-msg.user .ix-avatar{background:var(--c-slate)}
+.ix-bubble{max-width:88%;padding:10px 14px;border-radius:var(--rl);font-size:.86rem;line-height:1.7;border:1px solid var(--border)}
+.ix-msg.agent .ix-bubble{background:var(--bg-accent)}
+.ix-msg.user .ix-bubble{background:#f1f5f9}
+.ix-steps{padding:14px 16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;background:var(--bg-surface)}
+.ix-step-btn{padding:7px 12px;border:1px solid var(--border-m);border-radius:999px;background:var(--bg-surface);font-size:.78rem;cursor:pointer;transition:all .2s}
+.ix-step-btn:hover{border-color:var(--c-blue);background:var(--bg-accent)}
+.ix-step-btn.active{background:var(--c-blue);border-color:var(--c-blue);color:#fff}
+.ix-stack{padding:12px;display:flex;flex-direction:column;gap:8px;overflow:auto;background:var(--bg-surface-alt)}
+.ix-layer{border:1px solid var(--border);border-radius:var(--r);background:var(--bg-surface);padding:10px 12px;opacity:.5;transition:all .25s;cursor:pointer}
+.ix-layer.active{opacity:1;box-shadow:var(--sh);transform:translateX(2px)}
+.ix-layer:hover{opacity:.9;border-color:var(--c-blue)}
+.ix-layer .name{font:700 .76rem var(--fm);letter-spacing:.3px;margin-bottom:4px}
+.ix-layer .desc{font-size:.8rem;color:var(--text-2)}
+.ix-layer .meta{margin-top:6px;font-size:.74rem;color:var(--text-3)}
+.ix-layer.blue.active{border-color:var(--c-blue);background:#eff6ff}
+.ix-layer.teal.active{border-color:var(--c-teal);background:#f0fdfa}
+.ix-layer.amber.active{border-color:var(--c-amber);background:#fffbeb}
+.ix-layer.rose.active{border-color:var(--c-rose);background:#fff1f2}
+.ix-layer.violet.active{border-color:var(--c-violet);background:#f5f3ff}
+.ix-layer.green.active{border-color:var(--c-emerald);background:#ecfdf5}
+.ix-side{padding:14px;overflow:auto;background:var(--bg-surface)}
+.ix-panel{display:none;animation:fadeUp .2s ease}
+.ix-panel.active{display:block}
+.ix-panel h4{font-size:.88rem;margin-bottom:8px}
+.ix-panel p,.ix-panel li{font-size:.84rem;color:var(--text-2)}
+.ix-panel ul{padding-left:18px}
+.ix-kv{display:grid;gap:8px;margin-top:10px}
+.ix-kv .row{padding:8px 10px;border-radius:var(--r);background:var(--bg-surface-alt);border:1px solid var(--border)}
+.ix-kv .k{font:700 .72rem var(--fm);color:var(--text-3);text-transform:uppercase}
+.ix-kv .v{font-size:.82rem;color:var(--text-2);margin-top:2px}
+.ix-evidence{margin-top:10px;display:grid;gap:8px}
+.ix-ev{padding:10px;border-left:3px solid var(--c-blue);background:#eff6ff;border-radius:0 var(--r) var(--r) 0}
+.ix-ev.alt{border-left-color:var(--c-teal);background:#f0fdfa}
+.ix-ev.warn{border-left-color:var(--c-amber);background:#fffbeb}
+.ix-ev .t{font-size:.76rem;font-weight:700;color:var(--text-1);margin-bottom:4px}
+.ix-ev .s{font-size:.78rem;color:var(--text-2)}
+@keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:1120px){.ix-grid{grid-template-columns:1fr}.ix-col + .ix-col{border-left:none;border-top:1px solid var(--border)}}
+footer{padding:44px 0;text-align:center;color:var(--text-3);font-size:.82rem}
+@media(max-width:980px){.split,.journey-step{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav>
+  <div class="ni">
+    <span class="nb">KnowledgeBase</span>
+    <ul class="nl">
+      <li><a href="#positioning">定位</a></li>
+      <li><a href="#why">为什么需要知识后端</a></li>
+      <li><a href="#philosophy">设计哲学</a></li>
+      <li><a href="#architecture">整体架构</a></li>
+      <li><a href="#workflow">系统怎么工作</a></li>
+      <li><a href="#baseline">当前进展</a></li>
+      <li><a href="#livecase">真实交互</a></li>
+      <li><a href="#example">真实例子</a></li>
+      <li><a href="#lifecycle">构建 / 发布生命周期</a></li>
+      <li><a href="#value">当前态 vs 目标态</a></li>
+      <li><a href="#future">目标态演进方向</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="pc">
+  <section class="hero" id="positioning">
+    <span class="vb">ARCHITECTURE OVERVIEW</span>
+    <h1>KnowledgeBase 不是一个“文档搜索工具”，而是一套让 Agent 先找依据、再做判断的知识底座。</h1>
+    <p class="sub">
+      它解决的不是“资料能不能搜到”，而是“专业问题能不能基于证据稳定回答、持续积累、复用给更多专业能力”。这决定了它不是一次性功能，而是一层长期可运营的基础设施。
+    </p>
+
+    <div class="mets">
+      <div class="met"><div class="met-v">先取证</div><div class="met-l">不是先生成答案</div></div>
+      <div class="met"><div class="met-v">可追溯</div><div class="met-l">知道依据来自哪里</div></div>
+      <div class="met"><div class="met-v">可积累</div><div class="met-l">新资料持续进入统一体系</div></div>
+      <div class="met"><div class="met-v">可复用</div><div class="met-l">支撑多个专业 Skill</div></div>
+    </div>
+
+    <div class="co g">
+      <strong>一句话理解：</strong>我们做的不是“让模型多看几篇文档”，而是“让 Agent 在专业领域有一套稳定、可追溯、可运营的证据系统”。
+    </div>
+
+    <div class="cg cg4">
+      <div class="card"><h3>当前已打通</h3><p>知识沉淀、证据检索、Agent 消费这三层主链。</p></div>
+      <div class="card"><h3>当前真实样例</h3><p>基于云库中的 5G 核心网真实文档，完成从知识入库到证据回答的完整闭环。</p></div>
+      <div class="card"><h3>当前工程边界</h3><p>已经有发布边界、生效版本和独立智能服务层运行面，不是临时拼装型能力。</p></div>
+      <div class="card"><h3>目标态方向</h3><p>从单点问答能力，走向多个专业 Skill 共享的知识基础设施。</p></div>
+    </div>
+  </section>
+
+  <section class="sec" id="why">
+    <div class="sh">
+      <span class="sn">SECTION 01</span>
+      <h2>为什么需要知识后端</h2>
+      <p>大模型进入专业场景后，真正的瓶颈往往不是语言能力，而是知识依据、风险边界和长期运营能力。</p>
+    </div>
+
+    <div class="cg cg2">
+      <div class="card" style="border-left:3px solid var(--c-rose)">
+        <h3 style="color:var(--c-rose)">传统文档搜索的局限</h3>
+        <ul>
+          <li>只看关键词，容易错过表达不同但语义一致的专业知识。</li>
+          <li>段落、表格、步骤和上下文关系往往被打散，资料能搜到，但不容易直接用。</li>
+          <li>新旧内容混在一起时，很难判断当前应该信哪一版、用哪一份。</li>
+        </ul>
+      </div>
+      <div class="card" style="border-left:3px solid var(--c-teal)">
+        <h3 style="color:var(--c-teal)">Agent 时代对知识服务的要求</h3>
+        <ul>
+          <li>不是返回“相关文档”，而是理解当前问题要概念解释、结构说明还是进一步判断。</li>
+          <li>不是返回零散片段，而是返回带来源、上下文和关系的证据包。</li>
+          <li>不是一次问一次搜，而是形成可持续更新、持续沉淀、持续复用的知识体系。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="co g">
+      <strong>KnowledgeBase 的定位：</strong>知识加工（Mining）+ 精准检索（Serving）+ 智能服务层三位一体的 Agent Knowledge Backend。它不是给人直接使用的搜索引擎，而是给智能体使用的知识服务底座。
+    </div>
+  </section>
+
+  <section class="sec" id="philosophy">
+    <div class="sh">
+      <span class="sn">SECTION 02</span>
+      <h2>设计哲学</h2>
+      <p>这套系统不是从“做一个问答功能”出发，而是从长期可运营的知识系统出发。原版里的很多设计思想仍然成立，只是在当前阶段先按能落地的边界逐步实现。</p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th style="width:180px">设计决策</th><th style="width:180px">核心思想</th><th>实际意义</th></tr></thead>
+        <tbody>
+          <tr><td><strong>内容快照不可变</strong></td><td>同一内容视为同一份知识快照</td><td>保证知识边界清晰，便于复用、比对、回滚，而不是每次更新都重新堆一份。</td></tr>
+          <tr><td><strong>读写路径分离</strong></td><td>知识生产和知识消费拆开</td><td>后台整理知识，不会干扰在线使用；在线取证稳定读取生效知识。</td></tr>
+          <tr><td><strong>阶段过程可回溯</strong></td><td>每一步知识变化都留痕</td><td>出了问题知道卡在哪一步，也便于后续做质量治理和运营分析。</td></tr>
+          <tr><td><strong>知识分层组织</strong></td><td>概念、机制、方法、条件、场景不混在一起</td><td>不同问题可以拿到不同粒度的知识，不会所有内容都挤成一个平面文档库。</td></tr>
+          <tr><td><strong>关系与溯源并重</strong></td><td>既关心知识之间怎么关联，也关心结论从哪来</td><td>回答不只“像是合理”，还能够回到文档依据和上下文来源。</td></tr>
+          <tr><td><strong>知识持续演进</strong></td><td>知识体系会持续积累、持续替换、持续优化</td><td>这决定它是基础设施，而不是一次性交付的问答功能。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec" id="architecture">
+    <div class="sh">
+      <span class="sn">SECTION 03</span>
+      <h2>整体系统架构</h2>
+      <p>KnowledgeBase 当前已经不是单进程里的一个”搜索模块”，而是三个可独立演进的运行面。这样做的目的，是把知识生产、知识消费和智能服务层拆开，避免后续所有复杂度都堆在一个点上。</p>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">三角色协同</div>
+      <div style="display:flex;flex-direction:column;gap:16px;max-width:980px;margin:0 auto">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="fb pri" style="flex:1;min-width:180px"><div class="fl">MINING</div><div class="fv">把资料变成知识资产<br>build / release</div></div>
+          <div class="fa">→</div>
+          <div class="fb hi" style="flex:1;min-width:180px"><div class="fl">SERVING</div><div class="fv">消费生效知识视图<br>输出证据包</div></div>
+          <div class="fa">↔</div>
+          <div class="fb vi" style="flex:1;min-width:180px"><div class="fl">智能服务层</div><div class="fv">智能服务层<br>模板 / 队列 / 审计</div></div>
+        </div>
+        <div class="tw" style="margin:0">
+          <table>
+            <thead><tr><th style="width:180px">角色</th><th>当前职责</th><th style="width:260px">拆分后的意义</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>Mining</strong></td>
+                <td>把文档整理成结构化知识，形成可发布、可替换、可持续积累的知识资产。</td>
+                <td>知识生产是后台工作，不能与在线问答耦合，否则无法稳定运营。</td>
+              </tr>
+              <tr>
+                <td><strong>Serving</strong></td>
+                <td>面对问题按需取证，返回证据包，支撑 Agent 做下一步判断。</td>
+                <td>在线取证要求低延迟、稳定读，不应该被知识加工过程干扰。</td>
+              </tr>
+              <tr>
+                <td><strong>智能服务层</strong></td>
+                <td>统一管理智能服务能力，承担模板治理、同步调用、异步任务和审计追踪。</td>
+                <td>把智能服务层独立出来，后续才能单独治理质量、成本、SLA 和运营能力。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="card">
+        <h3>这套架构带来的直接结果</h3>
+        <ul>
+          <li>后续扩知识时，不会影响在线使用。</li>
+          <li>后续扩更多 Skill 时，不需要重做知识底座。</li>
+          <li>后续增强模型能力时，不会反向污染知识主链。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>这套架构体现出的平台边界</h3>
+        <ul>
+          <li>不是单个搜索模块，而是可独立演进的三层运行面。</li>
+          <li>不是为了一个问题入口，而是为了多类专业能力共用。</li>
+          <li>不是一次性接文档，而是为长期演进预留了明确骨架。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="workflow">
+    <div class="sh">
+      <span class="sn">SECTION 04</span>
+      <h2>系统怎么工作</h2>
+      <p>这一层对应在线主链。原理上不是“问题来了就生成答案”，而是先理解问题，再按合适路径取回证据，最后把证据交给 Agent 做下一步判断。</p>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">问题到证据包的在线主链</div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="fb wa" style="flex:1;min-width:210px"><div class="fl">问题输入</div><div class="fv">用户问题进入系统</div></div>
+          <div class="fa">→</div>
+          <div class="fb hi" style="flex:1;min-width:210px"><div class="fl">问题理解</div><div class="fv">判断是解释、说明还是进一步判断</div></div>
+          <div class="fa">→</div>
+          <div class="fb pri" style="flex:1;min-width:210px"><div class="fl">路径规划</div><div class="fv">决定走哪些取证路径</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="fb" style="flex:1;min-width:180px;border-color:var(--c-blue);background:#eff6ff"><div class="fl">关键词检索</div><div class="fv">找关键表述与结构说明</div></div>
+          <div class="fb" style="flex:1;min-width:180px;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">语义检索</div><div class="fv">找语义相近内容</div></div>
+          <div class="fb hi" style="flex:1;min-width:180px"><div class="fl">关系补全</div><div class="fv">补全相邻上下文和关联知识</div></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="fb ok" style="flex:1;min-width:210px"><div class="fl">结果融合</div><div class="fv">把多路结果整理成统一证据视图</div></div>
+          <div class="fa">→</div>
+          <div class="fb ro" style="flex:1;min-width:210px"><div class="fl">结果排序</div><div class="fv">把最有用、最接近问题的证据排到前面</div></div>
+          <div class="fa">→</div>
+          <div class="fb vi" style="flex:1;min-width:210px"><div class="fl">证据包</div><div class="fv">输出可被 Agent 使用的证据包</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th style="width:180px">环节</th><th>当前表达</th><th style="width:260px">与通用方案的差异</th></tr></thead>
+        <tbody>
+          <tr><td><strong>问题理解</strong></td><td>先理解问题要的是概念解释、结构说明，还是更深一层的配置 / 排障信息。</td><td>不是拿到问题就立即生成答案。</td></tr>
+          <tr><td><strong>证据获取</strong></td><td>从生效知识视图中多路取证，而不是简单扫全库。</td><td>不是只依赖单一检索方式。</td></tr>
+          <tr><td><strong>结果组织</strong></td><td>把内容、来源、上下文和关系整理成证据包。</td><td>不是只返回若干片段。</td></tr>
+          <tr><td><strong>Agent 使用</strong></td><td>Agent 基于证据判断是直接回答、继续追问还是转给其他能力。</td><td>重点在“能否回答”，不只是“能否生成”。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec" id="baseline">
+    <div class="sh">
+      <span class="sn">SECTION 05</span>
+      <h2>当前进展</h2>
+      <p>当前已经不是停留在概念或单点验证阶段，而是把知识生产、在线取证、版本生效和智能服务层的主干链路打通了。这里保留少量技术信息，用来说明工作深度，但不展开到代码层面。</p>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th style="width:150px">能力面</th><th>当前状态</th><th style="width:260px">已经证明的能力</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>知识摄入</strong></td>
+            <td>文档进入统一知识面，而不是临时塞进上下文窗口。</td>
+            <td>已经具备持续导入和持续沉淀基础。</td>
+          </tr>
+          <tr>
+            <td><strong>知识结构化</strong></td>
+            <td>系统会识别章节、段落、表格、列表，并保留结构角色和上下文边界。</td>
+            <td>回答不再只依赖文本片段，而是可以利用文档结构。</td>
+          </tr>
+          <tr>
+            <td><strong>检索主链</strong></td>
+            <td>已经形成理解问题、多路取证、融合整理和证据输出的在线主链。</td>
+            <td>不是单路搜索，而是有路由和融合策略的在线取证链。</td>
+          </tr>
+          <tr>
+            <td><strong>证据输出</strong></td>
+            <td>输出的是带来源、上下文与关联关系的证据包，而不是单一命中文档。</td>
+            <td>Agent 能基于证据判断能不能答，而不是只拿到片段自己拼。</td>
+          </tr>
+          <tr>
+            <td><strong>版本边界</strong></td>
+            <td>知识形成后要经过构建 / 发布才能进入在线读取面。</td>
+            <td>知识更新和在线服务解耦，具备工程化运营基础。</td>
+          </tr>
+          <tr>
+            <td><strong>智能服务层</strong></td>
+            <td>智能服务层已形成独立运行面，既支持在线使用，也支持后台增强。</td>
+            <td>后续可以单独治理质量、成本与审计，而不是把模型能力散在各模块中。</td>
+          </tr>
+          <tr>
+            <td><strong>场景包</strong></td>
+            <td>当前已经有 `generic`、`cloud_core_network` 等独立 YAML 场景配置包，既定义领域规则，也定义检索和处理策略。</td>
+            <td>说明这不是一条写死的知识链，而是开始具备跨场景复用和迁移能力。</td>
+          </tr>
+          <tr>
+            <td><strong>可拼装处理链</strong></td>
+            <td>YAML 不只是参数表，还承载语义角色映射、抽取规则、路径策略、评测问题和阶段定制点；代码里也已经有阶段注册机制作为热插拔雏形。</td>
+            <td>目标不是维护一条固定处理链，而是按场景组合不同阶段，形成更通用的平台能力。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="split">
+      <div class="card">
+        <h3>当前实现的重点不是“算法多”，而是“边界清”</h3>
+        <ul>
+          <li>知识生产和在线取证已经拆开。</li>
+          <li>在线取证和智能服务层已经拆开。</li>
+          <li>中间过程和生效版本已经拆开。</li>
+          <li>基础能力和领域场景也已经开始拆开。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>这也是当前工作量所在</h3>
+        <ul>
+          <li>不是只把文档喂进库里，而是把知识做成可发布对象。</li>
+          <li>不是只给检索结果，而是把结果变成可供 Agent 决策的证据包。</li>
+          <li>不是只做调用模型，而是给模型使用建立了独立运行与治理面。</li>
+          <li>不是只适配一个场景，而是在把场景差异收敛到场景包与可拼装阶段中。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="co v">
+      <strong>场景包的意义：</strong>当前代码里，知识挖掘和在线取证都已经开始读取各自的 YAML 场景配置包。它既能定义领域词表、语义规则、检索权重，也能承接不同阶段的定制化策略。往前走一步，主链就可以从“按代码写死”演进到“按场景装配”，这也是泛化能力的关键。
+    </div>
+  </section>
+
+  <section class="sec" id="livecase">
+    <div class="sh">
+      <span class="sn">SECTION 06</span>
+      <h2>真实问题交互</h2>
+      <p>下面不是手工解释，而是把一次真实问题处理过程直接展开出来。点击固定消息后，页面会自动演进：用户发问，Agent 判断要不要调用 Skill，Skill 去调 Serving 取证，最后 Agent 基于证据包给出回答。</p>
+    </div>
+
+    <div class="co g">
+      <strong>本次调用方式：</strong>通过 <code>cloud_core_knowledge</code> 的工作方式，先调用 <code>/api/v1/search</code> 获取证据包，再形成“证据是否充足”和“是否可直接回答”的判断。本次问题是解释性问题，真实返回支持 <strong>证据充足 / 可直接回答</strong>。
+    </div>
+
+    <div class="ix-grid">
+      <div class="ix-col">
+        <div class="ix-head">
+          <div class="ix-dot"></div>
+          <h3>用户与 Agent</h3>
+          <div class="ix-mini" id="ixCounter">待开始</div>
+        </div>
+        <div class="ix-chat" id="ixChat">
+          <div class="ix-msg agent">
+            <div class="ix-avatar">A</div>
+            <div class="ix-bubble">
+              这是一次真实的知识问答过程。点击下面这条固定消息，系统会自动演进整段处理链路。
+            </div>
+          </div>
+          <div class="ix-msg user">
+            <div class="ix-avatar">U</div>
+            <div class="ix-bubble" id="ixStarter" style="cursor:pointer;border:1.5px solid var(--c-blue);box-shadow:var(--shm)">
+              为什么说业务感知不仅是识别技术，还是资源控制和计费运营能力？
+            </div>
+          </div>
+        </div>
+        <div class="ix-steps">
+          <button class="ix-step-btn active" id="ixPlayBtn" onclick="runCaseDemo()">点击消息后自动演进</button>
+          <button class="ix-step-btn" onclick="resetCaseDemo()">重置演示</button>
+        </div>
+      </div>
+
+      <div class="ix-col">
+        <div class="ix-head">
+          <div class="ix-dot" style="background:var(--c-violet)"></div>
+          <h3>系统内部正在做什么</h3>
+          <div class="ix-mini" id="ixTraceLabel">等待触发</div>
+        </div>
+        <div class="ix-stack">
+          <div class="ix-layer blue active" id="ix-layer-1" data-step="1" onclick="jumpCaseStep(1)"><div class="name">STEP 1 · 用户提问</div><div class="desc">问题进入 Agent，不直接生成答案，而是先判断是否需要知识证据。</div><div class="meta">入口：Skill / Agent</div></div>
+          <div class="ix-layer amber" id="ix-layer-2" data-step="2" onclick="jumpCaseStep(2)"><div class="name">STEP 2 · Skill 判定</div><div class="desc">Skill 判断这是知识型问题，应先调用 Serving 获取证据包。</div><div class="meta">动作：先取证，再回答</div></div>
+          <div class="ix-layer teal" id="ix-layer-3" data-step="3" onclick="jumpCaseStep(3)"><div class="name">STEP 3 · 问题理解</div><div class="desc">识别意图为 <code>concept_lookup</code>，抽出关键词"业务感知、识别技术、资源控制、计费运营能力"。</div></div>
+          <div class="ix-layer violet" id="ix-layer-4" data-step="4" onclick="jumpCaseStep(4)"><div class="name">STEP 4 · 取证路径规划</div><div class="desc">根据当前场景包中的路径策略，决定这次问题走“语义检索 + 关键词检索”双路取证，再做多路结果融合。</div><div class="meta">路径：2 条</div></div>
+          <div class="ix-layer rose" id="ix-layer-5" data-step="5" onclick="jumpCaseStep(5)"><div class="name">STEP 5 · 确定知识范围</div><div class="desc">从当前生效版本锁定可读知识范围，找到 1 个生效版本、1 个构建版本、18 个内容快照。</div><div class="meta">真实耗时：125 ms</div></div>
+          <div class="ix-layer green" id="ix-layer-6" data-step="6" onclick="jumpCaseStep(6)"><div class="name">STEP 6 · 证据检索</div><div class="desc">发起多路检索：语义检索命中 50 个候选；关键词检索也参与，但这次没有直接命中候选。</div><div class="meta">候选数：50</div></div>
+          <div class="ix-layer blue" id="ix-layer-7" data-step="7" onclick="jumpCaseStep(7)"><div class="name">STEP 7 · 融合、排序、组装</div><div class="desc">先做多路结果融合，再用模型重排，把最贴近问题的证据放前面，最后组装成证据包。</div><div class="meta">重排耗时：1156 ms；最终装配 30 条</div></div>
+          <div class="ix-layer teal" id="ix-layer-8" data-step="8" onclick="jumpCaseStep(8)"><div class="name">STEP 8 · Agent 决策</div><div class="desc">Agent 读取证据包后，判断当前证据足够直接回答，因此不追问，直接输出受证据约束的解释答案。</div><div class="meta">结论：证据充足 / 可直接回答</div></div>
+        </div>
+      </div>
+
+      <div class="ix-col">
+        <div class="ix-head">
+          <div class="ix-dot" style="background:var(--c-teal)"></div>
+          <h3>证据包与回答</h3>
+        </div>
+        <div class="ix-side">
+          <div class="ix-panel active" id="ix-panel-1">
+            <h4>问题入口</h4>
+            <div class="ix-kv">
+              <div class="row"><div class="k">用户问题</div><div class="v">为什么说业务感知不仅是识别技术，还是资源控制和计费运营能力？</div></div>
+              <div class="row"><div class="k">问题类型</div><div class="v">解释理解题，需要“定义 + 作用 + 运营价值”三类证据联合支撑。</div></div>
+            </div>
+          </div>
+          <div class="ix-panel" id="ix-panel-2">
+            <h4>Skill 判断</h4>
+            <ul>
+              <li>当前问题明显依赖业务知识证据，不适合仅靠模型记忆回答。</li>
+              <li>Skill 先调用 <code>/api/v1/search</code>，而不是直接输出结论。</li>
+              <li>这一步体现的差异，不是“能不能答”，而是“能否先取证、再判断、再回答”。</li>
+            </ul>
+          </div>
+          <div class="ix-panel" id="ix-panel-3">
+            <h4>真实问题理解</h4>
+            <div class="ix-kv">
+              <div class="row"><div class="k">问题类型</div><div class="v">概念解释类问题</div></div>
+              <div class="row"><div class="k">keywords</div><div class="v">业务感知、识别技术、资源控制、计费运营能力</div></div>
+              <div class="row"><div class="k">source</div><div class="v">llm</div></div>
+              <div class="row"><div class="k">needs citation</div><div class="v">true</div></div>
+            </div>
+          </div>
+          <div class="ix-panel" id="ix-panel-4">
+            <h4>真实取证路径规划</h4>
+            <div class="ix-kv">
+              <div class="row"><div class="k">检索路径</div><div class="v">语义检索（权重 1.1，候选上限 50） + 关键词检索（权重 0.8，候选上限 50）</div></div>
+              <div class="row"><div class="k">融合方式</div><div class="v">多路结果融合，融合系数 k=60</div></div>
+              <div class="row"><div class="k">assembly</div><div class="v">source_drilldown=true，relation_expansion=true，max_relation_depth=2</div></div>
+            </div>
+          </div>
+          <div class="ix-panel" id="ix-panel-5">
+            <h4>当前生效知识范围</h4>
+            <div class="ix-kv">
+              <div class="row"><div class="k">生效版本编号</div><div class="v">59a73fd3...</div></div>
+              <div class="row"><div class="k">构建编号</div><div class="v">858da49f...</div></div>
+              <div class="row"><div class="k">内容快照数量</div><div class="v">18</div></div>
+            </div>
+            <p style="margin-top:10px">这一步说明 Serving 读取的不是“整个数据库”，而是当前生效的知识视图。</p>
+          </div>
+          <div class="ix-panel" id="ix-panel-6">
+            <h4>Top Evidence</h4>
+            <div class="ix-evidence">
+              <div class="ix-ev">
+                <div class="t">证据 1 · 业务感知定义</div>
+                <div class="s">“对不同业务进行不同的策略控制和计费控制……策略控制包括门限控制、流量整形、QoS 更新、重定向和头增强；计费控制包括在线、离线和融合计费。”</div>
+              </div>
+              <div class="ix-ev alt">
+                <div class="t">证据 2 · 精细化运营</div>
+                <div class="s">“业务感知可以帮助运营商实现内容计费的精细化运营……通过对 P2P / VoIP 业务进行带宽管理，保证资源公平分享。”</div>
+              </div>
+              <div class="ix-ev warn">
+                <div class="t">证据 3 · 基础定义</div>
+                <div class="s">“在用户会话过程中，对用户的数据报文进行解析，从而区分出用户使用的不同业务。”</div>
+              </div>
+            </div>
+          </div>
+          <div class="ix-panel" id="ix-panel-7">
+            <h4>重排与装配结果</h4>
+            <ul>
+              <li>候选总数：50</li>
+              <li>融合方法：多路结果融合</li>
+              <li>重排方式：模型重排</li>
+              <li>最终装配：30 条内容进入证据包</li>
+            </ul>
+            <p style="margin-top:10px">这一步把“检索结果”变成“证据包”，也就是可被 Agent 消费的结构化中间产物。</p>
+          </div>
+          <div class="ix-panel" id="ix-panel-8">
+            <h4>Agent 基于证据的回答</h4>
+            <div class="ix-kv">
+              <div class="row"><div class="k">evidence_sufficiency</div><div class="v">sufficient</div></div>
+              <div class="row"><div class="k">证据是否充足</div><div class="v">证据充足</div></div>
+              <div class="row"><div class="k">是否可直接回答</div><div class="v">可直接回答</div></div>
+            </div>
+            <div class="ix-evidence" style="margin-top:10px">
+              <div class="ix-ev alt">
+                <div class="t">最终回答</div>
+                <div class="s">业务感知不只是“看懂流量是什么”。它的第一步确实是识别用户会话中的业务类型，但识别只是基础。识别完成后，网络会把不同业务映射到不同的控制和运营动作，例如带宽管理、QoS 策略、重定向，以及在线、离线、融合计费。也就是说，它把“识别结果”进一步转化为“资源控制”和“计费运营”的执行能力，所以本质上是一套面向运营的综合能力，而不是单纯的识别技术。</div>
+              </div>
+            </div>
+            <p style="margin-top:10px">这正是和一般方案的差异：系统不是把几段文本扔给模型，而是先明确“证据够不够”，再基于证据组织回答。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="example">
+    <div class="sh">
+      <span class="sn">SECTION 07</span>
+      <h2>一条数据的完整旅程</h2>
+      <p>以下例子来自当前知识库中的真实文档 <code>5G核心网架构概述.md</code>。这里适度保留技术细节，但只保留那些真正能帮助理解“我们做了多少事”的内容。</p>
+    </div>
+
+    <div class="co">
+      <strong>追踪对象：</strong>云数据库中的真实文档 <code>5G核心网架构概述.md</code>，当前生效版本中已经形成 <strong>15 个原始知识段</strong> 与 <strong>29 个检索单元</strong>。这不是概念例子，而是当前系统里真实存在的一条知识资产链。
+    </div>
+
+    <div class="split">
+      <div class="journey">
+        <div class="journey-step">
+          <div class="journey-n">01</div>
+          <div class="journey-c">
+            <h3>资料进入知识体系</h3>
+            <p>系统首先识别文档身份、来源和内容边界，把这份 Markdown 文档纳入统一知识面，而不是把它当一段临时上下文直接喂给模型。</p>
+          </div>
+        </div>
+        <div class="journey-step">
+          <div class="journey-n" style="background:var(--c-teal)">02</div>
+          <div class="journey-c">
+            <h3>把文档拆成可理解的知识单元</h3>
+            <p>系统识别章节、段落、表格、列表和它们的关系。这份文档最终形成 15 个结构化知识段，其中既有概念说明，也有表格映射和参考规范。</p>
+            <div class="badge-row">
+              <span class="chip">服务化架构（SBA）</span>
+              <span class="chip">关键网络功能（NF）</span>
+              <span class="chip">CUPS</span>
+              <span class="chip">4G→5GC 映射</span>
+            </div>
+          </div>
+        </div>
+        <div class="journey-step">
+          <div class="journey-n" style="background:var(--c-amber)">03</div>
+          <div class="journey-c">
+            <h3>补齐结构语义，而不篡改原文</h3>
+            <p>系统会为知识段补充角色、章节归属、表格结构等信息，并按需生成可问答问题。这里的重点不是“改写内容”，而是让知识更适合被检索和解释。</p>
+          </div>
+        </div>
+        <div class="journey-step">
+          <div class="journey-n" style="background:var(--c-violet)">04</div>
+          <div class="journey-c">
+            <h3>生成可被取证的证据单元</h3>
+            <p>这份文档当前实际生成了 15 个文本型检索单元和 14 个问句型检索单元，便于系统同时回答“定义是什么”与“用户可能怎么问”两类问题。</p>
+          </div>
+        </div>
+        <div class="journey-step">
+          <div class="journey-n" style="background:var(--c-rose)">05</div>
+          <div class="journey-c">
+            <h3>进入发布视图，供在线读取</h3>
+            <p>文档不会在处理中间态被在线读取，而是先进入构建，再进入发布，最后由在线取证链只读取当前生效版本。这一步是工程化边界的关键。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="rail">
+        <div class="card">
+          <div class="mini-title">这份文档当前的真实结果</div>
+          <div class="tw" style="margin-top:8px">
+            <table>
+              <thead><tr><th>项目</th><th>结果</th></tr></thead>
+              <tbody>
+                <tr><td><strong>文档类型</strong></td><td>Markdown</td></tr>
+                <tr><td><strong>知识段数量</strong></td><td>15</td></tr>
+                <tr><td><strong>检索单元数量</strong></td><td>29</td></tr>
+                <tr><td><strong>主要内容</strong></td><td>SBA、NF、CUPS、4G→5GC 映射</td></tr>
+                <tr><td><strong>直接用途</strong></td><td>支持概念解释、结构说明、映射类问题</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="mini-title">当用户问“5G核心网的服务化架构是什么”时</div>
+          <ul>
+            <li>系统会先找出 SBA 的定义段落。</li>
+            <li>再补上“模块化、服务发现、灵活组合”等支撑信息。</li>
+            <li>Agent 会判断这属于解释性问题，当前证据足够直接回答。</li>
+            <li>如果问题继续深入到配置或排障，再进入下一层专业能力。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="lifecycle">
+    <div class="sh">
+      <span class="sn">SECTION 08</span>
+      <h2>构建 / 发布 生命周期</h2>
+      <p>这部分能体现工程工作量，也能体现我们和“临时把文档喂给模型”的差异。KnowledgeBase 当前已经不是一次性的资料导入，而是带有版本、生效和回滚能力的知识运营链；往目标态走，这一层还要进一步支撑多知识库、多用户和个性化知识回收。</p>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">知识从形成到生效的四层语义</div>
+      <div style="display:flex;flex-direction:column;gap:8px;max-width:760px;margin:0 auto">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:110px;font-size:.78rem;font-weight:600;color:var(--c-blue);text-align:right">DOCUMENT</div>
+          <div style="flex:1;padding:10px 16px;background:#eff6ff;border:1.5px solid var(--c-blue);border-radius:var(--r);font-size:.88rem"><strong>逻辑文档身份</strong>：一份资料作为“知识对象”的长期身份。</div>
+        </div>
+        <div style="text-align:center;color:var(--text-3)">↓</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:110px;font-size:.78rem;font-weight:600;color:var(--c-teal);text-align:right">SNAPSHOT</div>
+          <div style="flex:1;padding:10px 16px;background:#f0fdfa;border:1.5px solid var(--c-teal);border-radius:var(--r);font-size:.88rem"><strong>内容快照</strong>：同一内容只存一份，避免重复、保证版本边界。</div>
+        </div>
+        <div style="text-align:center;color:var(--text-3)">↓</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:110px;font-size:.78rem;font-weight:600;color:var(--c-amber);text-align:right">BUILD</div>
+          <div style="flex:1;padding:10px 16px;background:#fffbeb;border:1.5px solid var(--c-amber);border-radius:var(--r);font-size:.88rem"><strong>知识视图</strong>：某一时刻选定的一组知识快照组合。</div>
+        </div>
+        <div style="text-align:center;color:var(--text-3)">↓</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:110px;font-size:.78rem;font-weight:600;color:var(--c-rose);text-align:right">RELEASE</div>
+          <div style="flex:1;padding:10px 16px;background:#fff1f2;border:1.5px solid var(--c-rose);border-radius:var(--r);font-size:.88rem"><strong>生效版本</strong>：决定当前在线服务到底读哪一个知识视图。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="cg cg2">
+      <div class="card">
+        <h3>为什么这一层重要</h3>
+        <ul>
+          <li>保证在线取证读取的是“已生效知识”，而不是处理中间态。</li>
+          <li>支持知识的增量更新，而不是每次重做全量导入。</li>
+          <li>支持版本切换与回滚，降低知识运营风险。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>这部分体现出的工程能力</h3>
+        <ul>
+          <li>不是简单建库，而是把知识做成了可发布对象。</li>
+          <li>不是临时更新，而是有明确的变更语义。</li>
+          <li>不是只管“能用”，而是开始具备“可运维、可治理”的基础。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">目标态：从统一知识底座走向多知识库发布</div>
+      <div style="display:flex;flex-direction:column;gap:12px;max-width:960px;margin:0 auto">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="fb pri" style="flex:1;min-width:200px"><div class="fl">DOMAIN KB</div><div class="fv">云核心网知识库 / 数通 IP 知识库</div></div>
+          <div class="fa">+</div>
+          <div class="fb hi" style="flex:1;min-width:200px"><div class="fl">PERSONAL KB</div><div class="fv">用户本地项目知识定期回收形成个人知识库</div></div>
+          <div class="fa">→</div>
+          <div class="fb vi" style="flex:1;min-width:220px"><div class="fl">COMPOSITE RELEASE</div><div class="fv">按用户 / 场景 / 项目生成各自生效知识视图</div></div>
+        </div>
+        <div class="tw" style="margin:0">
+          <table>
+            <thead><tr><th style="width:180px">知识层级</th><th>目标态做法</th><th style="width:280px">带来的能力</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>领域知识库</strong></td>
+                <td>围绕不同专业方向维护各自基础知识库，例如云核心网、数通 IP 等。</td>
+                <td>让不同专业 Agent 使用不同底座，而不是所有知识混成一个总库。</td>
+              </tr>
+              <tr>
+                <td><strong>个性化知识库</strong></td>
+                <td>用户本地项目文档、运维记录、交付材料可按周期回收到个人知识库。</td>
+                <td>让系统理解“这个用户自己的项目上下文”，而不只知道公共知识。</td>
+              </tr>
+              <tr>
+                <td><strong>组合发布视图</strong></td>
+                <td>构建 / 发布不再只对应一个全局 active view，而是能够按用户、项目、场景组合出各自 release。</td>
+                <td>Skill 取证时读到的是“适合这个人、这个项目、这个专业方向”的知识视图。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="co">
+      <strong>面向 Agent 平台的含义：</strong>未来不是一个总知识库服务所有问题，而是多个 Skill 通过统一协议访问各自适配的知识库。公共领域知识提供基线，用户本地项目知识不断回收形成增量，再通过构建 / 发布组合成真正对当前用户有效的证据视图。
+    </div>
+  </section>
+
+  <section class="sec" id="value">
+    <div class="sh">
+      <span class="sn">SECTION 09</span>
+      <h2>当前态 vs 目标态</h2>
+      <p>如果只看表面，像是在做“专业知识问答”。但真正的差异，不在搜索本身，而在把知识变成可运营、可协同、可决策的证据体系。</p>
+    </div>
+
+    <div class="cg cg3">
+      <div class="card">
+        <h3>价值一：让回答更稳</h3>
+        <p>不再依赖模型“像是知道”，而是把专业输出建立在证据之上。对专业领域来说，稳定性本身就是核心价值。</p>
+      </div>
+      <div class="card">
+        <h3>价值二：让结果可追溯</h3>
+        <p>不只是“答没答对”，还要知道“依据来自哪里”。KnowledgeBase 让这一点天然成立。</p>
+      </div>
+      <div class="card">
+        <h3>价值三：让知识可持续积累</h3>
+        <p>新资料不是临时喂给模型，而是进入统一知识体系，形成长期可复用资产。</p>
+      </div>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">三层创新，不是单点问答创新</div>
+      <div class="cg cg3">
+        <div class="card" style="border-top:4px solid var(--c-blue)">
+          <span class="pill">创新 1</span>
+          <h3>从“文档库”升级成“证据底座”</h3>
+          <p>普通方案做到“搜到内容”就结束。我们进一步解决的是：这份内容够不够回答、还缺什么、下一步该怎么做。</p>
+        </div>
+        <div class="card" style="border-top:4px solid var(--c-teal)">
+          <span class="pill">创新 2</span>
+          <h3>从“单次问答”升级成“可运营知识资产”</h3>
+          <p>壁垒不在一次答得多好，而在知识能否持续更新、持续治理、持续发布，并稳定供 Agent 使用。</p>
+        </div>
+        <div class="card" style="border-top:4px solid var(--c-violet)">
+          <span class="pill">创新 3</span>
+          <h3>从“一个助手”升级成“多个 Skill 共用底座”</h3>
+          <p>KnowledgeBase 的未来不是只服务一个入口，而是支撑配置解释、故障分析、影响判断等多个专业 Skill 协同工作。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th style="width:150px">观察维度</th><th>通用方案常见状态</th><th>KnowledgeBase 当前方向</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>知识组织</strong></td>
+            <td>以文档或 chunk 为主，结构利用有限</td>
+            <td>保留章节、表格、列表、关系与发布边界</td>
+          </tr>
+          <tr>
+            <td><strong>结果输出</strong></td>
+            <td>返回若干相关片段</td>
+            <td>返回带来源、关系、上下文、缺口提示的证据包</td>
+          </tr>
+          <tr>
+            <td><strong>Agent 使用</strong></td>
+            <td>模型直接生成答案</td>
+            <td>Agent 先判断能否回答、是否需要追问或转交</td>
+          </tr>
+          <tr>
+            <td><strong>知识更新</strong></td>
+            <td>偏向一次性导入</td>
+            <td>支持构建 / 发布 / active view 的持续运营</td>
+          </tr>
+          <tr>
+            <td><strong>后续扩展</strong></td>
+            <td>面向单个问答入口</td>
+            <td>面向多个专业 Skill 的共用底座</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec" id="future">
+    <div class="sh">
+      <span class="sn">SECTION 10</span>
+      <h2>目标态演进方向</h2>
+      <p>目标态必须讲清楚，否则这件事会被误解成“做了一个专业版搜索”。我们的目标不是停留在问答，而是形成专业领域 Agent 的通用知识基础设施。</p>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">目标态架构认知</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="fb pri" style="flex:1;min-width:200px"><div class="fl">KnowledgeBase</div><div class="fv">产出标准化证据包</div></div>
+        <div class="fa">→</div>
+        <div class="fb hi" style="flex:1;min-width:200px"><div class="fl">智能体调度层</div><div class="fv">判断该回答、追问还是转交</div></div>
+        <div class="fa">→</div>
+        <div class="fb vi" style="flex:1;min-width:200px"><div class="fl">Domain Skills</div><div class="fv">配置 / 排障 / 解释 / 对比等专业能力组件</div></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin:18px 0;border-left:3px solid var(--c-teal)">
+      <h3>最终使用形态：Knowledge Skill Protocol</h3>
+      <p style="margin-bottom:12px">最终不是把问题直接扔给一个搜索接口，而是形成一套稳定的协同协议：KnowledgeBase 负责产出证据，Agent 负责做动作判断，专业 Skill 负责执行更具体的领域工作。</p>
+      <div class="tw" style="margin:0">
+        <table>
+          <thead><tr><th style="width:180px">层级</th><th>职责</th><th style="width:280px">目标态要求</th></tr></thead>
+          <tbody>
+            <tr><td><strong>KnowledgeBase</strong></td><td>理解问题、检索证据、返回结构化证据包。</td><td>来源、上下文、关系、缺口提示都要标准化。</td></tr>
+            <tr><td><strong>智能体调度层</strong></td><td>判断证据是否足够，决定回答、追问、谨慎回答还是转交。</td><td>形成统一的动作决策边界，而不是每个 Skill 各自处理。</td></tr>
+            <tr><td><strong>Domain Skills</strong></td><td>消费证据包，执行配置解释、故障分析、影响判断等专业工作。</td><td>高风险输出必须绑定上游证据，而不是脱离证据自由生成。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="cg cg3">
+      <div class="card">
+        <h3>目标一：证据驱动成为默认工作方式</h3>
+        <p>任何专业问题，Agent 都不是先答，而是先判断是否需要取证；拿到证据后，再决定回答、追问、谨慎回答或转交下游能力。</p>
+      </div>
+      <div class="card">
+        <h3>目标二：知识底座成为可持续运营的系统</h3>
+        <p>知识持续进入、持续更新、持续发布、持续替换，形成企业级知识运营闭环，而不是一次性导入一批文档后长期失效。</p>
+      </div>
+      <div class="card">
+        <h3>目标三：一套底座支撑多个专业 Skill</h3>
+        <p>每新增一个专业 Skill，复用的不是零，而是同一套已沉淀的证据体系、知识边界和判断规则。</p>
+      </div>
+    </div>
+
+    <div class="dia">
+      <div class="dia-t">目标态创新栈</div>
+      <div class="cg cg3">
+        <div class="card">
+          <span class="pill">创新栈 1</span>
+          <h3>分层知识模型</h3>
+          <p>把概念、机制、方法、条件、场景分层组织，避免所有知识都堆成一个平面集合。这样不同角色和不同 Skill 可以拿到不同粒度的信息。</p>
+        </div>
+        <div class="card">
+          <span class="pill">创新栈 2</span>
+          <h3>关系与溯源分层</h3>
+          <p>未来不仅要知道“哪些知识相关”，还要知道“这些关系怎么来的、证据链在哪里”，把推理和溯源同时做强。</p>
+        </div>
+        <div class="card">
+          <span class="pill">创新栈 3</span>
+          <h3>声明式取证能力</h3>
+          <p>不是每次都手写复杂流程，而是让系统逐步具备更高层次的查询规划与自动组合能力。</p>
+        </div>
+        <div class="card">
+          <span class="pill">创新栈 4</span>
+          <h3>知识自治演化</h3>
+          <p>高质量知识持续积累，低质量知识持续被压制或淘汰，使知识体系不是越堆越乱，而是越用越准。</p>
+        </div>
+        <div class="card">
+          <span class="pill">创新栈 5</span>
+          <h3>可信度评估</h3>
+          <p>未来不仅要给结果，还要逐步给出来源质量、跨源一致性、时效性等维度的可信度判断。</p>
+        </div>
+        <div class="card">
+          <span class="pill">创新栈 6</span>
+          <h3>多 Skill 协同协议</h3>
+          <p>最终不是一个问答系统，而是一套知识协议层，支撑配置、排障、解释、影响分析等多个专业能力共用同一知识底座。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="co w">
+      <strong>真正的壁垒：</strong>难点不在“把资料搜出来”，而在“让 Agent 知道什么时候能答、什么时候不能答”，以及“让知识成为长期可运营、可复用、可协同的基础设施”。这才是和通用方案真正拉开差距的地方。
+    </div>
+  </section>
+
+  <footer>
+    <div>KnowledgeBase Architecture Overview</div>
+    <div style="margin-top:4px">Updated 2026-05-07</div>
+  </footer>
+</div>
+
+<script>
+const caseDemoMessages = [
+  { role: 'user', text: '为什么说业务感知不仅是识别技术，还是资源控制和计费运营能力？' },
+  { role: 'agent', text: '我先不直接回答。这个问题涉及业务定义、策略控制和计费能力，需要先调用知识 Skill 去取证。' },
+  { role: 'agent', text: 'Skill 已调用 Serving。系统先判断问题类型，再选择合适的取证路径，而不是直接把问题丢给模型。' },
+  { role: 'agent', text: '系统识别这是一个解释性问题，核心关键词是“业务感知、识别技术、资源控制、计费运营能力”。' },
+  { role: 'agent', text: '随后系统根据当前场景包的策略，决定走语义检索为主、关键词检索为辅的双路取证。' },
+  { role: 'agent', text: '系统从当前生效知识视图中锁定 18 个快照范围，避免把未生效或无关知识混进来。' },
+  { role: 'agent', text: '检索结果显示，关键证据集中在“业务感知定义”“精细化运营”“带宽管理与计费控制”这几类内容上。' },
+  { role: 'agent', text: '证据已经足够。我现在基于证据组织回答，而不是凭印象生成。' },
+  { role: 'agent', text: '业务感知不只是“看懂流量是什么”。它先识别用户会话中的业务类型，但识别只是基础；识别完成后，系统会把结果映射到带宽管理、QoS 控制、重定向以及在线、离线、融合计费等动作上。因此它本质上是“识别 + 控制 + 运营”一体化能力。' }
+];
+
+let caseDemoRunning = false;
+let caseDemoTimers = [];
+
+function setCaseStep(step) {
+  document.querySelectorAll('.ix-layer').forEach((layer, index) => {
+    layer.classList.toggle('active', index === step - 1);
+  });
+  document.querySelectorAll('.ix-panel').forEach((panel, index) => {
+    panel.classList.toggle('active', index === step - 1);
+  });
+  const counter = document.getElementById('ixCounter');
+  const traceLabel = document.getElementById('ixTraceLabel');
+  if (counter) counter.textContent = `STEP ${step} / 8`;
+  if (traceLabel) traceLabel.textContent = `正在执行 ${step} / 8`;
+}
+
+function jumpCaseStep(step) {
+  caseDemoTimers.forEach((id) => clearTimeout(id));
+  caseDemoTimers = [];
+  caseDemoRunning = false;
+  const playBtn = document.getElementById('ixPlayBtn');
+  const traceLabel = document.getElementById('ixTraceLabel');
+  if (playBtn) playBtn.textContent = '点击消息后自动演进';
+  setCaseStep(step);
+  if (traceLabel) traceLabel.textContent = `已跳转到 ${step} / 8`;
+}
+
+function appendCaseMessage(role, text) {
+  const chat = document.getElementById('ixChat');
+  if (!chat) return;
+  const wrapper = document.createElement('div');
+  wrapper.className = `ix-msg ${role === 'user' ? 'user' : 'agent'}`;
+  wrapper.innerHTML = `
+    <div class="ix-avatar">${role === 'user' ? 'U' : 'A'}</div>
+    <div class="ix-bubble">${text}</div>
+  `;
+  chat.appendChild(wrapper);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function resetCaseDemo() {
+  caseDemoTimers.forEach((id) => clearTimeout(id));
+  caseDemoTimers = [];
+  caseDemoRunning = false;
+  const chat = document.getElementById('ixChat');
+  const counter = document.getElementById('ixCounter');
+  const traceLabel = document.getElementById('ixTraceLabel');
+  const starter = document.getElementById('ixStarter');
+  if (chat) {
+    chat.innerHTML = `
+      <div class="ix-msg agent">
+        <div class="ix-avatar">A</div>
+        <div class="ix-bubble">这是一次真实的知识问答过程。点击下面这条固定消息，系统会自动演进整段处理链路。</div>
+      </div>
+      <div class="ix-msg user">
+        <div class="ix-avatar">U</div>
+        <div class="ix-bubble" id="ixStarter" style="cursor:pointer;border:1.5px solid var(--c-blue);box-shadow:var(--shm)">为什么说业务感知不仅是识别技术，还是资源控制和计费运营能力？</div>
+      </div>
+    `;
+  }
+  document.getElementById('ixStarter')?.addEventListener('click', runCaseDemo);
+  document.querySelectorAll('.ix-layer').forEach((layer, index) => {
+    layer.classList.toggle('active', index === 0);
+  });
+  document.querySelectorAll('.ix-panel').forEach((panel, index) => {
+    panel.classList.toggle('active', index === 0);
+  });
+  if (counter) counter.textContent = 'READY';
+  if (traceLabel) traceLabel.textContent = '等待触发';
+}
+
+function runCaseDemo() {
+  if (caseDemoRunning) return;
+  caseDemoRunning = true;
+  document.getElementById('ixStarter')?.removeEventListener('click', runCaseDemo);
+  const playBtn = document.getElementById('ixPlayBtn');
+  if (playBtn) playBtn.textContent = '演示进行中';
+
+  const schedule = [
+    { delay: 0, step: 1, messageIndex: null },
+    { delay: 900, step: 2, messageIndex: 1 },
+    { delay: 2200, step: 3, messageIndex: 2 },
+    { delay: 3600, step: 4, messageIndex: 3 },
+    { delay: 5000, step: 5, messageIndex: 4 },
+    { delay: 6500, step: 6, messageIndex: 5 },
+    { delay: 8100, step: 7, messageIndex: 6 },
+    { delay: 9800, step: 8, messageIndex: 7 },
+    { delay: 11400, step: 8, messageIndex: 8 }
+  ];
+
+  schedule.forEach((item) => {
+    const timer = setTimeout(() => {
+      setCaseStep(item.step);
+      if (item.messageIndex !== null) {
+        const message = caseDemoMessages[item.messageIndex];
+        appendCaseMessage(message.role, message.text);
+      }
+      if (item.delay === 11400) {
+        caseDemoRunning = false;
+        if (playBtn) playBtn.textContent = '点击消息后自动演进';
+        const traceLabel = document.getElementById('ixTraceLabel');
+        if (traceLabel) traceLabel.textContent = '处理完成';
+      }
+    }, item.delay);
+    caseDemoTimers.push(timer);
+  });
+}
+
+document.getElementById('ixStarter')?.addEventListener('click', runCaseDemo);
+</script>
+</body>
+</html>

@@ -25,6 +25,7 @@ from agent_serving.serving.schemas.constants import (
     INTENT_GENERAL,
     INTENT_PROCEDURE,
     INTENT_TROUBLESHOOT,
+    LLM_INTENT_TO_INTERNAL,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,19 @@ _DEFAULT_NETWORK_ELEMENTS = [
     "AUSF", "BSF", "NSSF", "SCP", "UDSF", "UDR",
 ]
 _DEFAULT_PRODUCTS = ["UDG", "UNC", "CloudCore"]
+
+
+def _load_qu_config(domain_profile: Any) -> tuple[re.Pattern, dict[str, str], list[str], list[str]]:
+    """Load query understanding config from domain profile, fallback to defaults."""
+    if domain_profile and hasattr(domain_profile, "query_understanding"):
+        qu = domain_profile.query_understanding
+        if qu:
+            cmd_re = re.compile(qu.get("command_regex", _DEFAULT_COMMAND_RE.pattern), re.IGNORECASE)
+            op_map = qu.get("op_map", _DEFAULT_OP_MAP)
+            ne_list = qu.get("network_elements", _DEFAULT_NETWORK_ELEMENTS)
+            products = qu.get("products", _DEFAULT_PRODUCTS)
+            return cmd_re, op_map, ne_list, products
+    return _DEFAULT_COMMAND_RE, _DEFAULT_OP_MAP, _DEFAULT_NETWORK_ELEMENTS, _DEFAULT_PRODUCTS
 
 _STOPWORDS_ZH = {
     "的", "了", "在", "是", "和", "与", "及", "或", "也", "都",
@@ -91,6 +105,11 @@ def _is_cjk(char: str) -> bool:
 
 class QueryUnderstandingEngine:
     """LLM-first query understanding with rule-based fallback."""
+
+    @staticmethod
+    def _normalize_intent(raw_intent: str) -> str:
+        """Map any intent (LLM or rule) to internal taxonomy."""
+        return LLM_INTENT_TO_INTERNAL.get(raw_intent, INTENT_GENERAL)
 
     def __init__(self, llm_client: Any = None) -> None:
         self._llm = llm_client
@@ -146,7 +165,7 @@ class QueryUnderstandingEngine:
         evidence = parsed.get("evidence_need", {})
         return QueryUnderstanding(
             original_query=query,
-            intent=parsed.get("intent", INTENT_GENERAL),
+            intent=self._normalize_intent(parsed.get("intent", INTENT_GENERAL)),
             sub_queries=sub_queries,
             entities=entities,
             scope=parsed.get("scope", {}),
@@ -163,14 +182,15 @@ class QueryUnderstandingEngine:
 
     def _rule_understand(self, query: str, domain_profile: Any = None) -> QueryUnderstanding:
         """Rule-based understanding — deterministic fallback."""
-        entities = self._extract_entities(query, domain_profile)
-        scope = self._extract_scope(query)
+        cmd_re, op_map, ne_list, products = _load_qu_config(domain_profile)
+        entities = self._extract_entities(query, domain_profile, cmd_re, op_map)
+        scope = self._extract_scope(query, ne_list, products)
         intent = self._detect_intent(query, entities)
-        keywords = self._extract_keywords(query)
+        keywords = self._extract_keywords(query, cmd_re)
 
         return QueryUnderstanding(
             original_query=query,
-            intent=intent,
+            intent=self._normalize_intent(intent),
             entities=entities,
             scope=scope,
             keywords=keywords,
@@ -180,7 +200,9 @@ class QueryUnderstandingEngine:
             source="rule",
         )
 
-    def _extract_entities(self, query: str, domain_profile: Any = None) -> list[EntityRef]:
+    def _extract_entities(self, query: str, domain_profile: Any = None,
+                          cmd_re: re.Pattern | None = None,
+                          op_map: dict[str, str] | None = None) -> list[EntityRef]:
         entities: list[EntityRef] = []
 
         # Domain Pack driven extractors
@@ -204,17 +226,21 @@ class QueryUnderstandingEngine:
                         pass
 
         # Default command extraction
-        cmd = self._extract_command(query)
+        cmd = self._extract_command(query, cmd_re or _DEFAULT_COMMAND_RE, op_map or _DEFAULT_OP_MAP)
         if cmd and not any(e.name == cmd for e in entities):
             entities.append(EntityRef(type="command", name=cmd, normalized_name=cmd))
 
         return entities
 
-    def _extract_command(self, query: str) -> str | None:
-        match = _DEFAULT_COMMAND_RE.search(query)
+    def _extract_command(self, query: str,
+                         cmd_re: re.Pattern | None = None,
+                         op_map: dict[str, str] | None = None) -> str | None:
+        _cmd_re = cmd_re or _DEFAULT_COMMAND_RE
+        _op_map = op_map or _DEFAULT_OP_MAP
+        match = _cmd_re.search(query)
         if match:
             return f"{match.group(1).upper()} {match.group(2).upper()}"
-        for cn_word, cmd_prefix in _DEFAULT_OP_MAP.items():
+        for cn_word, cmd_prefix in _op_map.items():
             if cn_word in query:
                 after = query.split(cn_word, 1)[-1]
                 target_match = re.match(r"\s*([A-Za-z][A-Za-z0-9_]*)", after)
@@ -223,17 +249,21 @@ class QueryUnderstandingEngine:
                 return cmd_prefix
         return None
 
-    def _extract_scope(self, query: str) -> dict:
+    def _extract_scope(self, query: str,
+                       ne_list: list[str] | None = None,
+                       products: list[str] | None = None) -> dict:
+        _products = products or _DEFAULT_PRODUCTS
+        _ne_list = ne_list or _DEFAULT_NETWORK_ELEMENTS
         scope: dict = {}
-        products = set()
-        for p in _DEFAULT_PRODUCTS:
+        prods = set()
+        for p in _products:
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(p)}(?![A-Za-z0-9_])", query, re.IGNORECASE):
-                products.add(p.upper())
-        if products:
-            scope["products"] = sorted(products)
+                prods.add(p.upper())
+        if prods:
+            scope["products"] = sorted(prods)
 
         nes = set()
-        for n in _DEFAULT_NETWORK_ELEMENTS:
+        for n in _ne_list:
             if re.search(rf"(?<![A-Za-z0-9_]){re.escape(n)}(?![A-Za-z0-9_])", query, re.IGNORECASE):
                 nes.add(n.upper())
         if nes:
@@ -260,8 +290,8 @@ class QueryUnderstandingEngine:
                 return "navigational"
         return INTENT_GENERAL
 
-    def _extract_keywords(self, query: str) -> list[str]:
-        cleaned = _DEFAULT_COMMAND_RE.sub("", query)
+    def _extract_keywords(self, query: str, cmd_re: re.Pattern | None = None) -> list[str]:
+        cleaned = (cmd_re or _DEFAULT_COMMAND_RE).sub("", query)
         try:
             import jieba
             tokens = list(jieba.cut(cleaned))

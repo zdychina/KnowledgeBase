@@ -11,7 +11,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agent_serving.serving.schemas.models import QueryPlan, RetrievalCandidate
+from agent_serving.serving.schemas.models import (
+    QueryPlan,
+    RetrievalCandidate,
+    RetrievalRoutePlan,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,8 @@ class Reranker:
     async def rerank(
         self,
         candidates: list[RetrievalCandidate],
-        plan: QueryPlan,
+        plan: QueryPlan | None = None,
+        route_plan: RetrievalRoutePlan | None = None,
     ) -> list[RetrievalCandidate]:
         """Rerank and truncate candidates."""
         ...
@@ -61,7 +66,8 @@ class ScoreReranker(Reranker):
     async def rerank(
         self,
         candidates: list[RetrievalCandidate],
-        plan: QueryPlan,
+        plan: QueryPlan | None = None,
+        route_plan: RetrievalRoutePlan | None = None,
     ) -> list[RetrievalCandidate]:
         if not candidates:
             return []
@@ -75,13 +81,19 @@ class ScoreReranker(Reranker):
         filtered = self._apply_downweight(filtered)
 
         # Stage 3: Rule-based scoring boost
-        filtered = self._apply_rule_scoring(filtered, plan)
+        effective_plan = plan or QueryPlan()
+        filtered = self._apply_rule_scoring(filtered, effective_plan)
 
         # Stage 4: Sort by adjusted score (descending)
         filtered.sort(key=lambda c: c.score, reverse=True)
 
         # Stage 5: Truncate to budget
-        recall_limit = plan.budget.max_items
+        if route_plan is not None:
+            recall_limit = route_plan.assembly.max_items
+        elif plan is not None:
+            recall_limit = plan.budget.max_items
+        else:
+            recall_limit = 10
         return filtered[:recall_limit]
 
     def _deduplicate_by_source(

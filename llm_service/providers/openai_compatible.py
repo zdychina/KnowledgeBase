@@ -15,12 +15,16 @@ class OpenAICompatibleProvider:
         timeout: int = 30,
         bypass_proxy: bool = False,
     ):
-        self._base_url = base_url.rstrip("/")
+        self._url = base_url.rstrip("/")
         self._api_key = api_key
         self._model = model
         self._extra_headers = headers or {}
         self._timeout = timeout
-        self._bypass_proxy = bypass_proxy
+        transport = httpx.AsyncHTTPTransport() if bypass_proxy else None
+        self._client = httpx.AsyncClient(transport=transport, timeout=timeout)
+
+    async def close(self) -> None:
+        await self._client.aclose()
 
     @property
     def provider_name(self) -> str:
@@ -34,8 +38,9 @@ class OpenAICompatibleProvider:
         self,
         messages: list[dict],
         params: dict,
+        *,
+        response_format: dict | None = None,
     ) -> ProviderResponse:
-        url = f"{self._base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
@@ -46,14 +51,14 @@ class OpenAICompatibleProvider:
             "messages": messages,
             **params,
         }
-        transport = httpx.AsyncHTTPTransport() if self._bypass_proxy else None
-        async with httpx.AsyncClient(transport=transport, timeout=self._timeout) as client:
-            try:
-                resp = await client.post(url, json=body, headers=headers)
-            except httpx.TimeoutException as e:
-                raise ProviderError("timeout", str(e)) from e
-            except httpx.ConnectError as e:
-                raise ProviderError("connection_error", str(e)) from e
+        if response_format is not None:
+            body["response_format"] = response_format
+        try:
+            resp = await self._client.post(self._url, json=body, headers=headers)
+        except httpx.TimeoutException as e:
+            raise ProviderError("timeout", str(e)) from e
+        except httpx.ConnectError as e:
+            raise ProviderError("connection_error", str(e)) from e
 
         if resp.status_code == 429:
             raise ProviderError("rate_limited", resp.text)
@@ -62,7 +67,12 @@ class OpenAICompatibleProvider:
         if resp.status_code >= 400:
             raise ProviderError("client_error", f"HTTP {resp.status_code}: {resp.text}")
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise ProviderError(
+                "invalid_response", f"Non-JSON response from provider: {e}"
+            ) from e
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         usage = data.get("usage", {})
         return ProviderResponse(

@@ -59,3 +59,26 @@ async def test_client_cancel(api_client):
     await c.cancel(task_id)
     task = await c.get_task(task_id)
     assert task["status"] == "cancelled"
+
+
+async def test_client_embed(api_client):
+    from llm_service.client import LLMClient
+
+    c = LLMClient(base_url="http://test", http_client=api_client)
+    result = await c.embed(["alpha", "beta"])
+    assert result["model"] == "embedding-3"
+    assert [item["index"] for item in result["data"]] == [0, 1]
+
+
+async def test_client_rerank(api_client):
+    from llm_service.client import LLMClient
+
+    c = LLMClient(base_url="http://test", http_client=api_client)
+    result = await c.rerank(
+        query="what is upf",
+        documents=["doc-1", "doc-2"],
+        top_n=1,
+    )
+    assert result["model"] == "rerank-pro"
+    assert len(result["results"]) == 1
+    assert result["results"][0]["index"] == 0

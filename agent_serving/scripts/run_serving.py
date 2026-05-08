@@ -6,6 +6,12 @@ Usage:
 """
 
 import argparse
+import asyncio
+import sys
+
+# Must be set BEFORE any async import on Windows
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 def main() -> None:
@@ -17,12 +23,17 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run(
+    # On Windows, uvicorn defaults to ProactorEventLoop which breaks psycopg.
+    # Force SelectorEventLoop via custom server factory.
+    config = uvicorn.Config(
         "agent_serving.serving.main:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
+        loop="asyncio",
     )
+    server = uvicorn.Server(config)
+    asyncio.run(server.serve())
 
 
 if __name__ == "__main__":

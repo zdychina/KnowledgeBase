@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Any
 
-import aiosqlite
+from psycopg_pool import AsyncConnectionPool
 
 from agent_serving.serving.schemas.constants import ROUTE_ENTITY_EXACT
 from agent_serving.serving.schemas.models import (
@@ -33,8 +33,8 @@ _PARTIAL_MATCH_SCORE = 0.7
 class EntityExactRetriever(Retriever):
     """Retrieves candidates by matching entity names in retrieval units."""
 
-    def __init__(self, db: aiosqlite.Connection) -> None:
-        self._db = db
+    def __init__(self, pool: AsyncConnectionPool) -> None:
+        self._pool = pool
 
     async def retrieve(
         self,
@@ -54,24 +54,26 @@ class EntityExactRetriever(Retriever):
         if not entity_names:
             return []
 
-        candidates = await self._retrieve_by_entities(entity_names, snapshot_ids)
+        candidates = await self._retrieve_by_entities(entity_names, snapshot_ids, query.scope)
         return candidates[:top_k]
 
     async def _retrieve_by_entities(
         self,
         entity_names: list[str],
         snapshot_ids: list[str],
+        scope: dict | None = None,
     ) -> list[RetrievalCandidate]:
         """Core retrieval: match entity names across multiple strategies."""
         all_candidates: list[RetrievalCandidate] = []
 
-        placeholders = ",".join("?" for _ in snapshot_ids)
+        placeholders = ",".join("%s" for _ in snapshot_ids)
         seen_ids: set[str] = set()
+        scope_filter, scope_params = self._build_scope_filter(scope)
 
         for name in entity_names:
             # Strategy 1: entity_card units with exact name match
             card_candidates = await self._match_entity_cards(
-                name, snapshot_ids, placeholders,
+                name, snapshot_ids, placeholders, scope_filter, scope_params,
             )
             for c in card_candidates:
                 if c.retrieval_unit_id not in seen_ids:
@@ -80,7 +82,7 @@ class EntityExactRetriever(Retriever):
 
             # Strategy 2: entity_refs_json LIKE → JSON parse
             ref_candidates = await self._match_entity_refs(
-                name, snapshot_ids, placeholders,
+                name, snapshot_ids, placeholders, scope_filter, scope_params,
             )
             for c in ref_candidates:
                 if c.retrieval_unit_id not in seen_ids:
@@ -89,7 +91,7 @@ class EntityExactRetriever(Retriever):
 
             # Strategy 3: generated_question containing entity name
             q_candidates = await self._match_generated_questions(
-                name, snapshot_ids, placeholders,
+                name, snapshot_ids, placeholders, scope_filter, scope_params,
             )
             for c in q_candidates:
                 if c.retrieval_unit_id not in seen_ids:
@@ -103,6 +105,8 @@ class EntityExactRetriever(Retriever):
         entity_name: str,
         snapshot_ids: list[str],
         placeholders: str,
+        scope_filter: str = "",
+        scope_params: list[str] | None = None,
     ) -> list[RetrievalCandidate]:
         """Strategy 1: match entity_card units by text."""
         sql = f"""
@@ -111,12 +115,14 @@ class EntityExactRetriever(Retriever):
                    target_type, target_ref_json, unit_type, source_segment_id
             FROM asset_retrieval_units
             WHERE unit_type = 'entity_card'
-              AND text LIKE ?
+              AND text LIKE %s
               AND document_snapshot_id IN ({placeholders})
+              {scope_filter}
         """
-        params: list[Any] = [f"%{entity_name}%", *snapshot_ids]
-        cursor = await self._db.execute(sql, params)
-        rows = await cursor.fetchall()
+        params: list[Any] = [f"%{entity_name}%", *snapshot_ids, *(scope_params or [])]
+        async with self._pool.connection() as conn:
+            cursor = await conn.execute(sql, params)
+            rows = await cursor.fetchall()
         return self._rows_to_candidates(rows, entity_name, source=ROUTE_ENTITY_EXACT)
 
     async def _match_entity_refs(
@@ -124,6 +130,8 @@ class EntityExactRetriever(Retriever):
         entity_name: str,
         snapshot_ids: list[str],
         placeholders: str,
+        scope_filter: str = "",
+        scope_params: list[str] | None = None,
     ) -> list[RetrievalCandidate]:
         """Strategy 2: match entity_refs_json via LIKE + JSON parse."""
         sql = f"""
@@ -132,12 +140,14 @@ class EntityExactRetriever(Retriever):
                    entity_refs_json, target_type, target_ref_json,
                    unit_type, source_segment_id
             FROM asset_retrieval_units
-            WHERE entity_refs_json LIKE ?
+            WHERE entity_refs_json::text LIKE %s
               AND document_snapshot_id IN ({placeholders})
+              {scope_filter}
         """
-        params: list[Any] = [f"%{entity_name}%", *snapshot_ids]
-        cursor = await self._db.execute(sql, params)
-        rows = await cursor.fetchall()
+        params: list[Any] = [f"%{entity_name}%", *snapshot_ids, *(scope_params or [])]
+        async with self._pool.connection() as conn:
+            cursor = await conn.execute(sql, params)
+            rows = await cursor.fetchall()
 
         # JSON parse exact match filter
         candidates = []
@@ -154,6 +164,8 @@ class EntityExactRetriever(Retriever):
         entity_name: str,
         snapshot_ids: list[str],
         placeholders: str,
+        scope_filter: str = "",
+        scope_params: list[str] | None = None,
     ) -> list[RetrievalCandidate]:
         """Strategy 3: match generated_question units."""
         sql = f"""
@@ -162,12 +174,14 @@ class EntityExactRetriever(Retriever):
                    target_type, target_ref_json, unit_type, source_segment_id
             FROM asset_retrieval_units
             WHERE unit_type = 'generated_question'
-              AND text LIKE ?
+              AND text LIKE %s
               AND document_snapshot_id IN ({placeholders})
+              {scope_filter}
         """
-        params: list[Any] = [f"%{entity_name}%", *snapshot_ids]
-        cursor = await self._db.execute(sql, params)
-        rows = await cursor.fetchall()
+        params: list[Any] = [f"%{entity_name}%", *snapshot_ids, *(scope_params or [])]
+        async with self._pool.connection() as conn:
+            cursor = await conn.execute(sql, params)
+            rows = await cursor.fetchall()
         return self._rows_to_candidates(rows, entity_name, source=ROUTE_ENTITY_EXACT)
 
     def _has_exact_entity(self, entity_refs_json: str, name: str) -> bool:
@@ -240,3 +254,21 @@ class EntityExactRetriever(Retriever):
                 route_sources=[source],
             ),
         )
+
+    @staticmethod
+    def _build_scope_filter(scope: dict | None) -> tuple[str, list[str]]:
+        """Build SQL filter from query scope for facets_json pushdown.
+
+        Returns (sql_fragment, params) using parameterized JSONB to prevent injection.
+        """
+        if not scope:
+            return "", []
+        conditions: list[str] = []
+        params: list[str] = []
+        for key, values in scope.items():
+            if isinstance(values, list) and values:
+                conditions.append("facets_json @> %s::jsonb")
+                params.append(json.dumps({key: values}))
+        if not conditions:
+            return "", []
+        return " AND " + " AND ".join(conditions), params

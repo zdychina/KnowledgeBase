@@ -1,53 +1,38 @@
-"""Tests for EntityExactRetriever."""
-import json
-
+"""Tests for EntityExactRetriever — PG backend."""
 import pytest
 import pytest_asyncio
-import aiosqlite
 
 from agent_serving.serving.schemas.models import RetrievalQuery, EntityRef
 from agent_serving.serving.retrieval.entity_exact_retriever import EntityExactRetriever
-from agent_serving.serving.repositories.schema_adapter import create_asset_tables_sqlite
-from agent_serving.tests.conftest import _seed_v11_data
 
 
 @pytest_asyncio.fixture
-async def db_with_entities():
-    db = await aiosqlite.connect(":memory:")
-    db.row_factory = aiosqlite.Row
-    await create_asset_tables_sqlite(db)
-    await _seed_v11_data(db)
-    yield db
-    await db.close()
+async def retriever(pg_pool):
+    return EntityExactRetriever(pg_pool)
 
 
+@pytest.mark.pg
 class TestEntityExactRetriever:
     @pytest.mark.asyncio
-    async def test_retrieve_by_entity(self, db_with_entities):
-        retriever = EntityExactRetriever(db_with_entities)
+    async def test_retrieve_by_entity(self, retriever):
         rq = RetrievalQuery(
             original_query="SMF的作用",
             entities=[EntityRef(type="network_element", name="SMF", normalized_name="SMF")],
         )
-        # Use snapshot_ids from seed data
         snapshot_ids = ["aaaa0000-0000-0000-0000-000000000003"]
         results = await retriever.retrieve(rq, snapshot_ids)
-        # Should find entity_card for SMF
         assert len(results) > 0
         assert any("SMF" in r.metadata.get("text", "") for r in results)
 
     @pytest.mark.asyncio
-    async def test_entity_refs_json_matching(self, db_with_entities):
-        retriever = EntityExactRetriever(db_with_entities)
+    async def test_entity_refs_json_matching(self, retriever):
         rq = RetrievalQuery(original_query="SMF", keywords=["SMF"])
         snapshot_ids = ["aaaa0000-0000-0000-0000-000000000003"]
         results = await retriever.retrieve(rq, snapshot_ids)
-        # Should find units with SMF entity
         assert len(results) > 0
 
     @pytest.mark.asyncio
-    async def test_source_marker(self, db_with_entities):
-        retriever = EntityExactRetriever(db_with_entities)
+    async def test_source_marker(self, retriever):
         rq = RetrievalQuery(original_query="SMF", keywords=["SMF"])
         snapshot_ids = ["aaaa0000-0000-0000-0000-000000000003"]
         results = await retriever.retrieve(rq, snapshot_ids)
@@ -55,8 +40,7 @@ class TestEntityExactRetriever:
             assert r.source == "entity_exact"
 
     @pytest.mark.asyncio
-    async def test_score_chain(self, db_with_entities):
-        retriever = EntityExactRetriever(db_with_entities)
+    async def test_score_chain(self, retriever):
         rq = RetrievalQuery(
             original_query="SMF",
             entities=[EntityRef(type="network_element", name="SMF")],
@@ -68,16 +52,32 @@ class TestEntityExactRetriever:
             assert "entity_exact" in r.score_chain.route_sources
 
     @pytest.mark.asyncio
-    async def test_no_results_for_unknown_entity(self, db_with_entities):
-        retriever = EntityExactRetriever(db_with_entities)
+    async def test_no_results_for_unknown_entity(self, retriever):
         rq = RetrievalQuery(original_query="NONEXISTENT", keywords=["NONEXISTENT"])
         snapshot_ids = ["aaaa0000-0000-0000-0000-000000000003"]
         results = await retriever.retrieve(rq, snapshot_ids)
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_empty_snapshot_ids(self, db_with_entities):
-        retriever = EntityExactRetriever(db_with_entities)
+    async def test_empty_snapshot_ids(self, retriever):
         rq = RetrievalQuery(original_query="SMF", keywords=["SMF"])
         results = await retriever.retrieve(rq, [])
         assert len(results) == 0
+
+    @pytest.mark.asyncio
+    async def test_scope_pushdown_filters(self, retriever):
+        """Scope pushdown should restrict results to matching facets."""
+        from agent_serving.tests.conftest import SNAP_UDG, SNAP_FEATURE
+        rq_no_scope = RetrievalQuery(
+            original_query="SMF",
+            entities=[EntityRef(type="network_element", name="SMF")],
+        )
+        rq_scope = RetrievalQuery(
+            original_query="SMF",
+            entities=[EntityRef(type="network_element", name="SMF")],
+            scope={"domains": ["5G"]},
+        )
+        results_all = await retriever.retrieve(rq_no_scope, [SNAP_FEATURE, SNAP_UDG])
+        results_scoped = await retriever.retrieve(rq_scope, [SNAP_FEATURE, SNAP_UDG])
+        # Scoped results should be subset of unscoped
+        assert len(results_scoped) <= len(results_all)

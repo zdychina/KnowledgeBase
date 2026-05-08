@@ -32,6 +32,7 @@ class TaskManager:
         caller_domain: str,
         pipeline_stage: str,
         *,
+        task_type: str = "chat",
         idempotency_key: str | None = None,
         max_attempts: int | None = None,
         priority: int = 100,
@@ -45,6 +46,7 @@ class TaskManager:
         task_id = await self.insert_task_row(
             caller_domain,
             pipeline_stage,
+            task_type=task_type,
             idempotency_key=idempotency_key,
             max_attempts=max_attempts,
             priority=priority,
@@ -59,6 +61,7 @@ class TaskManager:
         caller_domain: str,
         pipeline_stage: str,
         *,
+        task_type: str = "chat",
         idempotency_key: str | None = None,
         max_attempts: int | None = None,
         priority: int = 100,
@@ -74,12 +77,12 @@ class TaskManager:
         ma = max_attempts or self._default_max_attempts
         await self._db.execute(
             """INSERT INTO agent_llm_tasks
-               (id, caller_domain, pipeline_stage,
+               (id, caller_domain, pipeline_stage, task_type,
                 idempotency_key, status, priority, available_at, attempt_count, max_attempts,
                 created_at, updated_at, metadata_json)
-               VALUES (?, ?, ?, ?, 'queued', ?, ?, 0, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, 0, ?, ?, ?, ?)""",
             (
-                task_id, caller_domain, pipeline_stage,
+                task_id, caller_domain, pipeline_stage, task_type,
                 idempotency_key, priority, now, ma,
                 now, now, json.dumps(metadata or {}),
             ),
@@ -154,9 +157,12 @@ class TaskManager:
 
     async def cancel(self, task_id: str) -> None:
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute(
-            "UPDATE agent_llm_tasks SET status = 'cancelled', finished_at = ?, updated_at = ? WHERE id = ?",
+        cur = await self._db.execute(
+            "UPDATE agent_llm_tasks SET status = 'cancelled', finished_at = ?, updated_at = ? "
+            "WHERE id = ? AND status = 'queued'",
             (now, now, task_id),
         )
         await self._db.commit()
+        if cur.rowcount == 0:
+            raise ValueError(f"Task {task_id} cannot be cancelled (not in 'queued' status)")
         await self._bus.emit(task_id, "cancelled", "task cancelled")

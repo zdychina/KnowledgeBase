@@ -82,13 +82,13 @@ async def verify_embedding():
         print("  SKIP — EMBEDDING_API_KEY not set")
         return False
 
-    from knowledge_mining.mining.embedding import ZhipuEmbeddingGenerator
+    from agent_serving.serving.infrastructure.embedding import EmbeddingGenerator
 
-    gen = ZhipuEmbeddingGenerator(
+    gen = EmbeddingGenerator(
         api_key=api_key,
         model=os.environ.get("EMBEDDING_MODEL", "embedding-3"),
         base_url=os.environ.get("EMBEDDING_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
-        dimensions=int(os.environ.get("EMBEDDING_DIMENSIONS", "2048")),
+        dimensions=int(os.environ.get("EMBEDDING_DIMENSIONS", "1024")),
     )
 
     queries = ["什么是SMF", "ADD APN configuration"]

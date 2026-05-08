@@ -10,8 +10,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from knowledge_mining.mining.db import AssetCoreDB
-from knowledge_mining.mining.models import RawFileData, DocumentProfile
+from knowledge_mining.mining.infra.db import AssetCoreDB
+from knowledge_mining.mining.contracts.models import RawFileData, DocumentProfile
 
 
 def select_or_create_snapshot(

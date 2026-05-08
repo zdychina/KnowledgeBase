@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from knowledge_mining.mining.models import RawSegmentData
+from knowledge_mining.mining.contracts.models import RawSegmentData
 
 
 def _make_segments(n: int = 3) -> list[RawSegmentData]:
@@ -24,10 +24,10 @@ def _make_segments(n: int = 3) -> list[RawSegmentData]:
 
 
 class TestQuestionGeneratorBatchPolling:
-    @patch("knowledge_mining.mining.retrieval_units.LlmQuestionGenerator.__init__", return_value=None)
+    @patch("knowledge_mining.mining.stages.retrieval_units.LlmQuestionGenerator.__init__", return_value=None)
     def test_generate_batch_uses_poll_all(self, mock_init):
         """generate_batch should call poll_all, not serial poll_result."""
-        from knowledge_mining.mining.retrieval_units import LlmQuestionGenerator
+        from knowledge_mining.mining.stages.retrieval_units import LlmQuestionGenerator
 
         gen = LlmQuestionGenerator.__new__(LlmQuestionGenerator)
         gen._client = MagicMock()
@@ -65,7 +65,7 @@ class TestQuestionGeneratorBatchPolling:
 
     def test_generate_batch_empty_segments(self):
         """generate_batch with empty input should return empty dict."""
-        from knowledge_mining.mining.retrieval_units import LlmQuestionGenerator
+        from knowledge_mining.mining.stages.retrieval_units import LlmQuestionGenerator
 
         gen = LlmQuestionGenerator.__new__(LlmQuestionGenerator)
         gen._client = MagicMock()
@@ -79,10 +79,10 @@ class TestQuestionGeneratorBatchPolling:
 
 
 class TestContextualizerBatchPolling:
-    @patch("knowledge_mining.mining.retrieval_units.LLMContextualizer.__init__", return_value=None)
+    @patch("knowledge_mining.mining.stages.retrieval_units.LLMContextualizer.__init__", return_value=None)
     def test_contextualize_uses_poll_all(self, mock_init):
         """contextualize should call poll_all, not serial poll_result."""
-        from knowledge_mining.mining.retrieval_units import LLMContextualizer
+        from knowledge_mining.mining.stages.retrieval_units import LLMContextualizer
 
         ctxer = LLMContextualizer.__new__(LLMContextualizer)
         ctxer._client = MagicMock()
@@ -107,7 +107,7 @@ class TestContextualizerBatchPolling:
 
     def test_contextualize_skips_empty_segments(self):
         """Empty segments should not be submitted."""
-        from knowledge_mining.mining.retrieval_units import LLMContextualizer
+        from knowledge_mining.mining.stages.retrieval_units import LLMContextualizer
 
         ctxer = LLMContextualizer.__new__(LLMContextualizer)
         ctxer._client = MagicMock()

@@ -24,32 +24,27 @@ from agent_serving.serving.domain_pack_reader import (
 
 logger = logging.getLogger(__name__)
 
-# Built-in intent -> route defaults (used when no domain pack)
+# Demo route policy: BM25 main + dense supplement, no entity_exact
 _BUILTIN_ROUTES: dict[str, dict[str, dict[str, float]]] = {
     "default": {
         "lexical_bm25": {"weight": 1.0, "top_k": 50},
-        "entity_exact": {"weight": 1.0, "top_k": 30},
-        "dense_vector": {"weight": 0.8, "top_k": 50},
+        "dense_vector": {"weight": 0.9, "top_k": 50},
     },
     "command_usage": {
-        "entity_exact": {"weight": 1.4, "top_k": 20},
-        "lexical_bm25": {"weight": 1.0, "top_k": 50},
-        "dense_vector": {"weight": 0.5, "top_k": 30},
+        "lexical_bm25": {"weight": 1.2, "top_k": 50},
+        "dense_vector": {"weight": 0.6, "top_k": 30},
     },
     "concept_lookup": {
-        "dense_vector": {"weight": 1.2, "top_k": 50},
-        "lexical_bm25": {"weight": 1.0, "top_k": 50},
-        "entity_exact": {"weight": 0.6, "top_k": 20},
+        "dense_vector": {"weight": 1.1, "top_k": 50},
+        "lexical_bm25": {"weight": 0.8, "top_k": 50},
     },
     "troubleshooting": {
         "lexical_bm25": {"weight": 1.0, "top_k": 50},
-        "entity_exact": {"weight": 1.2, "top_k": 30},
-        "dense_vector": {"weight": 0.6, "top_k": 30},
+        "dense_vector": {"weight": 0.8, "top_k": 40},
     },
     "comparison": {
         "lexical_bm25": {"weight": 1.0, "top_k": 50},
         "dense_vector": {"weight": 1.0, "top_k": 50},
-        "entity_exact": {"weight": 1.0, "top_k": 30},
     },
 }
 

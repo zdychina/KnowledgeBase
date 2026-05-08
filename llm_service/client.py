@@ -160,6 +160,44 @@ class LLMClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def embed(
+        self,
+        input: list[str] | str,
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {"input": input}
+        if model is not None:
+            payload["model"] = model
+        if dimensions is not None:
+            payload["dimensions"] = dimensions
+        c = self._get_client()
+        resp = await c.post("/api/v1/models/embeddings", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def rerank(
+        self,
+        *,
+        query: str,
+        documents: list[str],
+        model: str | None = None,
+        top_n: int | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "query": query,
+            "documents": documents,
+        }
+        if model is not None:
+            payload["model"] = model
+        if top_n is not None:
+            payload["top_n"] = top_n
+        c = self._get_client()
+        resp = await c.post("/api/v1/models/rerank", json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
     async def get_task(self, task_id: str) -> dict:
         c = self._get_client()
         resp = await c.get(f"/api/v1/tasks/{task_id}")

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CoreMasterKB v1.2 技术架构</title>
+<title>KnowledgeBase 技术架构</title>
 <style>
 /* ── Design Tokens: Editorial Light ── */
 :root {
@@ -152,7 +152,7 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
 <!-- ═══ NAV ═══ -->
 <nav>
   <div class="ni">
-    <span class="nb">CoreMasterKB v1.2</span>
+    <span class="nb">KnowledgeBase</span>
     <ul class="nl">
       <li><a href="#why">为什么</a></li>
       <li><a href="#philosophy">设计哲学</a></li>
@@ -174,7 +174,7 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
 <!-- ═══ HERO ═══ -->
 <section class="hero">
   <span class="vb">v1.2 TARGET</span>
-  <h1>CoreMasterKB 技术架构</h1>
+  <h1>KnowledgeBase 技术架构</h1>
   <p class="sub">
     面向 Agent 的知识后端 — 不是文档搜索工具，而是一套可被 Agent 作为 Skill 调用的知识加工、精准检索与自主演化基础设施。
     从原始文档摄入，到结构化知识提取，再到意图驱动的混合检索，最终输出可被 Agent 直接消费的 ContextPack。
@@ -208,7 +208,7 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   </div>
 
   <div class="co g">
-    <strong>CoreMasterKB 的定位：</strong>知识加工（Mining）+ 精准检索（Serving）+ 自主演化（Evolution）三位一体的 Agent Knowledge Backend。不是给人类用的搜索引擎，而是给 Agent 用的 Skill 级知识服务。
+    <strong>KnowledgeBase 的定位：</strong>知识加工（Mining）+ 精准检索（Serving）+ 智能增强（LLM Runtime）三位一体的 Agent Knowledge Backend。不是给人类用的搜索引擎，而是给 Agent 用的 Skill 级知识服务。
   </div>
 </section>
 
@@ -242,88 +242,48 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   <div class="sh">
     <span class="sn">SECTION 03</span>
     <h2>整体系统架构</h2>
-    <p>三大子系统：Mining Pipeline（知识加工）、Serving System（精准检索）、LLM Service（智能增强），通过三库存储层协同工作。</p>
+    <p>三大子系统：Mining（知识生产）、Serving（知识消费）、LLM Runtime（智能增强）。这一层只讲三者之间的协作关系，不下沉到单个算法节点。</p>
   </div>
-
-  <!-- System Panorama -->
   <div class="dia">
-    <div class="dia-t">系统全景</div>
-    <div style="display:flex;flex-direction:column;gap:12px;">
-      <!-- Layer 1: Consumer -->
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--text-3)">消费层</div>
-        <div style="flex:1;display:flex;gap:8px;flex-wrap:wrap">
-          <div class="fb" style="flex:1;border-color:var(--c-slate);background:#f1f5f9"><div class="fl">AGENT</div><div class="fv">意图查询 → ContextPack</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-slate);background:#f1f5f9"><div class="fl">DASHBOARD</div><div class="fv">知识看板</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-slate);background:#f1f5f9"><div class="fl">API</div><div class="fv">REST 接口</div></div>
-        </div>
+    <div class="dia-t">三角色交互</div>
+    <div style="display:flex;flex-direction:column;gap:16px;max-width:960px;margin:0 auto">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="fb pri" style="flex:1;min-width:180px"><div class="fl">MINING</div><div class="fv">生产知识资产<br>build / release</div></div>
+        <div class="fa">→</div>
+        <div class="fb hi" style="flex:1;min-width:180px"><div class="fl">SERVING</div><div class="fv">消费 active release<br>输出 ContextPack</div></div>
+        <div class="fa">↔</div>
+        <div class="fb" style="flex:1;min-width:180px;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">LLM RUNTIME</div><div class="fv">模板 / 队列 / 审计<br>统一智能增强</div></div>
       </div>
-      <div style="text-align:center;color:var(--text-3)">↑ ↓</div>
-      <!-- Layer 2: Serving -->
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--c-teal)">检索层</div>
-        <div style="flex:1;display:flex;gap:6px;flex-wrap:wrap">
-          <div class="fb hi"><div class="fl">NORMALIZER</div><div class="fv">查询归一</div></div>
-          <div class="fa">→</div>
-          <div class="fb hi"><div class="fl">PLANNER</div><div class="fv">意图规划</div></div>
-          <div class="fa">→</div>
-          <div class="fb hi"><div class="fl">RETRIEVER</div><div class="fv">多路召回</div></div>
-          <div class="fa">→</div>
-          <div class="fb hi"><div class="fl">FUSION</div><div class="fv">RRF 融合</div></div>
-          <div class="fa">→</div>
-          <div class="fb hi"><div class="fl">RERANKER</div><div class="fv">精排</div></div>
-          <div class="fa">→</div>
-          <div class="fb hi"><div class="fl">ASSEMBLER</div><div class="fv">ContextPack</div></div>
-        </div>
-      </div>
-      <div style="text-align:center;color:var(--text-3)">↑ 读 | 写 ↓</div>
-      <!-- Layer 3: Mining -->
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--c-blue)">加工层</div>
-        <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap">
-          <div class="fb pri"><div class="fl">1</div><div class="fv">Ingest</div></div><div class="fa">→</div>
-          <div class="fb pri"><div class="fl">2</div><div class="fv">Parse</div></div><div class="fa">→</div>
-          <div class="fb pri"><div class="fl">3</div><div class="fv">Segment</div></div><div class="fa">→</div>
-          <div class="fb pri"><div class="fl">4</div><div class="fv">Enrich</div></div><div class="fa">→</div>
-          <div class="fb pri"><div class="fl">5</div><div class="fv">Relations</div></div><div class="fa">→</div>
-          <div class="fb pri"><div class="fl">6</div><div class="fv">Retrieval Units</div></div><div class="fa">→</div>
-          <div class="fb pri"><div class="fl">7</div><div class="fv">Snapshot</div></div>
-        </div>
-      </div>
-      <div style="text-align:center;color:var(--text-3)">↑↓ LLM 增强</div>
-      <!-- Layer 4: LLM -->
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--c-violet)">智能层</div>
-        <div style="flex:1;display:flex;gap:8px;flex-wrap:wrap">
-          <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">TEMPLATE ENGINE</div><div class="fv">Jinja2 + JSON Schema</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">TASK SCHEDULER</div><div class="fv">优先级队列 + 幂等</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">RETRY ENGINE</div><div class="fv">3 次指数退避</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">AUDIT LOG</div><div class="fv">全链路可追溯</div></div>
-        </div>
-      </div>
-      <div style="text-align:center;color:var(--text-3)">↑↓ 持久化</div>
-      <!-- Layer 5: Storage -->
-      <div style="display:flex;align-items:center;gap:8px">
-        <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--text-3)">存储层</div>
-        <div style="flex:1;display:flex;gap:12px;flex-wrap:wrap">
-          <div class="fb" style="flex:1;border-color:var(--c-blue);background:#eff6ff"><div class="fl">ASSET CORE</div><div class="fv">11 表 · 知识资产</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-teal);background:#f0fdfa"><div class="fl">MINING RUNTIME</div><div class="fv">3 表 · 过程状态</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">LLM RUNTIME</div><div class="fv">6 表 · LLM 审计</div></div>
-        </div>
+      <div class="tw" style="margin:0">
+        <table>
+          <thead><tr><th style="width:180px">角色</th><th>当前实现职责</th><th style="width:220px">与其他角色的关系</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Mining</strong></td>
+              <td>扫描文档、解析结构、切分 segments、生成 retrieval units、组装 build、激活 release。当前知识主数据面已迁到 PostgreSQL。</td>
+              <td>向 Serving 发布 active release；按需调用 LLM Runtime 做 enrich、question、discourse 等增强。</td>
+            </tr>
+            <tr>
+              <td><strong>Serving</strong></td>
+              <td>只读 active release，对查询做 understanding、route plan、多路召回、融合、重排和 ContextPack 组装。</td>
+              <td>不写知识资产；从 Mining 的发布结果读取；在线同步调用 LLM Runtime。</td>
+            </tr>
+            <tr>
+              <td><strong>LLM Runtime</strong></td>
+              <td>独立 FastAPI 服务，提供 <code>/api/v1/tasks</code>、<code>/api/v1/execute</code>、模板管理、幂等、重试、审计链。</td>
+              <td>不持有知识主数据；为 Mining 提供异步能力，为 Serving 提供同步能力。</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
 
-  <!-- R/W Matrix -->
-  <div class="tw">
-    <table>
-      <thead><tr><th>数据库</th><th> Mining</th><th>Serving</th><th>LLM Service</th><th>核心职责</th></tr></thead>
-      <tbody>
-        <tr><td><code>asset_core</code></td><td><span class="b bb">写</span></td><td><span class="b bt">只读</span></td><td><span class="b ba">不访问</span></td><td>文档、快照、段落、关系、检索单元、构建、发布</td></tr>
-        <tr><td><code>mining_runtime</code></td><td><span class="b bb">写</span></td><td><span class="b ba">不访问</span></td><td><span class="b ba">不访问</span></td><td>运行状态、文档处理进度、阶段事件溯源</td></tr>
-        <tr><td><code>agent_llm_runtime</code></td><td><span class="b bt">读 submit</span></td><td><span class="b bt">读 execute</span></td><td><span class="b bb">写</span></td><td>模板管理、任务队列、请求/尝试/结果审计</td></tr>
-      </tbody>
-    </table>
+  <div class="co g">
+    <strong>当前口径：</strong>KnowledgeBase 的核心不是把所有能力塞进一个进程，而是把“知识生产”“知识消费”“智能增强”拆成三个可独立演进的运行面。
+  </div>
+  <div class="co" style="margin-top:12px;border-color:var(--c-violet);background:#f5f3ff">
+    <strong>面向 Agent 的最终定位：</strong>KnowledgeBase 不是“直接替 Agent 回答问题”的万能助手，而是一个可被 Skill 调用的证据底座。Agent 先通过 Serving 取回证据包，再决定直接回答、先追问、谨慎回答，还是把证据转交给更专用的 Skill。
   </div>
 </section>
 
@@ -332,11 +292,11 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   <div class="sh">
     <span class="sn">SECTION 04 — 核心叙事</span>
     <h2>一条数据的完整旅程</h2>
-    <p>追踪真实文档 <code>业务感知场景举例.md</code> 穿过 Mining Pipeline 全部 9 个阶段，每一步展示真实的内容变换。</p>
+    <p>追踪真实文档 <code>5G核心网架构概述.md</code> 穿过 Mining Pipeline 全部 9 个阶段，每一步展示当前实现里真实的内容变换。</p>
   </div>
 
   <div class="co">
-    <strong>追踪对象：</strong>一份电信 5G 业务感知技术场景文档。描述 SMF/PCF/UPF 协作执行业务感知策略的完整流程，包含 1 张用户场景表、4 步编号流程、10+ 技术实体（SMF、PCF、UPF、CHF、FlowFilter、PCCGroup、Rule、URR、APN、UserProfile）。预计产出 ~8 个 segments。
+    <strong>追踪对象：</strong>云数据库 <code>coremasterkb</code> 中的一份真实 Markdown 文档，路径为 <code>data/knowledge_base/5G核心网基础/5G核心网架构概述.md</code>。内容覆盖 5GC 的服务化架构、关键网络功能、CUPS，以及 4G EPC 到 5GC 的演进映射。当前 active release 中，这份文档已形成 <strong>15 个 raw segments</strong> 和 <strong>29 个 retrieval units</strong>。
   </div>
 
   <!-- Stage 1 -->
@@ -345,9 +305,9 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
     <h4>文件扫描与采集</h4>
     <div class="tw">
       <table>
-        <tr><th style="width:80px">输入</th><td><code>data/knowledge_base/业务感知功能描述/业务感知场景举例_92407896.md</code></td></tr>
-        <tr><th>检测</th><td>MIME: <code>text/markdown</code> | SHA256(raw): <code>a3f2b8c1...</code> | 大小: ~1.2KB</td></tr>
-        <tr><th>输出</th><td><code>RawFileData { path, mime, raw_hash, size }</code> — 递归扫描知识库目录产出</td></tr>
+        <tr><th style="width:80px">输入</th><td><code>data/knowledge_base/5G核心网基础/5G核心网架构概述.md</code></td></tr>
+        <tr><th>检测</th><td>MIME: <code>text/markdown</code> | document_key: <code>doc:/5G核心网架构概述.md</code> | 进入云端知识库扫描批次</td></tr>
+        <tr><th>输出</th><td><code>RawFileData { path, mime, raw_hash, size }</code> — Serving 最终读取的是发布后的知识视图，不直接读取源文件</td></tr>
       </table>
     </div>
   </div>
@@ -359,16 +319,22 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
     <div class="tw">
       <table>
         <tr><th style="width:80px">输入</th><td>RawFileData（原始 Markdown 文本）</td></tr>
-        <tr><th>变换</th><td><code>MarkdownParser</code> 通过 markdown-it 将原始文本转为 SectionNode 树，保留 heading / table / list / paragraph 节点类型</td></tr>
+        <tr><th>变换</th><td><code>MarkdownParser</code> 将原始文本转为 SectionNode 树，保留 heading / paragraph / list / table 节点，并维持原始章节边界</td></tr>
         <tr><th>输出</th><td>SectionNode 树结构:
-          <div class="db" style="margin-top:8px"><b>Root:</b> "业务感知场景举例" (H1)
-├─ <b>paragraph:</b> "以下通过一个场景举例说明业务感知的端到端生效过程..."
-├─ <b>table:</b> 用户类型|业务类型|业务需求|策略|套餐内容 (1行数据)
-└─ <b>ordered_list:</b> 4 个步骤
-    ├─ Step 1: 业务感知配置过程 (FlowFilter/PCCGroup/Rule/UserProfile)
-    ├─ Step 2: 规则部署过程 (SMF→PCF→UPF)
-    ├─ Step 3: 用户会话中的规则匹配 (UPF 执行策略)
-    └─ Step 4: 策略执行 (计费/重定向)</div>
+          <div class="db" style="margin-top:8px"><b>Root:</b> "5G核心网架构概述" (H1)
+├─ <b>paragraph:</b> 5GC 作为控制中枢的总体介绍
+├─ <b>H2:</b> 服务化架构（SBA）
+│   ├─ paragraph: SBA 定义与 HTTP/2 / REST 风格接口
+│   └─ list: 模块化 / 服务发现 / 灵活组合
+├─ <b>H2:</b> 关键网络功能（NF）
+│   ├─ paragraph: "5GC定义了以下主要网络功能"
+│   └─ table: AMF / SMF / UPF / PCF / UDM / AUSF / NRF / NSSF / NEF / AF
+├─ <b>H2:</b> 控制面与用户面分离（CUPS）
+│   └─ paragraph: CP/UP 分离与 N4/PFCP
+├─ <b>H2:</b> 4G EPC到5GC的演进映射
+│   └─ table: MME / SGW / PGW / HSS / PCRF 等映射
+└─ <b>H2:</b> 参考规范
+    └─ list: TS 23.501 / TS 23.502 / TS 29.500</div>
         </td></tr>
       </table>
     </div>
@@ -381,19 +347,22 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
     <div class="tw">
       <table>
         <tr><th style="width:80px">输入</th><td>SectionNode 树</td></tr>
-        <tr><th>变换</th><td>遍历树节点，每个有语义内容的节点生成一个 RawSegment，按 <code>block_type</code> 和 <code>semantic_role</code> 分类，计算 token 估算</td></tr>
+        <tr><th>变换</th><td>遍历树节点，每个有语义内容的节点生成一个 RawSegment，按 <code>block_type</code>、<code>semantic_role</code>、<code>section_title</code> 分类，并估算 token 数</td></tr>
         <tr><th>输出</th><td>
           <div class="tw" style="margin-top:8px">
             <table>
               <thead><tr><th>#</th><th>block_type</th><th>semantic_role</th><th>内容摘要</th><th>~tokens</th></tr></thead>
               <tbody>
-                <tr><td>1</td><td><span class="b bb">paragraph</span></td><td>introduction</td><td>"以下通过一个场景举例说明业务感知的端到端..."</td><td>45</td></tr>
-                <tr><td>2</td><td><span class="b ba">table</span></td><td>reference_data</td><td>用户场景表: 普通用户 | 视频业务 | 1元/Gb</td><td>55</td></tr>
-                <tr><td>3</td><td><span class="b be">list</span></td><td>procedure</td><td>"配置用户特定过滤条件 FlowFilter1/FlowFilter2..."</td><td>120</td></tr>
-                <tr><td>4</td><td><span class="b be">list</span></td><td>procedure</td><td>"SMF 发送用户信息到 PCF，PCF 查找关联的 APN..."</td><td>95</td></tr>
-                <tr><td>5</td><td><span class="b be">list</span></td><td>procedure</td><td>"UPF 根据 Rule1 匹配视频流量，执行策略..."</td><td>80</td></tr>
-                <tr><td>6</td><td><span class="b be">list</span></td><td>procedure</td><td>"流量耗尽时 CHF 通知 SMF，触发策略切换..."</td><td>70</td></tr>
-                <tr style="background:var(--bg-surface-alt)"><td colspan="4"><strong>合计 6 segments</strong></td><td><strong>~465</strong></td></tr>
+                <tr><td>0</td><td><span class="b bb">heading</span></td><td>concept</td><td>"5G核心网架构概述"</td><td>8</td></tr>
+                <tr><td>1</td><td><span class="b bb">paragraph</span></td><td>concept</td><td>5GC 负责接入认证、会话建立、策略控制、用户面转发</td><td>69</td></tr>
+                <tr><td>2</td><td><span class="b bb">heading</span></td><td>concept</td><td>"服务化架构（SBA）"</td><td>6</td></tr>
+                <tr><td>3</td><td><span class="b bb">paragraph</span></td><td>concept</td><td>SBA 采用服务生产者/消费者模式，通过 HTTP/2 接口通信</td><td>97</td></tr>
+                <tr><td>4</td><td><span class="b be">list</span></td><td>concept</td><td>模块化 / 服务发现 / 灵活组合 三项优势</td><td>66</td></tr>
+                <tr><td>7</td><td><span class="b ba">table</span></td><td>concept</td><td>NF 总表：AMF / SMF / UPF / PCF / UDM / AUSF / NRF...</td><td>209</td></tr>
+                <tr><td>10</td><td><span class="b bb">paragraph</span></td><td>concept</td><td>CUPS 段落：CP/UP 分离，SMF 与 UPF 通过 N4/PFCP 通信</td><td>165</td></tr>
+                <tr><td>12</td><td><span class="b ba">table</span></td><td>concept</td><td>4G EPC → 5GC 映射表：MME→AMF+SMF，HSS→UDM，PCRF→PCF</td><td>132</td></tr>
+                <tr><td>14</td><td><span class="b be">list</span></td><td>unknown</td><td>参考规范列表：TS 23.501 / TS 23.502 / TS 29.500</td><td>45</td></tr>
+                <tr style="background:var(--bg-surface-alt)"><td colspan="4"><strong>合计 15 segments</strong></td><td><strong>~851</strong></td></tr>
               </tbody>
             </table>
           </div>
@@ -405,26 +374,24 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   <!-- Stage 4 -->
   <div class="js">
     <span class="jst">STAGE 4 · ENRICH</span>
-    <h4>规则增强 → 实体提取 + 元数据</h4>
+    <h4>规则增强 → 结构语义补全</h4>
     <div class="tw">
       <table>
-        <tr><th style="width:80px">输入</th><td>6 个 RawSegments</td></tr>
+        <tr><th style="width:80px">输入</th><td>15 个 RawSegments</td></tr>
         <tr><th>变换</th><td>
-          ① <code>RuleBasedEntityExtractor</code> 正则提取 → 命名实体<br>
-          ② <code>DefaultRoleClassifier</code> 语义角色分类 → procedure / reference_data / introduction<br>
-          ③ table 结构解析 → 列名和单元格值
+          ① <code>DefaultRoleClassifier</code> 补全或修正 <code>semantic_role</code><br>
+          ② heading / paragraph / table / list 的结构元数据归档到 <code>metadata_json</code><br>
+          ③ table 解析出列头与单元格文本，供后续检索与问句生成使用<br>
+          ④ 可选 LLM enrich 生成问题、摘要、标签等增强信息，但不改变原始段落内容
         </td></tr>
         <tr><th>输出</th><td>
-          <strong>提取的实体集合：</strong><br>
-          <span class="b bb">SMF</span> <span class="b bb">PCF</span> <span class="b bb">UPF</span> <span class="b bb">CHF</span>
-          <span class="b bt">FlowFilter1</span> <span class="b bt">FlowFilter2</span>
-          <span class="b ba">PCCGroup1</span> <span class="b ba">PCCGroup2</span> <span class="b ba">PCCGroup3</span>
-          <span class="b bv">Rule1</span> <span class="b bv">Rule2</span> <span class="b bv">Rule3</span>
-          <span class="b br">URR1</span> <span class="b bo">APN1</span>
-          <br><br>
-          <strong>实体-段落实联：</strong><br>
-          Segment #3 → [FlowFilter1, FlowFilter2, PCCGroup1/2/3, Rule1/2/3, URR1, APN1]<br>
-          Segment #4 → [SMF, PCF, UPF, APN1, Rule1, Rule2]
+          <strong>当前这份文档的增强结果重点：</strong><br>
+          Segment #7（NF 总表）→ 保留列头 <code>网络功能 / 全称 / 核心职责</code>，便于后续拆成可问答单元<br>
+          Segment #10（CUPS 段落）→ 识别为概念说明段，保留 <code>section_title=CUPS</code> 与协议关键词 <code>N4 / PFCP</code><br>
+          Segment #12（演进映射表）→ 表格结构保留为行列文本，便于回答 "HSS 在 5GC 中演进为哪个功能" 这类问题<br>
+          <br>
+          <strong>这里不把“实体抽取”当作主叙事：</strong><br>
+          当前数据库中的这份样例，核心价值来自结构、角色、表格、章节边界与问句增强，而不是先构建独立实体库。
         </td></tr>
       </table>
     </div>
@@ -436,15 +403,16 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
     <h4>构建段间关系图</h4>
     <div class="tw">
       <table>
-        <tr><th style="width:80px">输入</th><td>Enriched Segments（含实体标注）</td></tr>
+        <tr><th style="width:80px">输入</th><td>Enriched Segments（含结构与角色增强）</td></tr>
         <tr><th>变换</th><td>
-          <strong>结构关系（v1.1 已实现）：</strong><br>
-          · <code>previous/next</code>: Seg#3→Seg#4 (配置→部署的先后顺序)<br>
-          · <code>same_section</code>: Seg#3~#6 (同属一个编号列表)<br><br>
-          <strong>语义关系（v1.2 规划）：</strong><br>
-          · <code>elaboration</code>: Seg#2(场景表) <span style="color:var(--c-blue)">→elaborates→</span> Seg#3(配置详情)<br>
-          · <code>cause_effect</code>: Seg#6(流量耗尽) <span style="color:var(--c-rose)">→causes→</span> 策略切换(Rule3 替换 Rule2)<br>
-          · <code>temporal</code>: Seg#3 <span style="color:var(--c-teal)">→precedes→</span> Seg#4 <span style="color:var(--c-teal)">→precedes→</span> Seg#5
+          <strong>结构关系（当前已落库）：</strong><br>
+          · <code>section_header_of</code>: Seg#2 <span style="color:var(--c-blue)">→</span> Seg#3 / Seg#4（SBA 标题对应正文与列表）<br>
+          · <code>previous/next</code>: Seg#9 <span style="color:var(--c-teal)">→</span> Seg#10 <span style="color:var(--c-teal)">→</span> Seg#11（CUPS 章节前后相邻）<br>
+          · <code>same_parent_section</code>: SBA 段落与 SBA 列表同属一个父章节<br><br>
+          <strong>语义关系（当前样例已可见）：</strong><br>
+          · <code>elaborates</code>: Seg#1(5GC 总述) <span style="color:var(--c-blue)">→elaborates→</span> Seg#3(SBA 细节)<br>
+          · <code>backgrounds</code>: 样例中已存在，用于把背景性说明和后续章节挂接起来<br>
+          · <code>contrasts_with</code>: 样例中已存在，用于标记 4G EPC 与 5GC 架构能力之间的对照关系
         </td></tr>
         <tr><th>输出</th><td><code>asset_raw_segment_relations</code> — 段间有向图，含 relation_type / weight / confidence / distance</td></tr>
       </table>
@@ -462,16 +430,15 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
         <tr><th>输出</th><td>
           <div class="tw" style="margin-top:8px">
             <table>
-              <thead><tr><th>unit_type</th><th>说明</th><th>示例（Segment #4: 规则部署）</th></tr></thead>
+              <thead><tr><th>unit_type</th><th>说明</th><th>示例（当前文档真实产物）</th></tr></thead>
               <tbody>
-                <tr><td><span class="b bb">raw_text</span></td><td>原始文本，FTS5 全文索引</td><td>"SMF 发送用户信息到 PCF，PCF 查找关联的 APN1 绑定规则 Rule1 和 Rule2..."</td></tr>
-                <tr><td><span class="b bt">contextual_text</span></td><td>上下文增强（v1.2: LLM 生成）</td><td>"在5G业务感知架构中，SMF 通过与 PCF 的 N7 接口获取用户策略规则..."</td></tr>
-                <tr><td><span class="b bv">entity_card</span></td><td>实体卡片：聚合同一实体所有引用</td><td>"PCF: 策略控制功能，接收 SMF 的用户信息，查找 APN 绑定规则并下发给 SMF"</td></tr>
+                <tr><td><span class="b bb">raw_text</span></td><td>原始文本，作为主文本检索载体</td><td>"5GC采用服务化架构（SBA）...每个网络功能以服务生产者或服务消费者角色工作"</td></tr>
+                <tr><td><span class="b bt">generated_question</span></td><td>从段落或表格生成用户可能直接提出的问题</td><td>"5GC服务化架构（SBA）的核心特点是什么？"</td></tr>
               </tbody>
             </table>
           </div>
           <div style="margin-top:8px;font-size:.82rem;color:var(--text-2)">
-            同时生成 <code>search_text</code>（FTS5 索引）、<code>facets_json</code>（过滤维度）、<code>source_refs_json</code>（溯源链）
+            当前这份文档在 active release 中实际生成 <strong>15 个 <code>raw_text</code></strong> 与 <strong>14 个 <code>generated_question</code></strong>；同时写入 <code>search_text</code>、<code>facets_json</code>、<code>source_refs_json</code> 供 Serving 检索与溯源。
           </div>
         </td></tr>
       </table>
@@ -486,15 +453,15 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
       归一化策略：CRLF→LF → 去尾部空白 → 去空行 → SHA256。确保同一内容在不同路径下只存储一份。
     </p>
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0">
-      <div class="fb pri" style="flex:1"><div class="fl">DOCUMENT</div><div class="fv">业务感知场景举例</div></div>
+      <div class="fb pri" style="flex:1"><div class="fl">DOCUMENT</div><div class="fv">5G核心网架构概述</div></div>
       <div class="fa">→</div>
-      <div class="fb hi" style="flex:1"><div class="fl">LINK</div><div class="fv">path + source_uri</div></div>
+      <div class="fb hi" style="flex:1"><div class="fl">LINK</div><div class="fv">path + document_key</div></div>
       <div class="fa">→</div>
-      <div class="fb" style="flex:1;border-color:var(--c-emerald);background:#ecfdf5"><div class="fl">SNAPSHOT</div><div class="fv">SHA256 去重</div></div>
+      <div class="fb" style="flex:1;border-color:var(--c-emerald);background:#ecfdf5"><div class="fl">SNAPSHOT</div><div class="fv">active snapshot</div></div>
       <div class="fa">→</div>
-      <div class="fb wa" style="flex:1"><div class="fl">SEGMENTS</div><div class="fv">6 段</div></div>
+      <div class="fb wa" style="flex:1"><div class="fl">SEGMENTS</div><div class="fv">15 段</div></div>
       <div class="fa">→</div>
-      <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">UNITS</div><div class="fv">~18 个</div></div>
+      <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">UNITS</div><div class="fv">29 个</div></div>
     </div>
   </div>
 
@@ -504,9 +471,9 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
     <h4>构建知识视图 → 发布生效</h4>
     <div class="tw">
       <table>
-        <tr><th style="width:100px">Assemble</th><td>对比新旧快照列表 → 标记 <code>NEW</code>（新文档）/ <code>UPDATE</code>（内容变化）/ <code>RETAIN</code>（无变化）→ 写入 <code>asset_builds</code> + <code>asset_build_document_snapshots</code></td></tr>
-        <tr><th>Validate</th><td>① Build 非空 ② 所有 unit 有 search_text ③ 结果记录到 <code>validation_json</code></td></tr>
-        <tr><th>Publish</th><td>创建 <code>asset_publish_releases</code> → <code>staging</code> → <code>active</code> → 旧版 <code>retired</code> → Serving 可读</td></tr>
+        <tr><th style="width:100px">Assemble</th><td>对比新旧快照列表 → 标记 <code>NEW</code> / <code>UPDATE</code> / <code>SKIP</code> / <code>REMOVE</code> → 写入 <code>asset_builds</code> 与 <code>asset_build_document_snapshots</code>。这份样例在当前 active release 中以新增内容纳入。</td></tr>
+        <tr><th>Validate</th><td>① Build 非空 ② 所有 unit 有 <code>search_text</code> ③ 结构与引用链自洽 ④ 结果记录到 <code>validation_json</code>。当前实现以结构校验为主。</td></tr>
+        <tr><th>Publish</th><td>创建 <code>asset_publish_releases</code>，发布到 channel，并将其中一个 release 标记为 <code>active</code>；Serving 只消费当前发布视图，不直接读构建中的中间结果。</td></tr>
       </table>
     </div>
   </div>
@@ -587,7 +554,7 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   <div class="sh">
     <span class="sn">SECTION 06</span>
     <h2>Mining Pipeline 技术参考</h2>
-    <p>与 Section 4 的叙事视角不同，本节从系统架构角度审视每个阶段的技术选型、设计权衡与 v1.2 增强方向。</p>
+    <p>与 Section 4 的叙事视角不同，本节从系统架构角度审视每个阶段的技术选型、当前代码落地情况与后续工业级增强方向。</p>
   </div>
 
   <div class="co w">
@@ -600,8 +567,8 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
       <tbody>
         <tr>
           <td>1</td><td><code>parse</code></td>
-          <td><strong>多格式解析器链：</strong>MarkdownParser（markdown-it AST）、PlainTextParser、PassthroughParser。<br>输出统一的 SectionNode 树，保留 heading 层级、table 列结构、list 编号</td>
-          <td><span class="b bt">v1.2</span> DOCX/PDF 解析器；HTML 表格结构提取（当前只存原文）</td>
+            <td><strong>多格式解析入口：</strong>当前稳定解析的是 Markdown / PlainText，输出统一的 SectionNode 树，保留 heading 层级、table 列结构、list 编号。<br>HTML/PDF/DOC/DOCX 已进入 ingest 识别，但正文解析尚未完全收口</td>
+            <td><span class="b bt">下一步</span> 补齐 HTML / DOCX / PDF 正文解析与统一结构输出</td>
         </tr>
         <tr>
           <td>2</td><td><code>segment</code></td>
@@ -610,18 +577,18 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
         </tr>
         <tr>
           <td>3</td><td><code>enrich</code></td>
-          <td><strong>规则引擎增强：</strong>RuleBasedEntityExtractor（正则实体提取）、DefaultRoleClassifier（语义角色分类）、table metadata 解析<br>当前为纯规则，无 LLM 依赖</td>
-          <td><span class="b bt">v1.2</span> <strong>LLM 批量增强</strong>：summary、generated_question、语义关系提取；batch 语义优化利用 context window</td>
+            <td><strong>规则 + 可选 LLM 增强：</strong>RuleBasedEntityExtractor、role classifier、table metadata 解析已经在主链中；当前代码也支持可选的 LLM enrich</td>
+            <td><span class="b bt">持续增强</span> 提高 batch 质量控制，并把 LLM 结果更正式地纳入发布质量门</td>
         </tr>
         <tr>
           <td>4</td><td><code>build_relations</code></td>
-          <td><strong>段间关系图构建：</strong>previous/next（相邻）、same_section（同级）、section_header_of（标题→内容）<br>关系带 weight/confidence/distance 三维评估</td>
-          <td><span class="b br">v1.2 核心</span> <strong>语篇关系</strong>：elaboration / cause_effect / contrast / condition — LLM 零样本提取，24 种关系标签空间</td>
+            <td><strong>结构关系为主，可选语篇增强：</strong>previous / next / same_section / section_header_of 已落地；代码中已接入可选 discourse relation builder</td>
+            <td><span class="b br">增强方向</span> 让 discourse relation 从“可选增强”演进为更稳定的高质量资产层</td>
         </tr>
         <tr>
           <td>5</td><td><code>build_retrieval_units</code></td>
-          <td><strong>多载体检索构建：</strong>raw_text（全文索引）、contextual_text（上下文增强）、entity_card（实体聚合卡片）<br>同时产出 search_text（FTS5）、facets_json（过滤面）、source_refs_json（溯源链）</td>
-          <td><span class="b br">v1.2 核心</span> <strong>父子层级分块</strong>（+15.3% hit rate）、<strong>上下文增强检索</strong>（-49% 失败率）、<strong>HyDE</strong></td>
+            <td><strong>多载体检索单元：</strong>当前主链已生成 <code>raw_text</code>、<code>entity_card</code>、<code>table_row</code>、<code>generated_question</code>；可选 contextual retrieval 会增强 <code>search_text</code></td>
+            <td><span class="b br">增强方向</span> 把 unit budget、质量门与召回收益评估更正式接入 build / release</td>
         </tr>
         <tr>
           <td>6</td><td><code>select_snapshot</code></td>
@@ -630,18 +597,18 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
         </tr>
         <tr>
           <td>7</td><td><code>assemble_build</code></td>
-          <td><strong>知识视图组装：</strong>对比新旧快照 → diff 计算 → 标记 NEW/UPDATE/RETAIN/REMOVE<br>支持 full 和 incremental 两种构建模式</td>
-          <td><span class="b bt">v1.2</span> REMOVE 语义（删除文件检测）；document_key namespace 防冲突</td>
+            <td><strong>知识视图组装：</strong>对比新旧快照 → 标记 NEW / UPDATE / SKIP / REMOVE，支持 full 和 incremental 两种构建模式</td>
+            <td><span class="b bt">当前已落地</span> 下一步重点从“能组装”转向“组装结果的质量分级”</td>
         </tr>
         <tr>
           <td>8</td><td><code>validate_build</code></td>
-          <td><strong>构建验证：</strong>非空检查、search_text 完整性、validation_json 结果记录</td>
-          <td><span class="b bt">v1.2</span> embedding 完整性检查；schema 级约束验证</td>
+            <td><strong>当前仍以结构校验为主：</strong>非空检查、基本完整性、validation 结果记录；<code>run_data_quality_eval()</code> 已存在，但还不是正式 release gate</td>
+            <td><span class="b bt">关键缺口</span> 让数据质量校验进入正式发布门</td>
         </tr>
         <tr>
           <td>9</td><td><code>publish_release</code></td>
-          <td><strong>版本发布：</strong>创建 release → 激活 → 旧版本退役。同一 channel 只有一个 active release</td>
-          <td><span class="b bt">v1.2</span> 多 channel 支持（dev/staging/prod）；回滚 API</td>
+            <td><strong>版本发布：</strong>创建 release → 激活 → 旧版本退役。同一 channel 只有一个 active release，Serving 只读 active release</td>
+            <td><span class="b bt">下一步</span> 更强的 channel 治理、质量等级与回滚运营能力</td>
         </tr>
       </tbody>
     </table>
@@ -667,7 +634,7 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   <div class="sh">
     <span class="sn">SECTION 07</span>
     <h2>Serving 检索链</h2>
-    <p>Serving 纯读路径：Active Release → Build → Snapshots → Retrieval Units → 混合检索 → ContextPack。用 Section 4 同一文档演示真实检索过程。</p>
+    <p>Serving 纯读路径：Active Release → Build → Snapshots → Retrieval Units → 混合检索 → ContextPack。当前主入口是 <code>/api/v1/search</code>，运行时基于 PostgreSQL 知识数据面、<code>pgvector</code> 与独立 LLM Runtime。</p>
   </div>
 
   <div class="dia">
@@ -680,24 +647,24 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--text-3)">查询规划</div>
         <div style="flex:1;display:flex;gap:8px">
-          <div class="fb hi" style="flex:1"><div class="fl">NORMALIZER</div><div class="fv">去停用词、别名归一</div></div>
-          <div class="fa">→</div>
-          <div class="fb pri" style="flex:1"><div class="fl">LLM PLANNER</div><div class="fv">intent=procedure<br>entities=[UPF, 计费]</div></div>
+            <div class="fb hi" style="flex:1"><div class="fl">QUERY UNDERSTANDING</div><div class="fv">LLM-first + rule fallback</div></div>
+            <div class="fa">→</div>
+            <div class="fb pri" style="flex:1"><div class="fl">ROUTE PLAN</div><div class="fv">intent / entities / scope<br>决定 route 组合</div></div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--text-3)">多路召回</div>
         <div style="flex:1;display:flex;gap:8px;flex-wrap:wrap">
-          <div class="fb" style="flex:1;border-color:var(--c-blue);background:#eff6ff"><div class="fl">FTS5 + BM25</div><div class="fv">关键词匹配</div></div>
-          <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">Embedding</div><div class="fv">语义向量</div></div>
-          <div class="fb hi" style="flex:1"><div class="fl">Graph Expand</div><div class="fv">关系扩展</div></div>
-          <div class="fb wa" style="flex:1"><div class="fl">HyDE</div><div class="fv">假设文档</div></div>
+            <div class="fb" style="flex:1;border-color:var(--c-blue);background:#eff6ff"><div class="fl">POSTGRES LEXICAL</div><div class="fv">文本检索主路</div></div>
+            <div class="fb" style="flex:1;border-color:var(--c-violet);background:#f5f3ff"><div class="fl">PGVECTOR</div><div class="fv">语义向量召回</div></div>
+            <div class="fb hi" style="flex:1"><div class="fl">Graph Expand</div><div class="fv">关系扩展</div></div>
+            <div class="fb wa" style="flex:1"><div class="fl">Entity Route</div><div class="fv">已接线但仍在收口</div></div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <div style="width:90px;text-align:right;font-size:.78rem;font-weight:600;color:var(--text-3)">融合排序</div>
         <div style="flex:1;display:flex;gap:8px">
-          <div class="fb" style="flex:1;border-color:var(--c-emerald);background:#ecfdf5"><div class="fl">RRF FUSION</div><div class="fv">Reciprocal Rank</div></div>
+            <div class="fb" style="flex:1;border-color:var(--c-emerald);background:#ecfdf5"><div class="fl">FUSION</div><div class="fv">RRF / weighted RRF</div></div>
           <div class="fa">→</div>
           <div class="fb" style="flex:1;border-color:var(--c-rose);background:#fff1f2"><div class="fl">RERANKER</div><div class="fv">精排 + 预算截断</div></div>
         </div>
@@ -710,33 +677,34 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
   </div>
 
   <!-- Real example trace -->
-  <h3 style="font-size:1rem;margin:20px 0 12px">实际检索追踪：用 Section 4 的"业务感知场景"文档</h3>
+  <h3 style="font-size:1rem;margin:20px 0 12px">实际检索追踪：用 Section 4 的"5G核心网架构概述"文档</h3>
   <div class="tw">
     <table>
       <thead><tr><th>检索器</th><th>匹配过程</th><th>命中的检索单元</th></tr></thead>
       <tbody>
         <tr>
-          <td><strong>FTS5 BM25</strong></td>
-          <td>查询词"UPF 执行 计费 策略" → FTS5 OR 匹配 → BM25 排序<br>中文 jieba 分词后查询</td>
+            <td><strong>PostgreSQL Lexical</strong></td>
+            <td>查询词"5GC SBA 核心特点" → query understanding 抽取 intent / entity / keyword → PostgreSQL 文本检索主路召回</td>
           <td>
-            <span class="b bb">Seg#4</span> "SMF→PCF→UPF 规则部署"<br>
-            <span class="b bb">Seg#5</span> "UPF 根据 Rule 匹配流量"<br>
-            <span class="b bb">Seg#6</span> "CHF 通知 → 策略切换"
+            <span class="b bb">Seg#3</span> "SBA 采用服务生产者/消费者模式，通过 HTTP/2 接口通信"<br>
+            <span class="b bb">Seg#4</span> "模块化 / 服务发现 / 灵活组合"<br>
+            <span class="b bb">Q#1</span> "5GC服务化架构（SBA）的核心特点是什么？"
           </td>
         </tr>
         <tr>
           <td><strong>Graph Expand</strong></td>
-          <td>从 Seg#4 出发 BFS 遍历关系图（max_depth=2）<br>通过 <code>previous</code> → Seg#3（配置过程）<br>通过 <code>same_section</code> → Seg#5, Seg#6</td>
+          <td>从 Seg#3 出发 BFS 遍历关系图（max_depth=2）<br>通过 <code>section_header_of</code> 挂到 SBA 标题<br>通过 <code>same_parent_section</code> 扩到 SBA 优势列表</td>
           <td>
-            <span class="b bt">Seg#3</span> 补充：FlowFilter/PCCGroup/Rule 配置细节<br>
-            <em>这是关键词检索不会返回的重要上下文</em>
+            <span class="b bt">Seg#2</span> 补充：服务化架构（SBA）章节标题<br>
+            <span class="b bt">Seg#4</span> 补充：模块化 / 服务发现 / 灵活组合<br>
+            <em>这是把“定义”补全为“定义 + 关键特点”的上下文链</em>
           </td>
         </tr>
         <tr>
-          <td><strong>Embedding</strong> <span class="b br">v1.2</span></td>
-          <td>BGE-M3 向量相似度查询 → cosine match</td>
+            <td><strong>Dense Vector</strong></td>
+            <td>query embedding → <code>pgvector</code> 相似度查询。当前已接入主链，但大规模性能和策略仍在继续收敛</td>
           <td>
-            补充：其他文档中关于 UPF 计费功能的通用说明<br>
+            补充：其他文档中关于 5GC 服务化、NF 解耦、云原生部署的相近说明<br>
             <em>跨文档语义关联</em>
           </td>
         </tr>
@@ -744,29 +712,69 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
     </table>
   </div>
 
-  <div class="co g">
-    <strong>Serving 铁律：</strong>不直接扫全库，不读取 mining_runtime，不绕过 Release 边界。所有读取必须从 Active Release → Build → Snapshots 开始。这是保证读一致性的核心约束。
+  <div class="card" style="margin-top:16px;border-left:3px solid var(--c-blue)">
+    <h3>Agent 如何真正使用 KnowledgeBase</h3>
+    <div class="tw" style="margin-top:8px">
+      <table>
+        <thead><tr><th style="width:160px">阶段</th><th>Agent 动作</th><th>KnowledgeBase 输出</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>1. 识别是否需要证据</strong></td>
+            <td>Agent 先判断当前问题是不是云核心网知识问题，而不是纯润色、翻译或通用推理。</td>
+            <td>决定是否调用 <code>POST /api/v1/search</code>，并带上 <code>domain="cloud_core_network"</code>。</td>
+          </tr>
+          <tr>
+            <td><strong>2. 拉取证据包</strong></td>
+            <td>Agent 把用户原问题交给 Serving，而不是自己先脑补答案。</td>
+            <td>返回 <code>query</code>、<code>items</code>、<code>relations</code>、<code>sources</code>、<code>issues</code>、<code>suggestions</code> 等结构化 Evidence Pack。</td>
+          </tr>
+          <tr>
+            <td><strong>3. 做两个内部判断</strong></td>
+            <td>Agent 必须形成 <code>evidence_sufficiency</code> 和 <code>recommended_action</code> 两个判断，而不是拿到片段就直接回答。</td>
+            <td>KnowledgeBase 通过 <code>evidence_role</code>、<code>semantic_role</code>、关系图和溯源信息支持这两个判断。</td>
+          </tr>
+          <tr>
+            <td><strong>4. 选择动作</strong></td>
+            <td>根据证据充足度，选择 <code>answer_now</code> / <code>ask_followup</code> / <code>answer_with_caution</code> / <code>delegate_to_other_skill</code>。</td>
+            <td>KnowledgeBase 不替 Agent 做最终决策，但把决策所需的证据和缺口显式暴露出来。</td>
+          </tr>
+          <tr>
+            <td><strong>5. 把证据带入下游</strong></td>
+            <td>若进入配置生成、故障分析、命令解释等专用 Skill，Agent 要把直接证据、支撑证据和缺口一起交过去。</td>
+            <td>Serving 输出的不是“答案”，而是可流转、可审计、可复用的证据包。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
-</section>
+
+  <div class="co w" style="margin-top:12px">
+    <strong>关键使用原则：</strong>先取证，再回答；证据不足时先追问；推理必须受证据约束。KnowledgeBase 的目标不是让 Agent 少思考，而是让 Agent 的思考建立在可溯源、可审计、可交接的证据之上。
+  </div>
+
+  <div class="co g">
+      <strong>Serving 铁律：</strong>不直接扫全库，不读取 mining_runtime，不绕过 Release 边界。所有读取必须从 Active Release → Build → Snapshots 开始。这是保证读一致性的核心约束。当前真正稳定的价值不只是“能搜”，而是“只消费已发布知识视图”。
+    </div>
+  </section>
 
 <!-- ═══ SECTION 8: LLM Service ═══ -->
 <section class="sec" id="llm">
   <div class="sh">
     <span class="sn">SECTION 08</span>
-    <h2>LLM Service — 统一智能增强层</h2>
-    <p>独立 FastAPI 服务（端口 8900），统一管理所有 LLM 调用。Mining 和 Serving 不直接调用 LLM，通过本服务获取能力。已生产就绪。</p>
+      <h2>LLM Runtime — 统一智能增强层</h2>
+      <p>独立 FastAPI 服务（端口 8900），统一管理所有 LLM 调用。Mining 和 Serving 不直接调用模型，而是通过这个独立运行时获取同步或异步能力。当前已形成稳定底座，但仍在持续工业化收敛。</p>
   </div>
 
   <div class="cg cg2" style="margin-bottom:20px">
     <div class="card" style="border-left:3px solid var(--c-blue)">
       <h3>核心能力</h3>
       <ul style="padding-left:18px;line-height:2">
-        <li><strong>双模式调用：</strong>Mining 异步 submit（批量），Serving 同步 execute（在线）</li>
-        <li><strong>模板引擎：</strong>Jinja2 模板 + JSON Schema 输出校验，模板版本化管理</li>
-        <li><strong>任务生命周期：</strong>queued → running → succeeded / dead_letter，自动重试</li>
-        <li><strong>幂等控制：</strong>idempotency_key 防重复提交</li>
-        <li><strong>全链路审计：</strong>6 张表记录完整的 prompt → attempt → result 链</li>
-        <li><strong>多 Provider：</strong>DeepSeek / OpenAI / 通义千问 / Ollama，可扩展</li>
+          <li><strong>双模式调用：</strong>Mining 异步 submit（批量），Serving 同步 execute（在线）</li>
+          <li><strong>模板系统：</strong><code>string.Template</code> + JSON Schema 输出校验，模板版本化管理</li>
+          <li><strong>任务生命周期：</strong>queued → running → succeeded / dead_letter，自动重试</li>
+          <li><strong>幂等控制：</strong>idempotency_key 防重复提交</li>
+          <li><strong>全链路审计：</strong>task / request / attempt / result / event 完整链路可回溯</li>
+          <li><strong>多 Provider：</strong>chat provider 与 embedding/rerank provider 分层抽象，可扩展</li>
       </ul>
     </div>
     <div class="card" style="border-left:3px solid var(--c-teal)">
@@ -781,7 +789,9 @@ footer{padding:48px 0;text-align:center;color:var(--text-3);font-size:.82rem}
             <tr><td>GET</td><td><code>/api/v1/tasks/{id}/result</code></td><td>获取解析结果</td></tr>
             <tr><td>GET</td><td><code>/api/v1/tasks/{id}/attempts</code></td><td>查看所有尝试</td></tr>
             <tr><td>POST</td><td><code>/api/v1/tasks/{id}/cancel</code></td><td>取消任务</td></tr>
-            <tr><td>GET</td><td><code>/dashboard</code></td><td>Web 监控看板</td></tr>
+              <tr><td>POST</td><td><code>/api/v1/models/embeddings</code></td><td>同步 embedding</td></tr>
+              <tr><td>POST</td><td><code>/api/v1/models/rerank</code></td><td>同步 rerank</td></tr>
+              <tr><td>GET</td><td><code>/dashboard</code></td><td>Web 监控看板</td></tr>
           </tbody>
         </table>
       </div>
@@ -815,9 +825,9 @@ result = llm.get_result(task_id)</pre></td>
   </div>
 
   <div class="co">
-    <strong>重试机制：</strong>最大 3 次重试，指数退避（backoff_base^attempt_no，最大 60s）。每次尝试记录 token 用量和延迟。同步超时不失败，任务保持 running 状态由 lease recovery 处理。<strong>79 个测试用例全覆盖。</strong>
-  </div>
-</section>
+      <strong>当前实现口径：</strong>LLM Runtime 使用独立 SQLite WAL 任务面保存队列和审计数据；同步路径用于在线调用，异步路径用于批量增强。下一步重点不是再堆 endpoint，而是继续加强模板治理、Provider 运营能力和 SLA 监控。
+    </div>
+  </section>
 <!-- ═══ SECTION 9: Build/Release 生命周期 ═══ -->
 <section class="sec" id="lifecycle">
   <div class="sh">
@@ -920,6 +930,33 @@ result = llm.get_result(task_id)</pre></td>
 
   <div class="co" style="border-color:var(--c-rose);background:#fff1f2">
     <strong>核心愿景：</strong>v1.1 解决了"如何把文档变成可检索的知识"。v1.2 要解决"如何让知识体系持续演化——自动积累高质量内容、淘汰过时内容、检测矛盾内容、理解段间深层语义"。
+  </div>
+
+  <div class="card" style="margin-top:16px;border-left:3px solid var(--c-teal)">
+    <h3>最终使用形态：Knowledge Skill Protocol</h3>
+    <p style="margin-bottom:12px">最终不是“Agent 直接把问题扔给一个搜索接口”，而是形成一套稳定的 Skill 协议：KnowledgeBase 负责产出证据包，Agent 负责基于证据做动作选择，专用 Skill 负责执行更窄、更深的领域工作。</p>
+    <div class="tw" style="margin-top:0">
+      <table>
+        <thead><tr><th>层级</th><th>职责</th><th>目标态要求</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>KnowledgeBase</strong></td>
+            <td>理解查询、检索证据、返回结构化 Evidence Pack、暴露缺口与建议追问。</td>
+            <td>证据角色、质量提示、scope 约束、relations、sources 全部标准化。</td>
+          </tr>
+          <tr>
+            <td><strong>Agent Orchestrator</strong></td>
+            <td>判断证据是否足够，决定是回答、追问、谨慎回答，还是转交其他 Skill。</td>
+            <td>形成统一的 <code>evidence_sufficiency</code> / <code>recommended_action</code> 决策协议。</td>
+          </tr>
+          <tr>
+            <td><strong>Domain Skill</strong></td>
+            <td>消费证据包，执行配置解释、排障分析、影响判断、命令生成等更具体任务。</td>
+            <td>所有高风险输出都必须绑定到上游证据，而不是脱离证据自由生成。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- Innovation 1: Five-Layer Ontology -->
@@ -1073,8 +1110,8 @@ result = llm.get_result(task_id)</pre></td>
         <tr>
           <td class="ct-dim">文档解析</td>
           <td class="ct-cur">Markdown / PlainText 解析器<br>SectionNode 树结构</td>
-          <td class="ct-tgt">+ DOCX/PDF 解析器<br>+ HTML 表格结构提取</td>
-          <td><span class="ct-done">已完成</span></td>
+          <td class="ct-tgt">+ HTML / DOCX / PDF 正文解析<br>+ 跨格式统一结构抽取</td>
+          <td><span class="ct-wip">进行中</span></td>
         </tr>
         <tr>
           <td class="ct-dim">内容分段</td>
@@ -1084,8 +1121,8 @@ result = llm.get_result(task_id)</pre></td>
         </tr>
         <tr>
           <td class="ct-dim">实体提取</td>
-          <td class="ct-cur">规则引擎（正则匹配）<br>单文档级实体卡片</td>
-          <td class="ct-tgt">+ LLM 批量增强<br>+ 跨文档实体合并<br>+ 三层候选词治理</td>
+          <td class="ct-cur">规则引擎 + 可选 LLM enrich<br>单文档级实体卡片</td>
+          <td class="ct-tgt">+ 跨文档实体合并<br>+ 更正式的质量门与候选治理</td>
           <td><span class="ct-wip">进行中</span></td>
         </tr>
         <tr>
@@ -1096,20 +1133,20 @@ result = llm.get_result(task_id)</pre></td>
         </tr>
         <tr>
           <td class="ct-dim">检索单元</td>
-          <td class="ct-cur">3 种类型：raw_text / contextual_text / entity_card<br>FTS5 search_text</td>
-          <td class="ct-tgt"><strong>+ 父子层级分块</strong>（+15.3% hit rate）<br><strong>+ 上下文增强</strong>（-49% 失败率）<br>+ HyDE 假设文档嵌入</td>
-          <td><span class="ct-plan">规划中</span></td>
+          <td class="ct-cur">raw_text / entity_card / table_row / generated_question<br>contextual search_text 可选增强</td>
+          <td class="ct-tgt">+ unit budget 正式治理<br>+ 召回收益与质量门闭环</td>
+          <td><span class="ct-wip">进行中</span></td>
         </tr>
         <tr>
           <td class="ct-dim">向量检索</td>
-          <td class="ct-cur">Schema 已预留（embedding 表）<br>暂未写入向量数据</td>
-          <td class="ct-tgt">BGE-M3 多语言 embedding<br>+ cosine 语义匹配</td>
-          <td><span class="ct-plan">规划中</span></td>
+          <td class="ct-cur">向量召回已接入 Serving 主链<br>PostgreSQL + pgvector</td>
+          <td class="ct-tgt">+ 更强 ANN / 规模化策略<br>+ 质量评估闭环</td>
+          <td><span class="ct-wip">进行中</span></td>
         </tr>
         <tr>
           <td class="ct-dim">全文检索</td>
-          <td class="ct-cur">FTS5 + BM25 排序<br>中文 jieba 分词</td>
-          <td class="ct-tgt">+ jieba 预分词 + 空格连接优化<br>+ FTS5 分词器增强</td>
+          <td class="ct-cur">PostgreSQL 文本检索主路<br>Serving 与发布视图已打通</td>
+          <td class="ct-tgt">+ scope/filter 深下推<br>+ route policy 评估化</td>
           <td><span class="ct-done">已完成</span></td>
         </tr>
         <tr>
@@ -1126,14 +1163,14 @@ result = llm.get_result(task_id)</pre></td>
         </tr>
         <tr>
           <td class="ct-dim">LLM 服务</td>
-          <td class="ct-cur">FastAPI 8900 端口<br>同步/异步双模式 + 79 个测试<br>多 Provider 支持</td>
-          <td class="ct-tgt">模板库扩充（enrich/planner/...）<br>+ 批量语义优化</td>
+          <td class="ct-cur">FastAPI 8900 端口<br>同步 execute + 异步 tasks<br>独立 SQLite WAL 审计面</td>
+          <td class="ct-tgt">模板治理、Provider 运营能力<br>+ SLA / 监控 / 多实例化</td>
           <td><span class="ct-done">已完成</span></td>
         </tr>
         <tr>
           <td class="ct-dim">Build/Release</td>
           <td class="ct-cur">完整生命周期管理<br>full + incremental 双模式<br>共享快照去重</td>
-          <td class="ct-tgt">+ REMOVE 语义<br>+ 多 channel（dev/staging/prod）<br>+ 回滚 API</td>
+          <td class="ct-tgt">+ 质量等级发布<br>+ channel 治理<br>+ 回滚运营能力</td>
           <td><span class="ct-done">已完成</span></td>
         </tr>
         <tr>
@@ -1153,13 +1190,13 @@ result = llm.get_result(task_id)</pre></td>
   </div>
 
   <div class="co g">
-    <strong>架构优势：</strong>v1.1 已建立正确的骨干架构（三库分离、共享快照、Build/Release 生命周期、LLM 服务合同）。v1.2 的所有增强都是在此基础上的增量演进，不需要推翻重来。语篇关系、五层本体、自治演化等创新能力正是这个架构能够承载的。
+    <strong>架构优势：</strong>当前系统最重要的不是某一项算法，而是边界已经对了：Mining 生产、Serving 消费、LLM Runtime 增强，且通过 build / release 与独立运行时完成解耦。后续增强应继续沿这条骨架增量演进，而不是重新推翻。
   </div>
 </section>
 
 <footer>
-  <div>CoreMasterKB v1.2 Architecture — Internal Technical Document</div>
-  <div style="margin-top:4px">Generated 2026-04-22</div>
+  <div>KnowledgeBase Architecture — Internal Technical Document</div>
+  <div style="margin-top:4px">Updated 2026-05-07</div>
 </footer>
 </div>
 </body>

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_mining.mining.models import (
+from knowledge_mining.mining.contracts.models import (
     DocumentProfile,
     RawSegmentData,
 )
@@ -31,7 +31,7 @@ Content paragraph two has enough text for question generation testing.
 class TestSourceRefsJson:
     def test_raw_segment_ids_in_source_refs(self):
         """source_refs_json should contain raw_segment_ids when seg_id is provided."""
-        from knowledge_mining.mining.retrieval_units import _build_source_refs
+        from knowledge_mining.mining.stages.retrieval_units import _build_source_refs
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -47,7 +47,7 @@ class TestSourceRefsJson:
 
     def test_no_raw_segment_ids_when_no_seg_id(self):
         """source_refs_json should have empty raw_segment_ids when seg_id is None."""
-        from knowledge_mining.mining.retrieval_units import _build_source_refs
+        from knowledge_mining.mining.stages.retrieval_units import _build_source_refs
 
         seg = RawSegmentData(document_key="doc:/test.md", segment_index=1)
         refs = _build_source_refs(seg)
@@ -56,9 +56,9 @@ class TestSourceRefsJson:
 
     def test_raw_text_unit_source_refs_in_pipeline(self, md_content):
         """Raw text units built through pipeline should have raw_segment_ids."""
-        from knowledge_mining.mining.structure import parse_structure
-        from knowledge_mining.mining.segmentation import segment_document
-        from knowledge_mining.mining.retrieval_units import build_retrieval_units
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
 
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
@@ -77,7 +77,7 @@ class TestSourceRefsJson:
 class TestLlmResultRefsJson:
     def test_generated_question_refs_with_task_id(self):
         """Generated question unit should include task_id in llm_result_refs_json."""
-        from knowledge_mining.mining.retrieval_units import _make_generated_question_unit
+        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -94,7 +94,7 @@ class TestLlmResultRefsJson:
 
     def test_generated_question_refs_without_task_id(self):
         """Generated question unit without task_id should only have basic fields."""
-        from knowledge_mining.mining.retrieval_units import _make_generated_question_unit
+        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -109,7 +109,7 @@ class TestLlmResultRefsJson:
 
     def test_raw_text_unit_with_llm_context_provenance(self):
         """Raw text unit with LLM context should include provenance in llm_result_refs_json."""
-        from knowledge_mining.mining.retrieval_units import _make_raw_text_unit
+        from knowledge_mining.mining.stages.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -130,14 +130,20 @@ class TestLlmResultRefsJson:
 
     def test_db_roundtrip_source_refs(self):
         """Source refs with raw_segment_ids should survive DB roundtrip."""
-        import tempfile
-        from knowledge_mining.mining.db import AssetCoreDB
+        from knowledge_mining.mining.infra.db import AssetCoreDB
+        from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+        from knowledge_mining.mining.infra.pg_schema import ensure_schema
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
 
-        tmp = tempfile.mkdtemp()
+        cfg = MiningDbConfig()
+        ensure_schema(cfg)
+        pool = ConnectionPool(
+            cfg.conninfo, min_size=1, max_size=2, open=True,
+            kwargs={"row_factory": dict_row},
+        )
+        db = AssetCoreDB(pool)
         try:
-            db = AssetCoreDB(Path(tmp) / "test.sqlite")
-            db.open()
-
             db.upsert_snapshot("snap-1", "nh", "rh", "text/markdown")
             db.insert_retrieval_unit(
                 unit_id="ru-1",
@@ -155,10 +161,9 @@ class TestLlmResultRefsJson:
 
             units = db.get_retrieval_units_by_snapshot("snap-1")
             assert len(units) == 1
-            refs = json.loads(units[0]["source_refs_json"])
+            refs = units[0]["source_refs_json"]
+            if isinstance(refs, str):
+                refs = json.loads(refs)
             assert refs["raw_segment_ids"] == ["seg-uuid-123"]
-
-            db.close()
         finally:
-            import shutil
-            shutil.rmtree(tmp)
+            db.close()

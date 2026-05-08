@@ -1,7 +1,7 @@
 """LLMReranker — LLM-based listwise reranking.
 
-Calls LLMRuntimeClient with a listwise prompt: query + top-N candidates
-→ relevance ranking. Falls back to ScoreReranker when LLM is unavailable.
+Calls ServingLlmClient with a listwise prompt: query + top-N candidates
+→ relevance ranking. Falls back gracefully when LLM is unavailable.
 """
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import logging
 from typing import Any
 
 from agent_serving.serving.schemas.models import (
-    QueryPlan,
     QueryUnderstanding,
     RetrievalCandidate,
 )
@@ -26,7 +25,6 @@ class LLMReranker:
     async def rerank(
         self,
         candidates: list[RetrievalCandidate],
-        plan: QueryPlan,
         understanding: QueryUnderstanding | None = None,
     ) -> list[RetrievalCandidate] | None:
         """Rerank candidates via LLM listwise judgment."""
@@ -34,7 +32,7 @@ class LLMReranker:
             return None
 
         try:
-            return await self._try_llm_rerank(candidates, plan, understanding)
+            return await self._try_llm_rerank(candidates, understanding)
         except Exception:
             logger.warning("LLM rerank failed", exc_info=True)
             return None
@@ -42,11 +40,9 @@ class LLMReranker:
     async def _try_llm_rerank(
         self,
         candidates: list[RetrievalCandidate],
-        plan: QueryPlan,
         understanding: QueryUnderstanding | None,
     ) -> list[RetrievalCandidate]:
         """Execute LLM reranking."""
-        # Build candidate list for prompt (top-N, typically 20)
         top_n = candidates[:20]
         items_text = []
         for i, c in enumerate(top_n):
@@ -54,7 +50,7 @@ class LLMReranker:
             title = c.metadata.get("title", "")
             items_text.append(f"[{i}] (score={c.score:.3f}) {title}: {text_preview}")
 
-        query = understanding.original_query if understanding else " ".join(plan.keywords)
+        query = understanding.original_query if understanding else ""
 
         result = await self._llm.execute(
             pipeline_stage="reranker",
@@ -67,7 +63,9 @@ class LLMReranker:
             expected_output_type="json_object",
         )
 
-        # Execute endpoint returns {task_id, status, result: {parsed_output, ...}}
+        if not result:
+            raise ValueError("Empty LLM rerank response")
+
         inner = result.get("result", result) if isinstance(result, dict) else {}
         parsed = inner.get("parsed_output", {})
         if not parsed:
@@ -77,7 +75,6 @@ class LLMReranker:
         if not ranking:
             raise ValueError("No ranking in LLM rerank response")
 
-        # Reorder candidates based on LLM ranking
         indexed = {i: c for i, c in enumerate(top_n)}
         reordered: list[RetrievalCandidate] = []
 
@@ -88,11 +85,9 @@ class LLMReranker:
                 new_score = item.get("score", c.score) if isinstance(item, dict) else c.score
                 reordered.append(c.model_copy(update={"score": float(new_score)}))
 
-        # Append remaining candidates not ranked by LLM
         for c in indexed.values():
             reordered.append(c)
 
-        # Add remaining candidates beyond top-N
         reordered.extend(candidates[20:])
 
         return reordered

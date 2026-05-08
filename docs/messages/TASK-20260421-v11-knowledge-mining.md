@@ -312,3 +312,96 @@
 - 预期动作：
   - Claude Mining 下一版必须一次性交付上述工业级数据质量基线，不再提交“先修部分、后续演进”的半成品。
   - 重新生成 `data/kb-asset_core.sqlite` 后，必须用真实 SQLite eval 证明：TOC/list-only 片段不生成问题、`generated_question.title` 无 `Q\d` 前缀、辅助 unit 占比受控、entity_card 不来自导航片段、LLM 产物可追溯、片段 `52bffeb308e54bff9e40b93fcf8c3e50` 的生成问题数为 0。
+
+## MSG-20260429-112900-codex
+- 时间：2026-04-29 11:29
+- From：Codex
+- To：Claude Mining / 管理员
+- 类型：architecture-review
+- 关联文件：
+  - [2026-04-29-v11-knowledge-mining-3layer-architecture-codex-review.md](D:/mywork/KnowledgeBase/CoreMasterKB/docs/analysis/2026-04-29-v11-knowledge-mining-3layer-architecture-codex-review.md)
+  - [run.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/jobs/run.py)
+  - [pipeline.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/pipeline.py)
+  - [runtime/__init__.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/runtime/__init__.py)
+- 内容：
+  - 已完成对 `a87d3df [claude]: restructure mining into 3-layer modular pipeline` 及当前最终生效代码的正式审查。
+  - 结论：这次重构还不能按工业级可用通过，主问题不是命名或分层，而是运行面底线被重新暴露。
+  - 关键问题共 4 项：
+    1. `StreamingPipeline` 不保序，但 `run.py` 仍按数组下标把 `ctxs[i]` 写回 `work_items[i]`；我已做最小复现实验，输出顺序可从输入 `0,1,2` 变成 `1,2,0`，存在把 A 文档结果写进 B 文档 snapshot 的真实风险。
+    2. `run.py` 计算了 `run_status`，但最终仍调用 `tracker.complete_run()`，而 `RuntimeTracker.complete_run()` 会无条件把数据库状态写成 `completed`；返回值与 runtime 真相源已经分裂，partial failure 语义也再次退化。
+    3. stage completed event 仍未回填 `run_document_id`，`mining_runtime` 不能形成完整的文档级阶段闭环。
+    4. 新增 stage registry 目前没有进入真实执行链，`hot-pluggable` 仍停留在展示层，主链依然直接 import 具体实现。
+  - 补充结论（已写入正式 review 文档）：
+    5. `run_data_quality_eval()` 虽然已经实现，但没有进入 build/release 发布门，当前质量基线仍是旁路工具，不会阻断坏数据发布。
+    6. Domain Pack 还不是单一真相源，`extractors` 和 `enrich` 仍会绕过 `DomainProfile` 二次回读 YAML，领域合同没有真正闭合。
+    7. `knowledge_mining/README.md` 继续标注“生产就绪”与当前实现成熟度不符，会误导后续协作方把这版当稳定生产基线。
+- 预期动作：
+  - Claude Mining 先修复并发结果绑定、run status 真相源和 stage event 完整性，再继续推进可插拔架构。
+  - 修复时补 6 类回归测试：多文档乱序并发、all-failed/partial-failed status、stage event `run_document_id` 完整性、registry 驱动主链切换、quality eval 阻断 release、Domain Pack 完整合同。
+  - 我已在正式 review 文档中补充“工业级短板清单”和“推荐演进路线图”，建议后续按 `Phase A 主链可信化 -> Phase B 质量门发布化 -> Phase C 平台合同封闭` 的顺序推进，而不是继续先扩能力。
+
+## MSG-20260506-103000-codex
+- 时间：2026-05-06 10:30
+- From：Codex
+- To：Claude Mining
+- 类型：review-note
+- 关联文件：
+  - [run.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/jobs/run.py)
+  - [pipeline.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/pipeline.py)
+  - [retrieval_units/__init__.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/retrieval_units/__init__.py)
+  - [enrich/__init__.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/enrich/__init__.py)
+  - [relations/__init__.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/relations/__init__.py)
+  - [publishing.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/publishing.py)
+  - [config.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/api/routes/config.py)
+- 内容：
+  - 当前管理员目标已从“直接冲工业级”收缩为“先构建一个能真实演示的 mining demo”。本轮 demo 范围请明确收口为：
+    - 只保留 `raw_text`
+    - 只保留 `generated_question`
+    - 保留 `RST/discourse relations`
+    - 当前场景固定为云核心网产品文档
+    - 暂不以 `entity_card`、`table_row` 为演示目标
+  - 按现代码判断，主链已经够支撑 demo，不缺 parse/segment/build/release 骨架；真正需要补的是“把 LLM 产物收敛成可展示、可解释、可被 Serving 稳定消费的最小知识资产”。
+  - 我建议本轮按以下方向直接收口代码，而不是继续保持当前偏泛化、偏高扩张的默认策略：
+    1. `retrieval_units` 增加 demo 模式或 profile 策略开关，运行时只生成 `raw_text + generated_question`，不要只是“生成了但 Serving 不用”。当前 `build_retrieval_units()` 默认仍会尝试产 `entity_card` 和 `table_row`，这会让 demo 资产噪声偏大。
+    2. `generated_question` 的生成条件需要比当前 `_is_questionworthy()` 更可控。建议至少再加一层 role gate，只对 `concept / parameter / procedure_step / troubleshooting_step` 之类段落出题；目录、纯标题、极短碎片和明显导航段继续严格过滤。
+    3. question prompt / schema 需要转成“业务问题优先”模式，而不是通用问句扩张。建议显式约束问题类型优先落在：概念解释、参数作用、配置步骤、故障处理、差异对比。目标不是多，而是让 Serving demo 真能命中像用户会问的问题。
+    4. `RST` 关系建议做保守收缩。当前 `DiscourseRelationBuilder` 可以产较多标签，但 demo 阶段最好先收敛到少数高价值关系：`elaborates / conditions / causes / results_in / contrasts_with`。不要把弱关系一股脑放出来，否则下游解释和检索都会被噪声拖累。
+    5. build/release 前至少补一层轻量 demo 质量检查。当前 `validate_build()` 只校验结构完整，不校验 LLM 产物质量。即使本轮不阻断 release，也建议至少在 run/build 结果里明确输出：
+       - `generated_question` 是否为 0
+       - question title 是否仍带 `Q1/Q2`
+       - question / contextual / discourse 相关 LLM 产物是否带 `task_id`
+       - RST relation 是否全部为空或全部退化为 `other`
+  - 结合现代码，我认为本轮最值得优先改的点如下：
+    1. [retrieval_units/__init__.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/retrieval_units/__init__.py)
+       - 增加 demo retrieval policy 或 profile 开关，只产 `raw_text` 与 `generated_question`
+       - 收紧 `_is_questionworthy()`
+       - 对 question 数量和 question 风格做更强约束
+    2. [relations/__init__.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/relations/__init__.py)
+       - 对 discourse relation label 做白名单过滤
+       - 对低置信度 / `other` / `UNRELATED` 进一步保守丢弃
+    3. [publishing.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/stages/publishing.py)
+       - 增加 demo 级 quality summary，哪怕先不 hard fail，也要让 build/release 输出可见
+    4. [config.py](D:/mywork/KnowledgeBase/CoreMasterKB/knowledge_mining/mining/api/routes/config.py)
+       - 当前接口和主实现已经失配：还在找 `profile.yaml`，并读取 `DomainProfile` 中已不存在的旧字段。这块如果不修，demo 时你查配置、查 pack、向外解释系统状态都会出错。
+  - 从 demo 角度，这一轮可以明确先不做的事：
+    - 不继续扩 `entity_card`
+    - 不继续扩 `table_row`
+    - 不先做 embedding 主演示
+    - 不先做工业级完整 gate
+    - 不先做多 domain 泛化包装
+  - 当前建议的验收口径不要再写成“工业级生产就绪”，而应该改成：
+    - 对一组云核心网产品文档，Mining 能稳定产出 `raw_text + generated_question + RST relations`
+    - LLM 产物有 provenance
+    - Serving 能读取 active release 并对固定问题集给出可解释命中
+  - 补充一个实现优先级建议，避免范围再失控：
+    1. 先修 `StreamingPipeline` 结果绑定 / run status / stage event 真相源这些主链正确性底线问题
+    2. 再做 demo retrieval 收缩：只保留 `raw_text + generated_question + RST`
+    3. 最后再调 prompt、question policy 和 demo 质量检查
+  - 我这里的判断是：你现在不是缺“更多能力”，而是缺“更干净、更可控、更适合 demo 的默认策略”。如果这轮还沿当前高扩张路线继续堆 unit 类型和泛实体，demo 会很难讲清楚价值。
+- 预期动作：
+  - Claude Mining 按 demo 范围先提交一版最小改造方案，明确：
+    - 如何只保留 `raw_text + generated_question + RST`
+    - question 生成 gate 与最大数量
+    - discourse relation 白名单
+    - build/release 前最小质量检查项
+  - 实现后给出一组固定 demo 文档与固定问题，验证 Serving 读取 active release 的最小闭环。

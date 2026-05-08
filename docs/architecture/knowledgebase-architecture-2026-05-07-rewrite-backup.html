@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KnowledgeBase 技术架构</title>
+<style>
+:root{
+  --bg:#f5f1ea;
+  --bg-soft:#fbf8f3;
+  --paper:#ffffff;
+  --ink:#1d2433;
+  --sub:#5c677a;
+  --line:#ddd5ca;
+  --line-strong:#cfc4b4;
+  --blue:#1f5eff;
+  --teal:#0f8b8d;
+  --amber:#b86a0f;
+  --violet:#5c39d6;
+  --red:#b42318;
+  --green:#117a52;
+  --shadow:0 10px 30px rgba(27,39,63,.08);
+  --radius:16px;
+  --mono:"Cascadia Code","JetBrains Mono","Fira Code",monospace;
+  --serif:"Georgia","Noto Serif SC",serif;
+  --sans:"Segoe UI","Noto Sans SC",system-ui,sans-serif;
+  --max:1240px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:var(--sans);
+  background:
+    radial-gradient(circle at top right, rgba(31,94,255,.08), transparent 26%),
+    radial-gradient(circle at left 20%, rgba(15,139,141,.08), transparent 24%),
+    linear-gradient(180deg, #f8f5ef 0%, var(--bg) 100%);
+  color:var(--ink);
+  line-height:1.7;
+}
+a{color:inherit}
+code{
+  font-family:var(--mono);
+  font-size:.9em;
+  background:#f0ece5;
+  padding:2px 6px;
+  border-radius:6px;
+}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 24px}
+nav{
+  position:sticky;
+  top:0;
+  z-index:40;
+  backdrop-filter:blur(14px);
+  background:rgba(245,241,234,.82);
+  border-bottom:1px solid rgba(207,196,180,.7);
+}
+.nav-inner{
+  max-width:var(--max);
+  margin:0 auto;
+  padding:10px 24px;
+  display:flex;
+  gap:18px;
+  align-items:center;
+  overflow:auto;
+  white-space:nowrap;
+}
+.brand{
+  font-family:var(--mono);
+  font-size:.86rem;
+  font-weight:700;
+  color:var(--blue);
+}
+.nav-links{
+  display:flex;
+  gap:10px;
+  list-style:none;
+  padding:0;
+  margin:0;
+}
+.nav-links a{
+  text-decoration:none;
+  color:var(--sub);
+  font-size:.84rem;
+  padding:6px 10px;
+  border-radius:999px;
+}
+.nav-links a:hover{background:rgba(31,94,255,.08);color:var(--blue)}
+.hero{
+  padding:86px 0 52px;
+  border-bottom:1px solid var(--line);
+}
+.eyebrow{
+  display:inline-block;
+  padding:5px 11px;
+  border-radius:999px;
+  background:rgba(31,94,255,.1);
+  color:var(--blue);
+  font-family:var(--mono);
+  font-size:.76rem;
+  font-weight:700;
+  letter-spacing:.04em;
+  margin-bottom:18px;
+}
+h1{
+  margin:0 0 14px;
+  font-family:var(--serif);
+  font-size:clamp(2.2rem, 5vw, 4rem);
+  line-height:1.08;
+  letter-spacing:-.03em;
+  max-width:980px;
+}
+.hero p{
+  max-width:860px;
+  margin:0;
+  color:var(--sub);
+  font-size:1.08rem;
+}
+.hero-grid{
+  margin-top:28px;
+  display:grid;
+  grid-template-columns:2.2fr 1fr;
+  gap:18px;
+}
+.section{
+  padding:56px 0;
+  border-bottom:1px solid var(--line);
+}
+.section-head{
+  margin-bottom:24px;
+}
+.section-no{
+  display:block;
+  font-family:var(--mono);
+  font-size:.78rem;
+  color:var(--blue);
+  letter-spacing:.12em;
+  margin-bottom:6px;
+  font-weight:700;
+}
+h2{
+  margin:0 0 8px;
+  font-family:var(--serif);
+  font-size:1.85rem;
+}
+.section-head p{
+  margin:0;
+  color:var(--sub);
+  max-width:860px;
+}
+.card{
+  background:rgba(255,255,255,.88);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+.panel{padding:22px}
+.grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.mini{
+  padding:18px;
+  background:rgba(255,255,255,.72);
+  border:1px solid var(--line);
+  border-radius:14px;
+}
+.mini h3,.card h3{margin:0 0 8px;font-size:1.02rem}
+.mini p,.card p,.card li,.panel li,.table td,.table th{font-size:.93rem}
+.muted{color:var(--sub)}
+.kpis{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:14px;
+}
+.kpi{
+  padding:16px 18px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(249,246,240,.92));
+}
+.kpi strong{
+  display:block;
+  font-family:var(--serif);
+  font-size:1.8rem;
+  line-height:1;
+  margin-bottom:6px;
+}
+.kpi span{font-size:.82rem;color:var(--sub)}
+.callout{
+  padding:18px 20px;
+  border-left:4px solid var(--blue);
+  border-radius:0 14px 14px 0;
+  background:rgba(31,94,255,.08);
+  color:#2a3550;
+}
+.callout.warn{
+  border-left-color:var(--amber);
+  background:rgba(184,106,15,.11);
+}
+.callout.ok{
+  border-left-color:var(--green);
+  background:rgba(17,122,82,.11);
+}
+.diagram{
+  padding:26px;
+  border-radius:22px;
+  border:1px solid var(--line-strong);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.92), rgba(248,244,236,.95));
+  overflow:auto;
+}
+.diagram-title{
+  font-family:var(--mono);
+  font-size:.8rem;
+  color:var(--sub);
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  margin-bottom:16px;
+}
+.system-flow{
+  display:grid;
+  grid-template-columns:1fr 110px 1fr 110px 1fr;
+  gap:12px;
+  align-items:center;
+  min-width:1000px;
+}
+.pillar{
+  padding:22px 20px;
+  min-height:280px;
+  border-radius:18px;
+  border:1px solid var(--line);
+  background:var(--paper);
+  position:relative;
+}
+.pillar::before{
+  content:"";
+  position:absolute;
+  inset:0 0 auto 0;
+  height:5px;
+  border-radius:18px 18px 0 0;
+}
+.pillar.blue::before{background:var(--blue)}
+.pillar.teal::before{background:var(--teal)}
+.pillar.violet::before{background:var(--violet)}
+.pillar h3{
+  margin:0 0 8px;
+  font-size:1.1rem;
+}
+.tag{
+  display:inline-block;
+  padding:3px 8px;
+  border-radius:999px;
+  font-family:var(--mono);
+  font-size:.72rem;
+  font-weight:700;
+  margin-bottom:10px;
+}
+.tag.blue{background:rgba(31,94,255,.1);color:var(--blue)}
+.tag.teal{background:rgba(15,139,141,.12);color:var(--teal)}
+.tag.violet{background:rgba(92,57,214,.1);color:var(--violet)}
+.pillar ul{
+  margin:10px 0 0;
+  padding-left:18px;
+}
+.bridge{
+  text-align:center;
+  color:var(--sub);
+  font-size:.82rem;
+}
+.bridge .arrow{
+  font-size:2rem;
+  color:var(--line-strong);
+  line-height:1;
+  display:block;
+  margin:6px 0;
+}
+.bridge strong{
+  display:block;
+  color:var(--ink);
+  font-size:.85rem;
+  margin-bottom:4px;
+}
+.flow-list{
+  display:grid;
+  gap:10px;
+  margin-top:12px;
+}
+.flow-step{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--bg-soft);
+}
+.flow-step b{
+  display:inline-flex;
+  width:28px;
+  height:28px;
+  border-radius:50%;
+  align-items:center;
+  justify-content:center;
+  font-family:var(--mono);
+  font-size:.8rem;
+  flex:0 0 28px;
+}
+.flow-step.blue b{background:rgba(31,94,255,.12);color:var(--blue)}
+.flow-step.teal b{background:rgba(15,139,141,.12);color:var(--teal)}
+.flow-step.violet b{background:rgba(92,57,214,.12);color:var(--violet)}
+.table-wrap{
+  overflow:auto;
+  border:1px solid var(--line);
+  border-radius:18px;
+  background:rgba(255,255,255,.9);
+  box-shadow:var(--shadow);
+}
+.table{
+  width:100%;
+  border-collapse:collapse;
+}
+.table th{
+  text-align:left;
+  padding:14px 16px;
+  background:#f3eee6;
+  color:#41506a;
+  font-size:.82rem;
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.table td{
+  padding:14px 16px;
+  border-top:1px solid var(--line);
+  vertical-align:top;
+}
+.status{
+  display:inline-block;
+  padding:4px 9px;
+  border-radius:999px;
+  font-size:.74rem;
+  font-weight:700;
+}
+.done{background:rgba(17,122,82,.12);color:var(--green)}
+.prog{background:rgba(184,106,15,.12);color:var(--amber)}
+.plan{background:rgba(31,94,255,.1);color:var(--blue)}
+.risk{background:rgba(180,35,24,.1);color:var(--red)}
+.foot{
+  padding:42px 0 56px;
+  text-align:center;
+  color:var(--sub);
+  font-size:.82rem;
+}
+@media (max-width:1100px){
+  .hero-grid,.grid-2,.grid-3,.kpis{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  .hero{padding:56px 0 38px}
+  .section{padding:38px 0}
+  h2{font-size:1.5rem}
+  .wrap{padding:0 18px}
+  .nav-inner{padding:10px 18px}
+}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nav-inner">
+    <span class="brand">KnowledgeBase</span>
+    <ul class="nav-links">
+      <li><a href="#positioning">定位</a></li>
+      <li><a href="#architecture">三部分架构</a></li>
+      <li><a href="#serving">Serving</a></li>
+      <li><a href="#mining">Mining</a></li>
+      <li><a href="#llm">LLM Runtime</a></li>
+      <li><a href="#shared">共享底座</a></li>
+      <li><a href="#roadmap">工业级目标</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div class="wrap">
+  <section class="hero">
+    <span class="eyebrow">2026 ARCHITECTURE UPDATE</span>
+    <h1>KnowledgeBase 是一套面向 Agent 的知识生产、知识发布与智能增强底座</h1>
+    <p>
+      当前系统已经从早期单体式“文档检索思路”演进为三条独立但协同的主链：<strong>Mining</strong> 负责把原始文档转成可发布知识资产，<strong>Serving</strong> 负责把在线问题转成可消费的证据包，<strong>LLM Runtime</strong> 负责提供统一的模板化智能能力、异步队列与审计链路。对外汇报时，KnowledgeBase 不再强调单一演示链路，而强调可持续演进的系统骨架。
+    </p>
+    <div class="hero-grid">
+      <div class="card panel">
+        <h3>这次更新的口径</h3>
+        <p class="muted">
+          文档内容以仓库当前实现为基础重写，不再延续旧版架构文档中“目标态堆叠”的写法。系统名称统一为 <code>KnowledgeBase</code>，整体架构图只保留三大角色之间的交互，不再展开到单个算法节点级别。
+        </p>
+      </div>
+      <div class="kpis">
+        <div class="kpi"><strong>3</strong><span>核心子系统</span></div>
+        <div class="kpi"><strong>2</strong><span>核心数据平面</span></div>
+        <div class="kpi"><strong>1</strong><span>统一 LLM Runtime</span></div>
+        <div class="kpi"><strong>∞</strong><span>后续可扩领域</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="positioning">
+    <div class="section-head">
+      <span class="section-no">SECTION 01</span>
+      <h2>系统定位</h2>
+      <p>KnowledgeBase 不是单纯的文档搜索服务，而是把知识的“生产”“发布”“消费”拆成可独立治理的三个运行面。</p>
+    </div>
+    <div class="grid-3">
+      <div class="mini">
+        <h3>Mining</h3>
+        <p class="muted">从文档目录出发，完成摄取、结构解析、分段、增强、关系构建、检索单元生成、Build/Release 发布。</p>
+      </div>
+      <div class="mini">
+        <h3>Serving</h3>
+        <p class="muted">从在线查询出发，完成问题理解、路由规划、多路召回、融合、重排、ContextPack 组装，面向 Agent 返回可执行证据包。</p>
+      </div>
+      <div class="mini">
+        <h3>LLM Runtime</h3>
+        <p class="muted">作为共享智能能力层，提供模板注册、同步执行、异步队列、幂等、租约恢复、审计链路和 Provider 抽象。</p>
+      </div>
+    </div>
+    <div class="callout ok" style="margin-top:18px">
+      <strong>核心设计原则：</strong>Mining 负责写知识资产，Serving 只消费已发布资产，LLM Runtime 提供跨系统复用的智能执行合同。三者边界清晰，便于独立演进与独立治理。
+    </div>
+  </section>
+
+  <section class="section" id="architecture">
+    <div class="section-head">
+      <span class="section-no">SECTION 02</span>
+      <h2>三部分整体系统架构</h2>
+      <p>这一层只描述三大角色之间的生产关系、发布关系和调用关系，不下沉到具体检索算法或单个 stage 细节。</p>
+    </div>
+    <div class="diagram">
+      <div class="diagram-title">KnowledgeBase System Interaction</div>
+      <div class="system-flow">
+        <div class="pillar blue">
+          <span class="tag blue">PRODUCE</span>
+          <h3>Mining</h3>
+          <p class="muted">知识生产与发布面</p>
+          <ul>
+            <li>读取输入目录与领域配置</li>
+            <li>生成 segments、relations、retrieval units、embeddings</li>
+            <li>组装 build 并激活 release</li>
+            <li>维护 PostgreSQL 知识面中的 <code>asset_core</code> 与 <code>mining_runtime</code> 表族</li>
+          </ul>
+        </div>
+        <div class="bridge">
+          <strong>发布知识资产</strong>
+          <span class="arrow">→</span>
+          <span>active release<br>active snapshots</span>
+        </div>
+        <div class="pillar teal">
+          <span class="tag teal">CONSUME</span>
+          <h3>Serving</h3>
+          <p class="muted">在线检索与证据装配面</p>
+          <ul>
+            <li>只读取 PostgreSQL 知识面中当前 active release 范围内的数据</li>
+            <li>执行 query understanding 与 retrieval orchestration</li>
+            <li>产出面向 Agent 的 ContextPack</li>
+            <li>不直接参与知识写入</li>
+          </ul>
+        </div>
+        <div class="bridge">
+          <strong>统一智能调用</strong>
+          <span class="arrow">↔</span>
+          <span>template<br>queue<br>audit</span>
+        </div>
+        <div class="pillar violet">
+          <span class="tag violet">AUGMENT</span>
+          <h3>LLM Runtime</h3>
+          <p class="muted">共享智能执行面</p>
+          <ul>
+            <li>为 Mining 提供异步增强任务</li>
+            <li>为 Serving 提供同步在线推理</li>
+            <li>统一模板、Provider、重试、审计</li>
+            <li>保持与业务知识库解耦</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="grid-2" style="margin-top:18px">
+      <div class="card panel">
+        <h3>当前真实交互</h3>
+        <div class="flow-list">
+          <div class="flow-step blue"><b>1</b><div>Mining 将文档加工结果写入 PostgreSQL 知识面中的 <code>asset_core</code>，并通过 build/release 选择一组对外可见的快照。</div></div>
+          <div class="flow-step teal"><b>2</b><div>Serving 查询时先解析 active release，再在 active snapshots 范围内执行 BM25、实体召回、向量召回、扩展与组装。</div></div>
+          <div class="flow-step violet"><b>3</b><div>Mining 与 Serving 都可调用 LLM Runtime，但两者调用模式不同：Mining 偏异步批处理，Serving 偏同步在线增强。</div></div>
+        </div>
+      </div>
+      <div class="card panel">
+        <h3>对外汇报时的表达重点</h3>
+        <div class="flow-list">
+          <div class="flow-step blue"><b>A</b><div>先强调 “知识生产” 与 “知识消费” 的严格分离，而不是先讲单个算法。</div></div>
+          <div class="flow-step teal"><b>B</b><div>再强调 Serving 消费的是经过发布控制的知识视图，而不是任意运行中的中间结果。</div></div>
+          <div class="flow-step violet"><b>C</b><div>最后强调 LLM 只是统一增强能力，不侵入知识主存模型，从而保留可替换性与审计能力。</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="serving">
+    <div class="section-head">
+      <span class="section-no">SECTION 03</span>
+      <h2>Serving 当前实现</h2>
+      <p>Serving 已经从早期单路检索演进为可运行的检索编排器，主入口是 FastAPI 的 <code>/api/v1/search</code>，当前代码位于 <code>agent_serving/serving</code>，运行时基于 PostgreSQL、<code>pgvector</code> 与 <code>llm_service</code> 组合。</p>
+    </div>
+    <div class="grid-2">
+      <div class="card panel">
+        <h3>当前主链</h3>
+        <div class="flow-list">
+          <div class="flow-step teal"><b>1</b><div>加载领域配置与请求参数，进行 query understanding，输出意图、关键词、实体、scope 与 evidence need。</div></div>
+          <div class="flow-step teal"><b>2</b><div>生成 retrieval route plan，按意图选择 <code>lexical_bm25</code>、<code>entity_exact</code>、<code>dense_vector</code> 等 route。</div></div>
+          <div class="flow-step teal"><b>3</b><div>解析当前 active release 和 active snapshots，在只读范围内执行多路召回、融合与重排。</div></div>
+          <div class="flow-step teal"><b>4</b><div>下钻 source segment、做 relation expansion，并组装为面向 Agent 的 ContextPack。</div></div>
+        </div>
+      </div>
+      <div class="card panel">
+        <h3>当前已落地的能力</h3>
+        <ul>
+          <li>API 主入口：<code>/api/v1/search</code>，并具备 <code>/health</code> 健康检查。</li>
+          <li>理解层：LLM-first + rule fallback 的 query understanding。</li>
+          <li>召回层：BM25、向量召回、图扩展已接入主链；实体 route 已有实现基础，但仍在收口。</li>
+          <li>排序层：identity/RRF/weighted RRF 融合，级联 rerank。</li>
+          <li>输出层：带 citation、route trace、debug trace 的 ContextPack。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top:18px">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:180px">实现面</th>
+            <th>当前代码口径</th>
+            <th style="width:160px">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>运行边界</td>
+            <td>Serving 不写知识资产，只解析 active release 后读取 PostgreSQL 中的 <code>asset_core</code> 资产，并按 route 决定是否调用 embedding 与 LLM。</td>
+            <td><span class="status done">已稳定成型</span></td>
+          </tr>
+          <tr>
+            <td>接口合同</td>
+            <td><code>SearchRequest</code>、<code>QueryUnderstanding</code>、<code>RetrievalRoutePlan</code>、<code>ContextPack</code> 等模型已在 <code>serving/schemas/models.py</code> 固化。</td>
+            <td><span class="status done">已落地</span></td>
+          </tr>
+          <tr>
+            <td>召回策略</td>
+            <td>多路并发召回已建立，BM25 依赖 PostgreSQL 文本检索，dense 依赖 <code>pgvector</code>；但 filter/scope 仍未深度下推到各 route 的 SQL 或索引策略中。</td>
+            <td><span class="status prog">持续收敛</span></td>
+          </tr>
+          <tr>
+            <td>工业化缺口</td>
+            <td>向量召回仍偏 brute-force，实体召回仍偏 JSON/LIKE 过渡方案，线上 trace 还没有持久化指标系统。</td>
+            <td><span class="status plan">下一阶段</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout" style="margin-top:18px">
+      <strong>汇报口径建议：</strong>Serving 当前最值得强调的，不是“又加了一种检索算法”，而是已经具备了“只消费已发布知识视图的在线编排骨架”。这意味着后续的语义检索、实体索引、重排优化都可以在稳定边界内演进。
+    </div>
+  </section>
+
+  <section class="section" id="mining">
+    <div class="section-head">
+      <span class="section-no">SECTION 04</span>
+      <h2>Mining 当前实现</h2>
+      <p>Mining 当前代码位于 <code>knowledge_mining/mining</code>，主执行入口是 <code>jobs/run.py</code>。它负责把原始文档加工成可发布知识资产，并在 PostgreSQL 知识面上维护 build/release 生命周期。</p>
+    </div>
+    <div class="grid-2">
+      <div class="card panel">
+        <h3>当前主链</h3>
+        <div class="flow-list">
+          <div class="flow-step blue"><b>1</b><div>摄取输入目录，识别 md/txt/html/pdf/doc/docx，并计算原始哈希与归一化哈希。</div></div>
+          <div class="flow-step blue"><b>2</b><div>对已支持格式做 parse 与 segment，再执行 enrich、relations、retrieval units 与 embedding 写入。</div></div>
+          <div class="flow-step blue"><b>3</b><div>通过 shared snapshot 模型复用内容快照，并把文档状态归类为 NEW/UPDATE/SKIP/REMOVE。</div></div>
+          <div class="flow-step blue"><b>4</b><div>组装 build、校验 build、创建并激活 release，使下游 Serving 获得稳定读取视图。</div></div>
+        </div>
+      </div>
+      <div class="card panel">
+        <h3>当前已落地的能力</h3>
+        <ul>
+          <li>双表族分离：<code>asset_core</code> 负责知识资产，<code>mining_runtime</code> 负责运行态记录，当前都落在同一 PostgreSQL 数据面中。</li>
+          <li>共享快照：<code>document</code> / <code>snapshot</code> / <code>link</code> 三层模型已落地。</li>
+          <li>关系层：结构关系、reference relation、可选 discourse relation。</li>
+          <li>检索层资产：<code>raw_text</code>、<code>entity_card</code>、<code>table_row</code>、<code>generated_question</code>。</li>
+          <li>发布层：build/release 生命周期与增量继承逻辑已建立。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top:18px">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:180px">实现面</th>
+            <th>当前代码口径</th>
+            <th style="width:160px">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>数据主模型</td>
+            <td>Build/Release、共享快照、运行态记录和检索资产层都已在主链中真实使用，不再是设计占位。</td>
+            <td><span class="status done">已落地</span></td>
+          </tr>
+          <tr>
+            <td>解析能力</td>
+            <td>当前真正稳定支持的是 markdown / txt；html/pdf/doc/docx 已进入 ingest 识别，但正文解析仍未收口为生产能力。</td>
+            <td><span class="status prog">部分完成</span></td>
+          </tr>
+          <tr>
+            <td>质量治理</td>
+            <td>已有 <code>run_data_quality_eval()</code> 等旁路能力，但 validate_build 仍以结构校验为主，尚未成为正式 release gate。</td>
+            <td><span class="status prog">待提升</span></td>
+          </tr>
+          <tr>
+            <td>工业化缺口</td>
+            <td>运行真相源、自动 resume、领域合同收口、内容质量发布门仍需继续加固，才能形成强约束的知识生产平台。</td>
+            <td><span class="status plan">下一阶段</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn" style="margin-top:18px">
+      <strong>汇报口径建议：</strong>Mining 当前最值得强调的是“知识资产发布面已经建立”，而不是把所有增强能力都描述成已经工业化完成。对外更合适的表述是：底座已成型，质量门与跨格式能力仍在收口。
+    </div>
+  </section>
+
+  <section class="section" id="llm">
+    <div class="section-head">
+      <span class="section-no">SECTION 05</span>
+      <h2>LLM Runtime 当前实现</h2>
+      <p>LLM Runtime 当前代码位于 <code>llm_service</code>，是一个独立 FastAPI 服务，用统一合同承接 Mining 和 Serving 的智能调用需求，并以 SQLite WAL 维护自己的任务与审计存储。</p>
+    </div>
+    <div class="grid-2">
+      <div class="card panel">
+        <h3>当前主链</h3>
+        <div class="flow-list">
+          <div class="flow-step violet"><b>1</b><div>模板通过 <code>/api/v1/templates</code> 注册，支持 <code>string.Template</code> 变量替换与 JSON Schema 约束。</div></div>
+          <div class="flow-step violet"><b>2</b><div>Serving 走同步 <code>/api/v1/execute</code>，直接等待结果；Mining 走异步 <code>/api/v1/tasks</code>，由 Worker 后台执行。</div></div>
+          <div class="flow-step violet"><b>3</b><div>任务进入 SQLite WAL 队列，受幂等、优先级、租约、重试与恢复逻辑管理。</div></div>
+          <div class="flow-step violet"><b>4</b><div>所有调用沉淀为 task / request / attempt / result / event 审计链，并暴露结果查询与 dashboard。</div></div>
+        </div>
+      </div>
+      <div class="card panel">
+        <h3>当前已落地的能力</h3>
+        <ul>
+          <li>双模式接口：<code>/api/v1/execute</code> 与 <code>/api/v1/tasks</code>。</li>
+          <li>扩展接口：<code>/api/v1/models/embeddings</code> 与 <code>/api/v1/models/rerank</code>。</li>
+          <li>模板生命周期：创建、查询、更新、归档。</li>
+          <li>运行控制：幂等键、lease recovery、指数退避重试、任务取消。</li>
+          <li>可观测性：事件流水、attempt 明细、dashboard 页面与统计接口。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top:18px">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:180px">实现面</th>
+            <th>当前代码口径</th>
+            <th style="width:160px">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>服务边界</td>
+            <td>LLM Runtime 已独立于 Mining/Serving 业务代码，统一承接模板化 LLM、embedding、rerank 能力。</td>
+            <td><span class="status done">已落地</span></td>
+          </tr>
+          <tr>
+            <td>执行模型</td>
+            <td>同步执行与后台 Worker 并存，且具备 lease recovery 和幂等控制，已经形成可靠的基础调度骨架。</td>
+            <td><span class="status done">已成型</span></td>
+          </tr>
+          <tr>
+            <td>审计能力</td>
+            <td>任务、请求、尝试、结果、事件五段链路可回溯单次调用输入输出、耗时、tokens 与错误。</td>
+            <td><span class="status done">已落地</span></td>
+          </tr>
+          <tr>
+            <td>工业化缺口</td>
+            <td>后续重点不在“再做一个 endpoint”，而在更强的模板治理、Provider 运营能力、SLA 监控与多实例部署策略。</td>
+            <td><span class="status plan">下一阶段</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout ok" style="margin-top:18px">
+      <strong>汇报口径建议：</strong>LLM Runtime 当前已经可以被描述为一个独立的“智能执行底座”，而不是散落在业务代码中的若干模型调用。它是 KnowledgeBase 未来横向扩展的重要支点。
+    </div>
+  </section>
+
+  <section class="section" id="shared">
+    <div class="section-head">
+      <span class="section-no">SECTION 06</span>
+      <h2>三部分共享的底座能力</h2>
+      <p>KnowledgeBase 的可扩展性不来自单个大模型或单个检索器，而来自清晰的数据边界、发布边界和调用边界。</p>
+    </div>
+    <div class="grid-3">
+      <div class="card panel">
+        <h3>发布边界</h3>
+        <p class="muted">Mining 决定哪些 snapshot 进入 build，哪个 release 变成 active。Serving 永远消费“被发布”的 PostgreSQL 知识视图，而不是消费任意运行中的临时结果。</p>
+      </div>
+      <div class="card panel">
+        <h3>智能边界</h3>
+        <p class="muted">LLM Runtime 统一承接模板、队列、Provider、审计，使 Mining 与 Serving 不需要各自维护独立的智能执行基础设施。</p>
+      </div>
+      <div class="card panel">
+        <h3>领域边界</h3>
+        <p class="muted">两端都已经引入 Domain Pack 概念，但共享合同还需要继续收口，这是从“单项目知识系统”走向“通用知识平台”的关键步骤。</p>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-top:18px">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:180px">共享能力</th>
+            <th>当前状态</th>
+            <th style="width:160px">意义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Shared Snapshot</td>
+            <td>已用于去重与 build 继承，避免同一内容重复存储。</td>
+            <td><span class="status done">成本与一致性</span></td>
+          </tr>
+          <tr>
+            <td>Build / Release</td>
+            <td>已形成生产知识与消费知识之间的中介层。</td>
+            <td><span class="status done">隔离读写路径</span></td>
+          </tr>
+          <tr>
+            <td>Domain Pack</td>
+            <td>Mining 与 Serving 都有领域配置入口，但当前仍未完全统一为单一共享 schema。</td>
+            <td><span class="status prog">平台化关键</span></td>
+          </tr>
+          <tr>
+            <td>质量门</td>
+            <td>局部已具备 eval、trace 与审计，但尚未全部成为 release / routing 的强门禁。</td>
+            <td><span class="status plan">工业化关键</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout" style="margin-top:18px">
+      <strong>当前数据面口径：</strong>Mining 与 Serving 当前共享的是 PostgreSQL 知识数据面；LLM Runtime 维持独立的 SQLite 任务与审计数据面。这样既保证知识主链的一致性，也保证智能调用层可以独立演进。
+    </div>
+  </section>
+
+  <section class="section" id="roadmap">
+    <div class="section-head">
+      <span class="section-no">SECTION 07</span>
+      <h2>从当前实现走向工业级目标</h2>
+      <p>KnowledgeBase 的下一阶段，不是推翻现有架构，而是在现有三部分边界之上，把质量约束、可扩展性与运营能力继续做硬。</p>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:200px">方向</th>
+            <th>当前基线</th>
+            <th>工业级目标</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Mining 质量治理</td>
+            <td>build validate 仍以结构正确性为主。</td>
+            <td>把 data quality eval、unit budget、内容污染检查正式接入 release gate。</td>
+          </tr>
+          <tr>
+            <td>Serving 可扩检索</td>
+            <td>已有多路编排，但 dense/entity 路径仍偏过渡实现。</td>
+            <td>升级为可扩向量检索、正式实体索引、可观测 route policy 与更强线上评估闭环。</td>
+          </tr>
+          <tr>
+            <td>LLM Runtime 运营能力</td>
+            <td>已具备模板、队列、审计、恢复。</td>
+            <td>继续加强模板治理、多 Provider 策略、性能监控、SLA 与横向部署能力。</td>
+          </tr>
+          <tr>
+            <td>共享领域合同</td>
+            <td>两端各自可读 Domain Pack。</td>
+            <td>收口为统一 schema 和统一运行时对象，减少双端口径漂移。</td>
+          </tr>
+          <tr>
+            <td>平台发布治理</td>
+            <td>active release 已建立，但质量等级还不够显式。</td>
+            <td>引入质量分级、channel 策略、灰度与回滚机制，把发布控制从“可发布”提升为“可运营”。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid-2" style="margin-top:18px">
+      <div class="card panel">
+        <h3>当前应该向外界传达的结论</h3>
+        <ul>
+          <li>KnowledgeBase 已经形成 Mining / Serving / LLM Runtime 三部分独立协同的系统骨架。</li>
+          <li>知识生产与知识消费已经通过 build/release 边界解耦。</li>
+          <li>LLM 能力已经抽离为独立运行时，而不是业务代码里的临时调用。</li>
+        </ul>
+      </div>
+      <div class="card panel">
+        <h3>当前不宜夸大的部分</h3>
+        <ul>
+          <li>不要把所有解析格式都表述成已经工业化完成。</li>
+          <li>不要把所有质量评估都表述成已经成为发布门。</li>
+          <li>不要把当前检索增强层表述成已经完成大规模运营级优化。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <div>KnowledgeBase Architecture Update</div>
+    <div style="margin-top:4px">Based on current repository implementation • Updated 2026-05-07</div>
+  </div>
+</div>
+</body>
+</html>

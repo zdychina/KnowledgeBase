@@ -43,7 +43,7 @@ async def run_e2e():
     report_lines.append(f"> 生成时间: {_ts()}")
     report_lines.append(f"> 数据库: `{DB_PATH}`")
     report_lines.append(f"> LLM 服务: `localhost:8900`")
-    report_lines.append(f"> Embedding: Zhipu embedding-3 (2048维)")
+    report_lines.append(f"> Embedding: Zhipu embedding-3 (1024维)")
     report_lines.append(f"> Rerank: Zhipu rerank\n")
     report_lines.append("---\n")
 
@@ -60,7 +60,7 @@ async def run_e2e():
     report_lines.append(f"| 指标 | 值 |")
     report_lines.append(f"|------|-----|")
     report_lines.append(f"| Retrieval Units | {ru_count} |")
-    report_lines.append(f"| Embeddings (2048维) | {emb_count} |")
+    report_lines.append(f"| Embeddings (1024维) | {emb_count} |")
     report_lines.append(f"| 带实体引用的 RU | {entity_count} |")
     report_lines.append("")
 
@@ -100,12 +100,12 @@ async def run_e2e():
     await llm_client.ensure_templates()
 
     # Embedding generator
-    from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
-    embedding_gen = ZhipuEmbeddingGenerator(
+    from agent_serving.serving.infrastructure.embedding import EmbeddingGenerator
+    embedding_gen = EmbeddingGenerator(
         api_key=os.environ.get("EMBEDDING_API_KEY", ""),
         model=os.environ.get("EMBEDDING_MODEL", "embedding-3"),
         base_url=os.environ.get("EMBEDDING_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"),
-        dimensions=int(os.environ.get("EMBEDDING_DIMENSIONS", "2048")),
+        dimensions=int(os.environ.get("EMBEDDING_DIMENSIONS", "1024")),
     )
 
     # Reranker
@@ -133,7 +133,7 @@ async def run_e2e():
     from agent_serving.serving.application.query_understanding import QueryUnderstandingEngine
     from agent_serving.serving.application.retrieval_router import RetrievalRouter
     from agent_serving.serving.pipeline.fusion import WeightedRRFFusion
-    from agent_serving.serving.schemas.models import QueryPlan, RetrievalBudget, RetrievalQuery, ScoreChain
+    from agent_serving.serving.schemas.models import QueryPlan, RetrievalQuery, ScoreChain
 
     bm25 = FTS5BM25Retriever(db)
     entity_retriever = EntityExactRetriever(db)
@@ -279,24 +279,18 @@ async def run_e2e():
 
         # ── Stage 5: Rerank (Zhipu → LLM → Score cascade) ──
         report_lines.append("### Stage 5: Rerank (Zhipu Model → LLM → Score Cascade)\n")
-        legacy_plan = QueryPlan(
-            intent=understanding.intent,
-            keywords=understanding.keywords,
-            desired_roles=understanding.evidence_need.preferred_roles if understanding.evidence_need else [],
-            budget=RetrievalBudget(),
-        )
         t0 = time.monotonic()
-        ranked = await rerank_pipeline.rerank(fused, legacy_plan, route_plan, understanding)
+        ranked, rerank_traces = await rerank_pipeline.rerank(fused, route_plan, understanding)
         dt_rerank = (time.monotonic() - t0) * 1000
 
         # Determine which reranker actually ran
         reranker_used = "score_fallback"
-        if rerank_pipeline._model_reranker and zhipu_reranker:
-            # Check if zhipu reranker was used: compare top-1 scores
-            if ranked and ranked[0].score_chain and ranked[0].score_chain.rerank_score != ranked[0].score_chain.raw_score:
-                reranker_used = "zhipu_model"
-        if reranker_used == "score_fallback" and rerank_pipeline._llm_reranker:
-            reranker_used = "llm_or_score"
+        if rerank_traces:
+            reranker_used = rerank_traces[-1].provider
+            if reranker_used == "score" and rerank_pipeline._llm_reranker:
+                reranker_used = "llm_or_score"
+        if reranker_used == "model":
+            reranker_used = "zhipu_model"
 
         report_lines.append(f"- **耗时**: {dt_rerank:.0f}ms")
         report_lines.append(f"- **使用的 Reranker**: `{reranker_used}`")
@@ -331,7 +325,7 @@ async def run_e2e():
     report_lines.append(f"- **三路召回**: BM25 + Entity Exact + Dense Vector ✅")
     report_lines.append(f"- **融合算法**: Weighted RRF ✅")
     report_lines.append(f"- **Rerank**: Zhipu Model Reranker (第一优先) ✅")
-    report_lines.append(f"- **Embedding**: Zhipu embedding-3, 2048维, 真实 API 调用 ✅")
+    report_lines.append(f"- **Embedding**: Zhipu embedding-3, 1024维, 真实 API 调用 ✅")
     report_lines.append("")
 
     await db.close()

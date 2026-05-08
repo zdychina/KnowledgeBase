@@ -1,7 +1,7 @@
-"""Async LLM client for Serving — wraps Mining's sync LlmClient.
+"""Async LLM client for Serving — pure HTTP, zero Mining import.
 
 Provides:
-- Async execute/register_template via asyncio.to_thread
+- Async execute/ensure_templates via httpx
 - Serving template registration at init (idempotent)
 - Health check for availability
 
@@ -10,12 +10,11 @@ so the pipeline degrades gracefully to rule-based paths.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
 
-from knowledge_mining.mining.llm_client import LlmClient
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +125,8 @@ SERVING_TEMPLATES: list[dict[str, Any]] = [
 
 
 class ServingLlmClient:
-    """Async LLM client for Serving pipeline.
+    """Pure HTTP LLM client — calls llm_service via httpx.
 
-    Wraps Mining's sync LlmClient with async methods via asyncio.to_thread.
     Registers serving templates on first use (idempotent).
     All methods return None/False on failure so the pipeline degrades gracefully.
     """
@@ -138,34 +136,102 @@ class ServingLlmClient:
         base_url: str = "http://localhost:8900",
         timeout: int = 60,
     ) -> None:
-        self._sync = LlmClient(base_url=base_url, timeout=timeout)
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
         self._templates_registered = False
 
     async def ensure_templates(self) -> None:
         """Register serving templates with the LLM service (idempotent)."""
         if self._templates_registered:
             return
-        for tpl in SERVING_TEMPLATES:
-            ok = await asyncio.to_thread(self._sync.register_template, tpl)
-            if ok:
-                logger.info("Registered serving template: %s", tpl["template_key"])
-            else:
-                logger.warning("Failed to register template: %s", tpl["template_key"])
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            for tpl in SERVING_TEMPLATES:
+                try:
+                    resp = await client.post(f"{self._base_url}/api/v1/templates", json=tpl)
+                    if resp.status_code in (200, 201, 409):
+                        logger.info("Registered template: %s", tpl["template_key"])
+                    else:
+                        logger.warning(
+                            "Failed to register template %s: HTTP %s",
+                            tpl["template_key"], resp.status_code,
+                        )
+                except Exception:
+                    logger.warning("Failed to register template: %s", tpl["template_key"])
         self._templates_registered = True
 
     def is_available(self) -> bool:
         """Check if LLM service is reachable."""
-        return self._sync.health_check()
+        try:
+            resp = httpx.get(f"{self._base_url}/health", timeout=3)
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     async def execute(self, **kwargs: Any) -> dict | None:
         """Async execute via LLM service.
 
-        Keyword args are forwarded to LlmClient.execute():
+        Keyword args are forwarded to the llm_service /execute endpoint:
           template_key, input, caller_domain, pipeline_stage, expected_output_type
         """
+        kwargs.setdefault("caller_domain", "serving")
         await self.ensure_templates()
-        return await asyncio.to_thread(self._sync.execute, **kwargs)
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(f"{self._base_url}/api/v1/execute", json=kwargs)
+            resp.raise_for_status()
+            return resp.json()
 
-    def close(self) -> None:
-        """Close the underlying sync client."""
-        self._sync.close()
+    async def embed(
+        self,
+        texts: list[str] | str,
+        *,
+        model: str | None = None,
+        dimensions: int | None = None,
+    ) -> dict | None:
+        payload: dict[str, Any] = {"input": texts}
+        if model is not None:
+            payload["model"] = model
+        if dimensions is not None:
+            payload["dimensions"] = dimensions
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._base_url}/api/v1/models/embeddings",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception:
+            logger.warning("LLM service embedding call failed", exc_info=True)
+            return None
+
+    async def rerank(
+        self,
+        *,
+        query: str,
+        documents: list[str],
+        model: str | None = None,
+        top_n: int | None = None,
+    ) -> dict | None:
+        payload: dict[str, Any] = {
+            "query": query,
+            "documents": documents,
+        }
+        if model is not None:
+            payload["model"] = model
+        if top_n is not None:
+            payload["top_n"] = top_n
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._base_url}/api/v1/models/rerank",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception:
+            logger.warning("LLM service rerank call failed", exc_info=True)
+            return None
+
+    async def close(self) -> None:
+        """No-op — httpx clients are created per-request."""
+        pass

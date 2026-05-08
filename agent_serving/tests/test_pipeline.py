@@ -410,33 +410,6 @@ class TestV12SourceSegmentIdBridge:
         assert result == []
 
 
-class TestV12FTSORQuery:
-    """Step 1.3: FTS5 OR query builder."""
-
-    def test_or_query_building(self):
-        from agent_serving.serving.retrieval.bm25_retriever import _build_fts_or_query
-        result = _build_fts_or_query(["5G", "eMBB", "概念"])
-        assert "OR" in result
-        assert '"5G"' in result
-        assert '"eMBB"' in result
-        assert '"概念"' in result
-
-    def test_or_query_empty_tokens(self):
-        from agent_serving.serving.retrieval.bm25_retriever import _build_fts_or_query
-        result = _build_fts_or_query([])
-        assert result == ""
-
-    def test_or_query_single_token(self):
-        from agent_serving.serving.retrieval.bm25_retriever import _build_fts_or_query
-        result = _build_fts_or_query(["5G"])
-        assert result == '"5G"'
-
-    def test_or_query_escapes_quotes(self):
-        from agent_serving.serving.retrieval.bm25_retriever import _build_fts_or_query
-        result = _build_fts_or_query(['test"value'])
-        assert '""' in result
-
-
 class TestV12LLMNormalizerFallback:
     """Step 3.2: LLM normalizer fallback to rule-based."""
 
@@ -610,3 +583,128 @@ class TestV2Models:
             total_duration_ms=10.0,
         )
         assert len(trace.stages) == 1
+
+
+# --- v1.4 Tests: scope pushdown, evidence groups, assembler v2 ---
+
+
+class TestScopePushdownSafety:
+    """Verify _build_scope_filter uses parameterized binding (no SQL injection)."""
+
+    def test_bm25_scope_filter_parameterized(self):
+        from agent_serving.serving.retrieval.bm25_retriever import FTS5BM25Retriever
+        sql, params = FTS5BM25Retriever._build_scope_filter({"products": ["UDG"]})
+        assert "%s::jsonb" in sql
+        assert "UDG" not in sql  # value is in params, not SQL
+
+    def test_dense_scope_filter_parameterized(self):
+        from agent_serving.serving.retrieval.dense_vector_retriever import DenseVectorRetriever
+        sql, params = DenseVectorRetriever._build_scope_filter({"products": ["UDG"]})
+        assert "%s::jsonb" in sql
+        assert "UDG" not in sql
+
+    def test_entity_scope_filter_parameterized(self):
+        from agent_serving.serving.retrieval.entity_exact_retriever import EntityExactRetriever
+        sql, params = EntityExactRetriever._build_scope_filter({"products": ["UDG"]})
+        assert "%s::jsonb" in sql
+        assert "UDG" not in sql
+
+
+class TestEvidenceGroupUnit:
+    """EvidenceGroup relation_ids should only include group-related relations."""
+
+    def test_evidence_groups_filter_relations_by_item_ids(self):
+        from agent_serving.serving.application.assembler import ContextAssembler
+        from agent_serving.serving.schemas.models import (
+            ContextItem,
+            ContextRelation,
+            EvidenceGroup,
+        )
+        from unittest.mock import MagicMock
+
+        assembler = ContextAssembler(MagicMock(), MagicMock())
+
+        items = [
+            ContextItem(
+                id="item-1", kind="retrieval_unit", role="seed",
+                text="t1", score=0.9,
+                metadata={"document_snapshot_id": "snap-A"},
+            ),
+            ContextItem(
+                id="item-2", kind="raw_segment", role="context",
+                text="t2", score=0.0,
+                metadata={"document_snapshot_id": "snap-B"},
+            ),
+        ]
+        relations = [
+            ContextRelation(
+                id="rel-1", from_id="item-1", to_id="item-2",
+                relation_type="next", distance=1,
+            ),
+            ContextRelation(
+                id="rel-2", from_id="item-X", to_id="item-Y",
+                relation_type="next", distance=1,
+            ),
+        ]
+
+        groups = assembler._build_evidence_groups(items, relations)
+        assert len(groups) == 2
+
+        group_a = next(g for g in groups if g.document_snapshot_id == "snap-A")
+        assert "item-1" in group_a.item_ids
+        # rel-1 connects item-1 ↔ item-2, so it's in group A (from_id matches)
+        assert "rel-1" in group_a.relation_ids
+        # rel-2 is unrelated to group A's items
+        assert "rel-2" not in group_a.relation_ids
+
+    def test_evidence_groups_empty_when_no_snapshot(self):
+        from agent_serving.serving.application.assembler import ContextAssembler
+        from unittest.mock import MagicMock
+
+        assembler = ContextAssembler(MagicMock(), MagicMock())
+
+        items = [
+            ContextItem(
+                id="item-1", kind="retrieval_unit", role="seed",
+                text="t1", score=0.9, metadata={},
+            ),
+        ]
+        groups = assembler._build_evidence_groups(items, [])
+        assert groups == []
+
+
+class TestAssemblerIssues:
+    """Test _build_issues covers no_result and low_confidence."""
+
+    def test_low_confidence_issue(self):
+        from agent_serving.serving.application.assembler import ContextAssembler
+        from agent_serving.serving.schemas.models import ContextItem
+        from unittest.mock import MagicMock
+
+        assembler = ContextAssembler(MagicMock(), MagicMock())
+
+        items = [
+            ContextItem(
+                id="ru-1", kind="retrieval_unit", role="seed",
+                text="test", score=0.05,
+            ),
+        ]
+        issues = assembler._build_issues(items)
+        assert len(issues) == 1
+        assert issues[0].type == "low_confidence"
+
+    def test_no_issue_when_good_scores(self):
+        from agent_serving.serving.application.assembler import ContextAssembler
+        from agent_serving.serving.schemas.models import ContextItem
+        from unittest.mock import MagicMock
+
+        assembler = ContextAssembler(MagicMock(), MagicMock())
+
+        items = [
+            ContextItem(
+                id="ru-1", kind="retrieval_unit", role="seed",
+                text="test", score=0.85,
+            ),
+        ]
+        issues = assembler._build_issues(items)
+        assert len(issues) == 0

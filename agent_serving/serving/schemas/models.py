@@ -52,8 +52,13 @@ class ExpansionConfig(BaseModel):
     enable_relation_expansion: bool = True
     max_relation_depth: int = 2
     relation_types: list[str] = Field(default_factory=lambda: [
+        # Structural relations
         "previous", "next", "same_section",
         "same_parent_section", "section_header_of",
+        # RST / discourse semantic relations
+        "elaborates", "conditions", "causes",
+        "results_in", "contrasts_with",
+        "backgrounds", "enables", "parallels",
     ])
 
 
@@ -173,11 +178,19 @@ class Issue(BaseModel):
     detail: dict = Field(default_factory=dict)
 
 
+class EvidenceGroup(BaseModel):
+    """Group of evidence items from the same document snapshot."""
+    document_snapshot_id: str
+    item_ids: list[str] = Field(default_factory=list)
+    relation_ids: list[str] = Field(default_factory=list)
+
+
 class ContextPack(BaseModel):
     query: ContextQuery
     items: list[ContextItem] = Field(default_factory=list)
     relations: list[ContextRelation] = Field(default_factory=list)
     sources: list[SourceRef] = Field(default_factory=list)
+    evidence_groups: list[EvidenceGroup] = Field(default_factory=list)
     issues: list[Issue] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
     debug: dict | None = None
@@ -234,8 +247,13 @@ class AssemblyConfig(BaseModel):
     max_expanded: int = 20
     max_relation_depth: int = 2
     relation_types: list[str] = Field(default_factory=lambda: [
+        # Structural relations
         "previous", "next", "same_section",
         "same_parent_section", "section_header_of",
+        # RST / discourse semantic relations
+        "elaborates", "conditions", "causes",
+        "results_in", "contrasts_with",
+        "backgrounds", "enables", "parallels",
     ])
 
 
@@ -253,6 +271,17 @@ class ScoreChain(BaseModel):
     fusion_score: float = 0.0
     rerank_score: float = 0.0
     route_sources: list[str] = Field(default_factory=list)
+
+
+class RerankTraceStep(BaseModel):
+    """Records one step of the rerank cascade."""
+    provider: str = ""           # "model" | "llm" | "score"
+    attempted: bool = False
+    succeeded: bool = False
+    fallback_reason: str = ""
+    latency_ms: float = 0.0
+    count_before: int = 0
+    count_after: int = 0
 
 
 class TraceStage(BaseModel):

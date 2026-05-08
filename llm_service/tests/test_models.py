@@ -1,9 +1,11 @@
 import pytest
 from llm_service.models import (
+    EmbeddingRequest,
     TaskSubmitRequest,
     ExecuteResponse,
     ParsedResult,
     ErrorInfo,
+    RerankRequest,
 )
 
 
@@ -64,3 +66,13 @@ def test_execute_response_with_error():
         ),
     )
     assert resp.error.error_type == "provider_error"
+
+
+def test_embedding_request_normalizes_scalar_input():
+    req = EmbeddingRequest(input="alpha")
+    assert req.input == ["alpha"]
+
+
+def test_rerank_request_rejects_empty_documents():
+    with pytest.raises(ValueError):
+        RerankRequest(query="q", documents=[])

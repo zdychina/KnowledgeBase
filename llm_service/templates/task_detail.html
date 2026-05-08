@@ -5,49 +5,60 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Task {{ task.id[:8] }} - LLM Service</title>
     <style>
+        :root {
+            --bg: #f8f9fb; --surface: #ffffff; --border: #e2e5ea;
+            --text: #1a1d23; --text-secondary: #5c6370; --text-muted: #8b919a;
+            --primary: #3b6fdb; --primary-light: #eef3fd;
+            --green: #16a34a; --green-bg: #f0fdf4; --green-border: #bbf7d0;
+            --yellow: #ca8a04; --yellow-bg: #fefce8; --yellow-border: #fef08a;
+            --red: #dc2626; --red-bg: #fef2f2; --red-border: #fecaca;
+            --blue: #2563eb; --blue-bg: #eff6ff;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-        a { color: #60a5fa; text-decoration: none; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.5; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem; }
+        a { color: var(--primary); text-decoration: none; }
         a:hover { text-decoration: underline; }
-        .btn { background: #334155; color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.875rem; }
-        .btn:hover { background: #475569; }
+        .btn { background: var(--surface); color: var(--text); border: 1px solid var(--border); padding: 0.45rem 0.9rem; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+        .btn:hover { background: var(--bg); }
 
         .detail-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem; }
-        .detail-header h1 { font-size: 1.25rem; display: flex; align-items: center; gap: 0.75rem; }
-        .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-        .badge.queued { background: #1e3a5f; color: #60a5fa; }
-        .badge.running { background: #3b3a1e; color: #facc15; }
-        .badge.succeeded { background: #1e3b2e; color: #4ade80; }
-        .badge.failed { background: #3b1e1e; color: #f87171; }
-        .badge.dead_letter { background: #3b1e1e; color: #f87171; }
-        .badge.cancelled { background: #334155; color: #94a3b8; }
+        .detail-header h1 { font-size: 1.2rem; display: flex; align-items: center; gap: 0.75rem; }
+        .badge { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.72rem; font-weight: 600; }
+        .badge.succeeded { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+        .badge.running { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
+        .badge.queued { background: var(--blue-bg); color: var(--blue); border: 1px solid #bfdbfe; }
+        .badge.failed, .badge.dead_letter { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+        .badge.cancelled { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+        .badge.embedding { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+        .badge.rerank { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+        .badge.chat { background: var(--blue-bg); color: var(--blue); border: 1px solid #bfdbfe; }
 
-        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
-        .detail-card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1.25rem; }
-        .detail-card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.75rem; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+        .detail-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.1rem; }
+        .detail-card h3 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 0.6rem; font-weight: 600; }
         .detail-card.full-width { grid-column: 1 / -1; }
 
         .kv-table { width: 100%; }
-        .kv-table td { padding: 0.3rem 0.5rem; font-size: 0.85rem; border: none; }
-        .kv-table td:first-child { color: #94a3b8; width: 140px; white-space: nowrap; vertical-align: top; }
-        .kv-table td:last-child { color: #e2e8f0; word-break: break-all; }
+        .kv-table td { padding: 0.25rem 0.5rem; font-size: 0.82rem; border: none; }
+        .kv-table td:first-child { color: var(--text-muted); width: 130px; white-space: nowrap; vertical-align: top; }
+        .kv-table td:last-child { color: var(--text); word-break: break-all; }
 
-        pre { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.8rem; line-height: 1.5; color: #cbd5e1; max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
+        pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.8rem; line-height: 1.5; color: var(--text-secondary); max-height: 400px; overflow-y: auto; white-space: pre-wrap; }
 
         .timeline { list-style: none; padding-left: 0; }
-        .timeline li { padding: 0.4rem 0; border-bottom: 1px solid #1e293b; display: flex; gap: 1rem; align-items: baseline; font-size: 0.85rem; }
+        .timeline li { padding: 0.35rem 0; border-bottom: 1px solid var(--border); display: flex; gap: 1rem; align-items: baseline; font-size: 0.82rem; }
         .timeline li:last-child { border-bottom: none; }
-        .timeline .time { color: #64748b; font-family: 'SF Mono', monospace; font-size: 0.8rem; white-space: nowrap; min-width: 160px; }
-        .timeline .event { color: #60a5fa; font-weight: 600; min-width: 100px; }
-        .timeline .msg { color: #cbd5e1; }
+        .timeline .time { color: var(--text-muted); font-family: 'SF Mono', monospace; font-size: 0.78rem; white-space: nowrap; min-width: 160px; }
+        .timeline .event { color: var(--primary); font-weight: 600; min-width: 100px; }
+        .timeline .msg { color: var(--text-secondary); }
 
-        .attempt-card { background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 1rem; margin-bottom: 0.75rem; }
-        .attempt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
-        .attempt-no { font-weight: 600; color: #60a5fa; }
-        .attempt-stats { display: flex; gap: 1.5rem; font-size: 0.8rem; color: #94a3b8; }
-        .attempt-stats span span { color: #e2e8f0; }
-        .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; }
+        .attempt-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.85rem; margin-bottom: 0.6rem; }
+        .attempt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; }
+        .attempt-no { font-weight: 600; color: var(--primary); }
+        .attempt-stats { display: flex; gap: 1.25rem; font-size: 0.78rem; color: var(--text-muted); }
+        .attempt-stats span span { color: var(--text); }
+        .mono { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 0.78rem; }
     </style>
 </head>
 <body>
@@ -56,6 +67,7 @@
             <h1>
                 <a href="/dashboard">&larr; Dashboard</a>
                 Task <span class="mono">{{ task.id[:8] }}...</span>
+                <span class="badge {{ task.task_type }}">{{ task.task_type }}</span>
                 <span class="badge {{ task.status }}">{{ task.status }}</span>
             </h1>
         </div>
@@ -93,6 +105,32 @@
         {% endif %}
 
         <!-- Request Info -->
+        {% if task_type == 'embedding' %}
+        {% if embed_texts %}
+        <div class="detail-card full-width" style="margin-bottom:1.5rem;">
+            <h3>Source Texts ({{ embed_texts | length }})</h3>
+            <pre style="max-height:300px;">{% for t in embed_texts %}{{ t }}
+---
+{% endfor %}</pre>
+        </div>
+        {% endif %}
+
+        {% elif task_type == 'rerank' %}
+        <div class="detail-card full-width" style="margin-bottom:1.5rem;">
+            <h3>Query</h3>
+            <pre>{{ rerank_query }}</pre>
+        </div>
+        {% if rerank_documents %}
+        <div class="detail-card full-width" style="margin-bottom:1.5rem;">
+            <h3>Input Documents ({{ rerank_documents | length }})</h3>
+            <pre style="max-height:250px;">{% for d in rerank_documents %}[{{ loop.index }}] {{ d }}
+---
+{% endfor %}</pre>
+        </div>
+        {% endif %}
+
+        {% else %}
+        {# chat task #}
         {% if request %}
         <div class="detail-grid">
             <div class="detail-card">
@@ -127,9 +165,42 @@
             {% endif %}
         </div>
         {% endif %}
+        {% endif %}
 
         <!-- Result -->
         {% if result %}
+        {% if task_type == 'rerank' and rerank_results %}
+        <div class="detail-card full-width" style="margin-bottom:1.5rem;">
+            <h3>Reranked Results</h3>
+            <table class="kv-table" style="width:100%;">
+                <thead>
+                    <tr><th style="width:50px;">Rank</th><th style="width:80px;">Score</th><th>Document</th></tr>
+                </thead>
+                <tbody>
+                {% for r in rerank_results %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td style="font-weight:600;">{{ "%.4f" | format(r.relevance_score) }}</td>
+                        <td>{{ (r.document or '')[:200] }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif task_type == 'embedding' %}
+        <div class="detail-card full-width" style="margin-bottom:1.5rem;">
+            <h3>Embedding Result</h3>
+            {% if result.text_output %}
+            <h4 style="margin-bottom:0.5rem;font-size:0.8rem;color:var(--text-muted);">Source Texts</h4>
+            <pre style="max-height:200px;">{{ result.text_output }}</pre>
+            {% endif %}
+            <details style="margin-top:0.75rem;">
+                <summary style="color:#94a3b8;cursor:pointer;font-size:0.8rem;">Raw JSON (includes vectors)</summary>
+                <pre style="max-height:300px;">{{ parsed_str }}</pre>
+            </details>
+        </div>
+        {% else %}
+        {# chat result #}
         <div class="detail-card full-width" style="margin-bottom:1.5rem;">
             <h3>Result (parse: {{ result.parse_status }})</h3>
             {% if result.parsed_output_json and result.parsed_output_json != '{}' %}
@@ -148,6 +219,7 @@
             <pre style="color:#f87171;">{{ validation_errors_str }}</pre>
             {% endif %}
         </div>
+        {% endif %}
         {% endif %}
 
         <!-- Attempts -->

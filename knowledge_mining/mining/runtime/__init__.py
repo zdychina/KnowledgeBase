@@ -8,8 +8,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from knowledge_mining.mining.db import MiningRuntimeDB
-from knowledge_mining.mining.models import (
+from knowledge_mining.mining.infra.db import MiningRuntimeDB
+from knowledge_mining.mining.contracts.models import (
     MiningRunData,
     MiningRunDocumentData,
     StageEvent,
@@ -109,20 +109,24 @@ class RuntimeTracker:
         """Record stage completion. Re-reads the start event for duration calculation."""
         # Compute duration from start event
         duration_ms = None
+        run_document_id = None
         start_evt = self._db._fetchone(
-            "SELECT created_at FROM mining_run_stage_events WHERE id = ?", (event_id,)
+            "SELECT created_at, run_document_id FROM mining_run_stage_events WHERE id = %s", (event_id,)
         )
-        if start_evt and start_evt["created_at"]:
-            try:
-                from datetime import datetime, timezone
-                start_time = datetime.fromisoformat(start_evt["created_at"])
-                duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
-            except Exception:
-                pass
+        if start_evt:
+            if start_evt["created_at"]:
+                try:
+                    from datetime import datetime, timezone
+                    start_time = datetime.fromisoformat(start_evt["created_at"])
+                    duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
+                except Exception:
+                    pass
+            run_document_id = start_evt["run_document_id"]
 
         self._db.insert_stage_event(StageEvent(
             id=_new_id(),
             run_id=run_id,
+            run_document_id=run_document_id,
             stage=stage,
             status=status,
             duration_ms=duration_ms,
