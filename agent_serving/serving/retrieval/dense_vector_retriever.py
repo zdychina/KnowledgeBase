@@ -56,7 +56,7 @@ class DenseVectorRetriever(Retriever):
         sql = f"""
             SELECT
                 e.retrieval_unit_id,
-                (e.embedding_vector_vec <=> %s::vector({self._dimensions})) AS distance,
+                (e.embedding_vector_vec <=> %s::vector{f"({self._dimensions})" if self._dimensions else ""}) AS distance,
                 ru.id,
                 ru.document_snapshot_id,
                 ru.text,
