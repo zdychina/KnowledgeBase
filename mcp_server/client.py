@@ -24,8 +24,8 @@ SERVING_URL = os.environ.get("SERVING_URL", "http://127.0.0.1:8000").rstrip("/")
 HEALTH_TIMEOUT = float(os.environ.get("HEALTH_TIMEOUT", "5.0"))
 SEARCH_TIMEOUT = float(os.environ.get("SEARCH_TIMEOUT", "60.0"))
 
-# 直连，不走任何代理（忽略 HTTP_PROXY / HTTPS_PROXY 环境变量）
-_client = httpx.Client(proxy=None)
+# 直连，不走任何代理 — trust_env=False 忽略所有代理/SSL环境变量
+_client = httpx.Client(trust_env=False)
 
 
 def health_check() -> HealthResult:
