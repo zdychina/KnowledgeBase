@@ -1,4 +1,4 @@
-"""FastMCP server — tools, resources, prompts."""
+"""FastMCP server — two tools, instructions carry full usage guide."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp_server import __version__
 from mcp_server.client import health_check as _health_check
 from mcp_server.client import search_knowledge as _search_knowledge
-from mcp_server.prompts import SEMANTIC_RULES, ANSWER_FRAMEWORK
 from mcp_server.schemas import (
     EntityRef,
     HealthResult,
@@ -18,13 +17,48 @@ from mcp_server.schemas import (
 
 mcp = FastMCP(
     "cloud-core-knowledge",
-    instructions=(
-        "云核心网知识证据底座 MCP Server。"
-        "使用原则：先调用 health_check 确认后端可用，再调用 search_knowledge 获取证据+评估。"
-        "search_knowledge 会透传 serving 原始结果并附加 evidence_assessment（证据充分性评估）。"
-        "Agent 根据 assessment.recommended_action 决定如何回答。"
-        "核心原则：先取证再回答；证据不足先追问；推理必须受证据约束，不能瞎编。"
-    ),
+    instructions="""\
+你是云核心网知识证据底座。
+
+## 何时使用
+当用户问云核心网相关的概念、网元、接口、协议、参数、配置、故障、对比分析等问题时调用。
+纯翻译润色、与云核心网无关的问题不需要调用。
+
+## 调用流程
+1. health_check() — 检查知识库是否可用。不可用时不要编造知识。
+2. search_knowledge(query) — 检索知识库，返回证据包。
+
+## 如何理解证据包
+返回的 items 中每条证据有 evidence_role 字段：
+- direct_answer：最接近主答案的证据，优先信任
+- support：支撑性证据（前置条件、参数、限制、步骤）
+- contrast：对比性证据（差异、区分、比较）
+- background：背景信息，不能单独支撑操作类结论
+- missing：相关但不足以支撑答案
+
+判断证据是否充分时看四件事：
+- 相关性：证据是否真在回答用户问题
+- 覆盖度：是否覆盖了用户关心的核心点
+- 条件完整性：产品、网元、场景、版本、前提是否清楚
+- 风险等级：操作类问题比概念解释类要求更严格
+
+## 回答行为
+- 证据充分 → 直接结论 + 依据 + 前提限制
+- 证据部分 → 保守结论 + 最强证据 + 缺失点 + 用户补什么能提高置信度
+- 证据不足 → 追问用户缩小答案空间（问产品/网元/版本/场景/目标），不瞎编
+
+## 回答时必须区分三层内容
+1. 证据直接支持的内容
+2. 基于证据做出的推断
+3. 当前还不确定或缺失的部分
+
+## 推理护栏
+- 不要编造命令、参数、约束、依赖、步骤
+- 不要默认脑补产品、版本、网元、场景
+- 不要把背景材料说成确定结论
+- 不要在证据不支撑时宣称因果关系
+- 如果不同证据冲突，要把冲突显式说出来
+""",
     host=os.environ.get("MCP_HOST", "0.0.0.0"),
     port=int(os.environ.get("MCP_PORT", "9000")),
 )
@@ -35,7 +69,7 @@ mcp = FastMCP(
 
 @mcp.tool()
 def health_check() -> HealthResult:
-    """检查 serving 后端是否可用。返回可用状态、版本号和延迟。"""
+    """检查知识库是否可用。不可用时不要编造知识，告知用户当前无法查询。"""
     return _health_check()
 
 
@@ -47,11 +81,7 @@ def search_knowledge(
     entities: list[dict] | None = None,
     debug: bool = False,
 ) -> dict:
-    """检索云核心网知识库，透传 serving 原始结果 + 附加证据评估。
-
-    返回 serving 的完整 ContextPack（query, items, relations, evidence_groups,
-    sources, issues, suggestions, debug 等全部字段），额外附加一个
-    evidence_assessment 字段表示证据充分性评估结果。
+    """检索云核心网知识库，返回证据包。输入用户问题即可。
 
     Args:
         query: 用户原问题
@@ -70,65 +100,3 @@ def search_knowledge(
         debug=debug,
     )
     return _search_knowledge(inp)
-
-
-# ── Resources ────────────────────────────────────────────────────────────
-
-
-@mcp.resource("evidence://semantic-rules")
-def semantic_rules() -> str:
-    """证据语义规则：direct_answer / support / contrast / background / missing 的定义和优先信任规则。"""
-    return SEMANTIC_RULES
-
-
-@mcp.resource("evidence://answer-framework")
-def answer_framework() -> str:
-    """推荐回答框架：answer_now / answer_with_caution / ask_followup / delegate 各场景的回答骨架。"""
-    return ANSWER_FRAMEWORK
-
-
-# ── Prompts ──────────────────────────────────────────────────────────────
-
-
-@mcp.prompt()
-def evidence_guided_answer(query: str, evidence: str) -> str:
-    """给 Agent 的回答引导模板。基于证据回答用户问题，三层内容区分 + 推理护栏。
-
-    Args:
-        query: 用户原始问题
-        evidence: search_knowledge 返回的 JSON 证据包
-    """
-    return f"""\
-请基于以下证据回答用户问题。必须遵守规则。
-
-## 用户问题
-{query}
-
-## 证据包
-{evidence}
-
-## 回答要求
-
-### 三层内容区分
-1. **证据直接支持的内容** — 明确标注"依据证据"
-2. **基于证据的推断** — 明确标注"推断"
-3. **不确定或缺失的部分** — 明确标注"待确认"
-
-### 推理护栏
-- 不要编造命令、参数、约束、依赖、步骤
-- 不要默认脑补产品、版本、网元、场景
-- 不要把背景材料说成确定结论
-- 不要在证据不支撑时宣称因果关系
-- 如果不同证据冲突，要把冲突显式说出来
-
-### 概率性表达（当证据不足以确定时）
-- "从当前证据看，更可能是......"
-- "现有证据支持到这里，但还不能确定......"
-
-### 回答结构（推荐）
-1. 结论或当前判断
-2. 依据
-3. 前提/限制
-4. 不确定点
-5. 建议下一步
-"""

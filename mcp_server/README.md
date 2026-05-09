@@ -1,11 +1,30 @@
 # Cloud Core Knowledge MCP Server
 
-云核心网知识证据底座 MCP Server。通过 MCP 协议暴露 serving 后端的检索和证据评估能力，供任意 Agent 接入。
+云核心网知识证据底座 MCP Server。
+
+## 设计原则
+
+- **纯透传**：调用后端检索 API，原样返回 JSON，不做任何语义判断或加工
+- **instructions 承载精华**：SKILL 中的使用指南、证据理解规则、回答行为、推理护栏全部内嵌在 MCP instructions 中，Agent 拿到即可正确使用
+- **Agent 自主判断**：证据是否充分、如何回答，完全由 Agent（LLM）决定，Server 不做评估
+- **2 个 tool**：`health_check` + `search_knowledge`，无 resource、无 prompt
+
+## 文件结构
+
+```
+mcp_server/
+├── __init__.py      # 版本号
+├── __main__.py      # 入口，支持 stdio / streamable-http / sse
+├── server.py        # FastMCP 定义：instructions + 2 tools
+├── client.py        # HTTP 透传客户端，调后端 API
+├── schemas.py       # Pydantic 模型（HealthResult, SearchInput, EntityRef）
+└── README.md        # 本文件
+```
 
 ## 前提
 
 - Python 3.10+
-- serving 后端正在运行（默认 `http://127.0.0.1:8000`）
+- 后端正在运行（默认 `http://127.0.0.1:8000`）
 - 依赖：`pip install "mcp>=1.0,<2.0" httpx`
 
 ## 两种运行模式
@@ -122,9 +141,9 @@ Body (raw JSON):
     "capabilities": { ... },
     "serverInfo": {
       "name": "cloud-core-knowledge",
-      "version": "1.27.1"
+      "version": "0.1.0"
     },
-    "instructions": "云核心网知识证据底座 MCP Server。..."
+    "instructions": "你是云核心网知识证据底座。..."
   }
 }
 ```
@@ -150,12 +169,6 @@ Body:
 
 ### 步骤 3：调用 health_check
 
-```
-POST http://127.0.0.1:9000/mcp
-Mcp-Session-Id: <Session-ID>
-```
-
-Body:
 ```json
 {
   "jsonrpc": "2.0",
@@ -185,49 +198,15 @@ Body:
 }
 ```
 
-### 步骤 5：调用 evaluate_evidence
-
-用步骤 4 返回的 `items` 构造摘要：
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "method": "tools/call",
-  "params": {
-    "name": "evaluate_evidence",
-    "arguments": {
-      "items_summary": [
-        {"evidence_role": "direct_answer", "score": 0.92, "semantic_role": "concept"},
-        {"evidence_role": "support", "score": 0.78, "semantic_role": "constraint"}
-      ],
-      "intent": "concept_lookup",
-      "query": "什么是业务感知"
-    }
-  }
-}
-```
-
-### 步骤 6：读取资源（可选）
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 6,
-  "method": "resources/read",
-  "params": {
-    "uri": "evidence://semantic-rules"
-  }
-}
-```
+返回后端原始 JSON，包含 `items`（证据列表）、`relations`、`sources` 等字段。每条 item 的 `evidence_role` 标注了该证据的角色（`direct_answer` / `support` / `contrast` / `background` / `missing`），Agent 据此自行判断证据是否充分。
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `SERVING_URL` | `http://127.0.0.1:8000` | serving 后端地址 |
-| `HEALTH_TIMEOUT` | `5.0` | health 请求超时（秒） |
-| `SEARCH_TIMEOUT` | `60.0` | search 请求超时（秒） |
+| `SERVING_URL` | `http://127.0.0.1:8000` | 后端地址 |
+| `HEALTH_TIMEOUT` | `10.0` | health 请求超时（秒） |
+| `SEARCH_TIMEOUT` | `120.0` | search 请求超时（秒） |
 | `MCP_TRANSPORT` | `stdio` | 传输模式 |
 | `MCP_HOST` | `0.0.0.0` | HTTP 绑定地址 |
 | `MCP_PORT` | `9000` | HTTP 绑定端口 |
@@ -236,15 +215,13 @@ Body:
 
 | 工具 | 用途 |
 |------|------|
-| `health_check` | 检查 serving 后端是否可用 |
-| `search_knowledge` | 检索知识库，返回结构化证据包 |
-| `evaluate_evidence` | 纯规则评估证据充分性 |
+| `health_check` | 检查知识库是否可用 |
+| `search_knowledge` | 检索知识库，返回证据包（透传后端原始结果） |
 
 ## 典型调用顺序
 
 ```
 1. health_check() → 确认后端可用
 2. search_knowledge(query="...") → 获取证据包
-3. evaluate_evidence(items_summary=..., intent=..., query=...) → 评估是否足够回答
-4. 根据评估结果（answer_now / answer_with_caution / ask_followup）决定如何回答
+3. Agent 自行判断证据是否充分，决定如何回答
 ```
