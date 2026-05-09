@@ -10,8 +10,13 @@ from mcp_server.client import search_knowledge as _search_knowledge
 from mcp_server.evidence_rules import evaluate_evidence as _evaluate_evidence
 from mcp_server.prompts import SEMANTIC_RULES, ANSWER_FRAMEWORK
 from mcp_server.schemas import (
+    EntityRef,
     EvaluateInput,
+    EvidenceAssessment,
+    HealthResult,
+    ItemSummary,
     SearchInput,
+    SearchResult,
 )
 
 mcp = FastMCP(
@@ -29,10 +34,9 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def health_check() -> dict:
+def health_check() -> HealthResult:
     """检查 serving 后端是否可用。返回可用状态、版本号和延迟。"""
-    result = _health_check()
-    return result.model_dump()
+    return _health_check()
 
 
 @mcp.tool()
@@ -43,7 +47,7 @@ def search_knowledge(
     entities: list[dict] | None = None,
     debug: bool = False,
     max_text_length: int = 1000,
-) -> dict:
+) -> SearchResult:
     """检索云核心网知识库，返回结构化证据包。
 
     Args:
@@ -54,11 +58,7 @@ def search_knowledge(
         debug: 是否返回检索过程诊断信息
         max_text_length: 每个证据条目的文本截断长度，0 表示不截断
     """
-    entity_refs = None
-    if entities:
-        from mcp_server.schemas import EntityRef
-
-        entity_refs = [EntityRef(**e) for e in entities]
+    entity_refs = [EntityRef(**e) for e in entities] if entities else None
 
     inp = SearchInput(
         query=query,
@@ -68,8 +68,7 @@ def search_knowledge(
         debug=debug,
         max_text_length=max_text_length,
     )
-    result = _search_knowledge(inp)
-    return result.model_dump()
+    return _search_knowledge(inp)
 
 
 @mcp.tool()
@@ -77,20 +76,17 @@ def evaluate_evidence(
     items_summary: list[dict],
     intent: str = "",
     query: str = "",
-) -> dict:
+) -> EvidenceAssessment:
     """基于证据语义规则评估证据充分性（纯规则，不调 LLM）。
 
     Args:
         items_summary: 从 search_knowledge 返回的 items 中提取的摘要列表，
                        每个元素含 evidence_role, score, semantic_role
         intent: 检索到的 query intent
-        query: 原始问题
+        query: 原始问题（用于生成更精准的追问建议）
     """
-    from mcp_server.schemas import ItemSummary
-
     summaries = [ItemSummary(**s) for s in items_summary]
-    result = _evaluate_evidence(summaries, intent, query)
-    return result.model_dump()
+    return _evaluate_evidence(summaries, intent, query)
 
 
 # ── Resources ────────────────────────────────────────────────────────────

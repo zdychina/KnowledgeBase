@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 
@@ -17,14 +18,18 @@ from mcp_server.schemas import (
     SearchInput,
 )
 
+logger = logging.getLogger(__name__)
+
 SERVING_URL = os.environ.get("SERVING_URL", "http://127.0.0.1:8000").rstrip("/")
+HEALTH_TIMEOUT = float(os.environ.get("HEALTH_TIMEOUT", "5.0"))
+SEARCH_TIMEOUT = float(os.environ.get("SEARCH_TIMEOUT", "60.0"))
 
 
 def health_check() -> HealthResult:
     """GET /health — returns structured result, never raises."""
     start = time.monotonic()
     try:
-        resp = httpx.get(f"{SERVING_URL}/health", timeout=5.0)
+        resp = httpx.get(f"{SERVING_URL}/health", timeout=HEALTH_TIMEOUT)
         latency_ms = (time.monotonic() - start) * 1000
         if resp.status_code == 200:
             data = resp.json()
@@ -34,14 +39,16 @@ def health_check() -> HealthResult:
                 version=data.get("version", ""),
                 latency_ms=round(latency_ms, 1),
             )
+        logger.warning("health_check returned HTTP %d", resp.status_code)
         return HealthResult(
             available=False,
             status="error",
             latency_ms=round(latency_ms, 1),
             error=f"HTTP {resp.status_code}",
         )
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         latency_ms = (time.monotonic() - start) * 1000
+        logger.warning("health_check failed: %s", exc)
         return HealthResult(
             available=False,
             status="unreachable",
@@ -66,14 +73,16 @@ def search_knowledge(inp: SearchInput) -> SearchResult:
         resp = httpx.post(
             f"{SERVING_URL}/api/v1/search",
             json=payload,
-            timeout=60.0,
+            timeout=SEARCH_TIMEOUT,
         )
         if resp.status_code != 200:
+            logger.warning("search returned HTTP %d for query=%r", resp.status_code, inp.query[:80])
             return SearchResult(
                 issues=[IssueNote(type="api_error", message=f"HTTP {resp.status_code}")],
             )
         data = resp.json()
-    except Exception as exc:
+    except httpx.HTTPError as exc:
+        logger.warning("search failed: %s", exc)
         return SearchResult(
             issues=[IssueNote(type="connection_error", message=str(exc))],
         )
