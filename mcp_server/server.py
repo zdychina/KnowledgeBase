@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server import __version__
@@ -27,6 +29,8 @@ mcp = FastMCP(
         "然后调用 evaluate_evidence 评估充分性，最后基于评估结果回答用户。"
         "核心原则：先取证再回答；证据不足先追问；推理必须受证据约束，不能瞎编。"
     ),
+    host=os.environ.get("MCP_HOST", "0.0.0.0"),
+    port=int(os.environ.get("MCP_PORT", "9000")),
 )
 
 
