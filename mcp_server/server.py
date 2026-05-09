@@ -9,24 +9,20 @@ from mcp.server.fastmcp import FastMCP
 from mcp_server import __version__
 from mcp_server.client import health_check as _health_check
 from mcp_server.client import search_knowledge as _search_knowledge
-from mcp_server.evidence_rules import evaluate_evidence as _evaluate_evidence
 from mcp_server.prompts import SEMANTIC_RULES, ANSWER_FRAMEWORK
 from mcp_server.schemas import (
     EntityRef,
-    EvaluateInput,
-    EvidenceAssessment,
     HealthResult,
-    ItemSummary,
     SearchInput,
-    SearchResult,
 )
 
 mcp = FastMCP(
     "cloud-core-knowledge",
     instructions=(
         "云核心网知识证据底座 MCP Server。"
-        "使用原则：先调用 health_check 确认后端可用，再调用 search_knowledge 获取证据，"
-        "然后调用 evaluate_evidence 评估充分性，最后基于评估结果回答用户。"
+        "使用原则：先调用 health_check 确认后端可用，再调用 search_knowledge 获取证据+评估。"
+        "search_knowledge 会透传 serving 原始结果并附加 evidence_assessment（证据充分性评估）。"
+        "Agent 根据 assessment.recommended_action 决定如何回答。"
         "核心原则：先取证再回答；证据不足先追问；推理必须受证据约束，不能瞎编。"
     ),
     host=os.environ.get("MCP_HOST", "0.0.0.0"),
@@ -50,9 +46,12 @@ def search_knowledge(
     scope: dict | None = None,
     entities: list[dict] | None = None,
     debug: bool = False,
-    max_text_length: int = 1000,
-) -> SearchResult:
-    """检索云核心网知识库，返回结构化证据包。
+) -> dict:
+    """检索云核心网知识库，透传 serving 原始结果 + 附加证据评估。
+
+    返回 serving 的完整 ContextPack（query, items, relations, evidence_groups,
+    sources, issues, suggestions, debug 等全部字段），额外附加一个
+    evidence_assessment 字段表示证据充分性评估结果。
 
     Args:
         query: 用户原问题
@@ -60,7 +59,6 @@ def search_knowledge(
         scope: 产品/网元等约束，如 {"products":["UDG"],"network_elements":["SMF"]}
         entities: 已识别实体列表，每个元素含 name, type
         debug: 是否返回检索过程诊断信息
-        max_text_length: 每个证据条目的文本截断长度，0 表示不截断
     """
     entity_refs = [EntityRef(**e) for e in entities] if entities else None
 
@@ -70,27 +68,8 @@ def search_knowledge(
         scope=scope,
         entities=entity_refs,
         debug=debug,
-        max_text_length=max_text_length,
     )
     return _search_knowledge(inp)
-
-
-@mcp.tool()
-def evaluate_evidence(
-    items_summary: list[dict],
-    intent: str = "",
-    query: str = "",
-) -> EvidenceAssessment:
-    """基于证据语义规则评估证据充分性（纯规则，不调 LLM）。
-
-    Args:
-        items_summary: 从 search_knowledge 返回的 items 中提取的摘要列表，
-                       每个元素含 evidence_role, score, semantic_role
-        intent: 检索到的 query intent
-        query: 原始问题（用于生成更精准的追问建议）
-    """
-    summaries = [ItemSummary(**s) for s in items_summary]
-    return _evaluate_evidence(summaries, intent, query)
 
 
 # ── Resources ────────────────────────────────────────────────────────────

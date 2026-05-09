@@ -10,13 +10,9 @@ import httpx
 
 from mcp_server.schemas import (
     HealthResult,
-    SearchResult,
-    QueryUnderstanding,
-    EvidenceItem,
-    SourceRef,
-    IssueNote,
     SearchInput,
 )
+from mcp_server.evidence_rules import evaluate_evidence as _evaluate_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +56,15 @@ def health_check() -> HealthResult:
         )
 
 
-def search_knowledge(inp: SearchInput) -> SearchResult:
-    """POST /api/v1/search — maps ContextPack → simplified SearchResult."""
+def search_knowledge(inp: SearchInput) -> dict:
+    """POST /api/v1/search — 透传 serving 原始结果 + 附加证据评估。
+
+    返回结构：
+    {
+        ...serving 原始返回的所有字段（query, items, relations, evidence_groups, sources, issues, suggestions, debug 等）...,
+        "evidence_assessment": { ... }  // MCP Server 附加的评估
+    }
+    """
     payload: dict = {
         "query": inp.query,
         "domain": inp.domain,
@@ -80,65 +83,26 @@ def search_knowledge(inp: SearchInput) -> SearchResult:
         )
         if resp.status_code != 200:
             logger.warning("search returned HTTP %d for query=%r", resp.status_code, inp.query[:80])
-            return SearchResult(
-                issues=[IssueNote(type="api_error", message=f"HTTP {resp.status_code}")],
-            )
+            return {"error": f"HTTP {resp.status_code}", "raw": resp.text[:500]}
         data = resp.json()
     except httpx.HTTPError as exc:
         logger.warning("search failed: %s", exc)
-        return SearchResult(
-            issues=[IssueNote(type="connection_error", message=str(exc))],
-        )
+        return {"error": str(exc)}
 
-    # --- map query understanding ---
-    raw_query = data.get("query", {})
-    query_understanding = QueryUnderstanding(
-        original=raw_query.get("original", inp.query),
-        intent=raw_query.get("intent", ""),
-        keywords=raw_query.get("keywords", []),
-        entities=raw_query.get("entities", []),
-    )
-
-    # --- map items ---
-    items: list[EvidenceItem] = []
-    for i, raw in enumerate(data.get("items", [])):
-        text = raw.get("text", "")
-        if inp.max_text_length > 0 and len(text) > inp.max_text_length:
-            text = text[: inp.max_text_length] + "..."
-        items.append(
-            EvidenceItem(
-                index=i,
-                role=raw.get("role", ""),
-                evidence_role=raw.get("evidence_role", ""),
-                score=raw.get("score", 0.0),
-                title=raw.get("title", ""),
-                semantic_role=raw.get("semantic_role", ""),
-                block_type=raw.get("block_type", ""),
-                text=text,
-                citation=raw.get("citation", {}),
-            )
+    # 从 serving 结果中提取信息，计算证据评估
+    items = data.get("items", [])
+    intent = data.get("query", {}).get("intent", "")
+    from mcp_server.schemas import ItemSummary
+    summaries = [
+        ItemSummary(
+            evidence_role=item.get("evidence_role", ""),
+            score=item.get("score", 0.0),
+            semantic_role=item.get("semantic_role", ""),
         )
-
-    # --- map sources ---
-    sources = [
-        SourceRef(
-            document_key=s.get("document_key", s.get("source_id", "")),
-            title=s.get("title", ""),
-        )
-        for s in data.get("sources", [])
+        for item in items
     ]
+    assessment = _evaluate_evidence(summaries, intent, inp.query)
 
-    # --- map issues ---
-    issues = [
-        IssueNote(type=iss.get("type", "unknown"), message=iss.get("message", ""))
-        for iss in data.get("issues", [])
-    ]
-
-    return SearchResult(
-        query_understanding=query_understanding,
-        items=items,
-        sources=sources,
-        issues=issues,
-        suggestions=data.get("suggestions", []),
-        item_count=len(items),
-    )
+    # 透传 serving 原始结果 + 附加评估
+    data["evidence_assessment"] = assessment.model_dump()
+    return data

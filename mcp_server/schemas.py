@@ -29,64 +29,14 @@ class SearchInput(BaseModel):
     scope: dict | None = None
     entities: list[EntityRef] | None = None
     debug: bool = False
-    max_text_length: int = 1000
 
 
-# --- search_knowledge output ---
-
-class QueryUnderstanding(BaseModel):
-    original: str = ""
-    intent: str = ""
-    keywords: list[str] = Field(default_factory=list)
-    entities: list[dict] = Field(default_factory=list)
-
-
-class EvidenceItem(BaseModel):
-    index: int
-    role: str = ""
-    evidence_role: str = ""
-    score: float = 0.0
-    title: str = ""
-    semantic_role: str = ""
-    block_type: str = ""
-    text: str = ""
-    citation: dict = Field(default_factory=dict)
-
-
-class SourceRef(BaseModel):
-    document_key: str = ""
-    title: str = ""
-
-
-class IssueNote(BaseModel):
-    type: str = ""
-    message: str = ""
-
-
-class SearchResult(BaseModel):
-    query_understanding: QueryUnderstanding = Field(default_factory=QueryUnderstanding)
-    items: list[EvidenceItem] = Field(default_factory=list)
-    sources: list[SourceRef] = Field(default_factory=list)
-    issues: list[IssueNote] = Field(default_factory=list)
-    suggestions: list[str] = Field(default_factory=list)
-    item_count: int = 0
-
-
-# --- evaluate_evidence input ---
+# --- evidence assessment (computed by MCP Server) ---
 
 class ItemSummary(BaseModel):
     evidence_role: str = ""
     score: float = 0.0
     semantic_role: str = ""
-
-
-class EvaluateInput(BaseModel):
-    items_summary: list[ItemSummary]
-    intent: str = ""
-    query: str = ""
-
-
-# --- evaluate_evidence output ---
 
 class EvidenceAssessment(BaseModel):
     evidence_sufficiency: str  # sufficient | partial | insufficient
