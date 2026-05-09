@@ -28,6 +28,8 @@ class PublishingStage:
 def classify_documents(
     asset_db: AssetCoreDB,
     snapshot_decisions: list[dict[str, Any]],
+    *,
+    detect_remove: bool = True,
 ) -> list[dict[str, Any]]:
     """Classify each document action by comparing with previous active build.
 
@@ -39,6 +41,11 @@ def classify_documents(
     - UPDATE: document exists but snapshot changed
     - SKIP: document exists and snapshot unchanged
     - REMOVE: document in previous build but not in current run (deleted file)
+
+    Args:
+        detect_remove: When False, skip REMOVE detection. Use for incremental
+            batch mining where each run only processes a subset of documents.
+            Parent build snapshots are carried forward by assemble_build instead.
     """
     prev_build = asset_db.get_active_build()
     prev_snapshots: dict[str, str] = {}  # document_id -> snapshot_id
@@ -47,20 +54,20 @@ def classify_documents(
         for ps in asset_db.get_build_snapshots(prev_build["id"]):
             prev_snapshots[ps["document_id"]] = ps["document_snapshot_id"]
 
-    # Track which documents are in the current run
-    current_doc_ids = {d["document_id"] for d in snapshot_decisions}
-
     # Detect REMOVE: documents in prev build but not in current run
-    for doc_id, snap_id in prev_snapshots.items():
-        if doc_id not in current_doc_ids:
-            snapshot_decisions.append({
-                "document_id": doc_id,
-                "document_snapshot_id": snap_id,
-                "action": "REMOVE",
-                "reason": "remove",
-                "selection_status": "removed",
-                "document_key": "",
-            })
+    # Skip when running incremental batches (each run = partial corpus)
+    if detect_remove:
+        current_doc_ids = {d["document_id"] for d in snapshot_decisions}
+        for doc_id, snap_id in prev_snapshots.items():
+            if doc_id not in current_doc_ids:
+                snapshot_decisions.append({
+                    "document_id": doc_id,
+                    "document_snapshot_id": snap_id,
+                    "action": "REMOVE",
+                    "reason": "remove",
+                    "selection_status": "removed",
+                    "document_key": "",
+                })
 
     for decision in snapshot_decisions:
         # Skip already-classified REMOVE entries

@@ -639,8 +639,10 @@ def _run_pipeline(
 
     # Build is always created if there are committed documents
     if not phase1_only and snapshot_decisions:
-        # Classify documents: NEW/UPDATE/SKIP/REMOVE against previous active build
-        snapshot_decisions = classify_documents(asset_db, snapshot_decisions)
+        # Classify documents: NEW/UPDATE/SKIP against previous active build
+        # REMOVE detection disabled — incremental batches only process a subset,
+        # parent build snapshots are carried forward by assemble_build instead.
+        snapshot_decisions = classify_documents(asset_db, snapshot_decisions, detect_remove=False)
 
         # Stage 7: Assemble build (auto-selects full vs incremental)
         evt = tracker.start_stage(run_id, "assemble_build")

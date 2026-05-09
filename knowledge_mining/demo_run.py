@@ -1,7 +1,13 @@
-"""Demo runner: drop & recreate PG tables + run mining pipeline with demo config.
+"""Demo runner: incremental mining pipeline.
 
 Usage:
     python knowledge_mining/demo_run.py
+
+Incremental mode: only processes new/changed documents, carries forward
+existing snapshots via assemble_build's incremental merge.
+
+To do a full reset (drop & recreate tables), uncomment the
+recreate_all_tables() call in main().
 
 All config comes from .env via MiningConfig / MiningDbConfig.
 """
@@ -19,8 +25,10 @@ logging.basicConfig(
 logger = logging.getLogger("demo_run")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = REPO_ROOT / "data" / "knowledge_base" / "5G核心网基础"
+DATA_DIR = REPO_ROOT / "data" / "knowledge_base" / "网络切片"
 
+# ── Full-reset helpers (commented out in main, kept for manual use) ──────
+#
 # Tables to drop (reverse order — children first for FK constraints)
 _ASSET_TABLES = [
     "asset_retrieval_embeddings",
@@ -71,7 +79,10 @@ def _apply_schema(conn, sql_path: Path, label: str) -> None:
 
 
 def recreate_all_tables(cfg) -> None:
-    """Drop and recreate all PG tables from schema files."""
+    """Drop and recreate all PG tables from schema files.
+
+    Call this for a full reset before the first run, or to start fresh.
+    """
     import psycopg
 
     conninfo = cfg.conninfo
@@ -85,6 +96,9 @@ def recreate_all_tables(cfg) -> None:
     logger.info("All tables recreated.")
 
 
+# ── Main ─────────────────────────────────────────────────────────────────
+
+
 def main() -> None:
     from knowledge_mining.mining.infra.pg_config import MiningDbConfig
     from knowledge_mining.mining.infra.mining_config import MiningConfig
@@ -93,11 +107,11 @@ def main() -> None:
     db_cfg = MiningDbConfig()
     mining_cfg = MiningConfig()
 
-    # Step 1: Drop & recreate all tables from schema files
-    recreate_all_tables(db_cfg)
+    # Full reset: uncomment the line below to drop & recreate all tables
+    # recreate_all_tables(db_cfg)
 
-    # Step 2: Run mining pipeline
-    logger.info("Starting demo mining run...")
+    # Run mining pipeline (incremental)
+    logger.info("Starting mining run...")
     logger.info("  input_path:       %s", DATA_DIR)
     logger.info("  llm_base_url:     %s", mining_cfg.llm_service_url)
     logger.info("  embedding_model:  %s", mining_cfg.embedding_model)
@@ -110,9 +124,9 @@ def main() -> None:
     )
     elapsed = time.perf_counter() - t0
 
-    # Step 3: Print summary
+    # Print summary
     print("\n" + "=" * 60)
-    print("DEMO MINING RUN COMPLETE")
+    print("MINING RUN COMPLETE")
     print("=" * 60)
     print(f"  Run ID:            {result['run_id']}")
     print(f"  Status:            {result['status']}")
