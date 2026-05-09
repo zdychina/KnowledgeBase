@@ -24,12 +24,15 @@ SERVING_URL = os.environ.get("SERVING_URL", "http://127.0.0.1:8000").rstrip("/")
 HEALTH_TIMEOUT = float(os.environ.get("HEALTH_TIMEOUT", "5.0"))
 SEARCH_TIMEOUT = float(os.environ.get("SEARCH_TIMEOUT", "60.0"))
 
+# 直连，不走任何代理（忽略 HTTP_PROXY / HTTPS_PROXY 环境变量）
+_client = httpx.Client(proxy=None)
+
 
 def health_check() -> HealthResult:
     """GET /health — returns structured result, never raises."""
     start = time.monotonic()
     try:
-        resp = httpx.get(f"{SERVING_URL}/health", timeout=HEALTH_TIMEOUT)
+        resp = _client.get(f"{SERVING_URL}/health", timeout=HEALTH_TIMEOUT)
         latency_ms = (time.monotonic() - start) * 1000
         if resp.status_code == 200:
             data = resp.json()
@@ -70,7 +73,7 @@ def search_knowledge(inp: SearchInput) -> SearchResult:
         payload["entities"] = [e.model_dump() for e in inp.entities]
 
     try:
-        resp = httpx.post(
+        resp = _client.post(
             f"{SERVING_URL}/api/v1/search",
             json=payload,
             timeout=SEARCH_TIMEOUT,
