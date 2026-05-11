@@ -19,4 +19,12 @@ public record ScoreChain(
     public ScoreChain {
         if (routeSources == null) routeSources = List.of();
     }
+
+    public ScoreChain withFusionScore(double newFusionScore) {
+        return new ScoreChain(rawScore, newFusionScore, rerankScore, routeSources);
+    }
+
+    public ScoreChain withRouteSources(List<String> newRouteSources) {
+        return new ScoreChain(rawScore, fusionScore, rerankScore, newRouteSources);
+    }
 }
