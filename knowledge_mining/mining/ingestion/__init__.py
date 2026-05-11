@@ -1,15 +1,23 @@
 """Ingestion module: recursive folder scan for v1.1.
 
-Discovers md/txt/html/htm/pdf/doc/docx files. Produces RawFileData objects
-with raw_content_hash and normalized_content_hash.
+Discovers md/txt/html/htm/pdf/doc/docx files plus compiled-help archives
+(.chm / .hdx) which are auto-extracted and converted to markdown on the fly.
+Produces RawFileData objects with raw_content_hash and normalized_content_hash.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from knowledge_mining.mining.contracts.models import BatchParams, RawFileData
 from knowledge_mining.mining.infra.hash_utils import compute_raw_hash, compute_snapshot_hash
+from knowledge_mining.mining.ingestion.preprocessing import (
+    SUPPORTED_ARCHIVE_EXTS,
+    archive_to_markdown,
+)
+
+logger = logging.getLogger(__name__)
 
 _EXTENSION_MAP: dict[str, str] = {
     ".md": "markdown",
@@ -20,9 +28,13 @@ _EXTENSION_MAP: dict[str, str] = {
     ".pdf": "pdf",
     ".doc": "doc",
     ".docx": "docx",
+    # Compiled-help archives — extracted + converted to markdown during ingest.
+    ".chm": "markdown",
+    ".hdx": "markdown",
 }
 
 PARSABLE_EXTENSIONS = {".md", ".markdown", ".txt"}
+PREPROCESS_EXTENSIONS = SUPPORTED_ARCHIVE_EXTS  # {".chm", ".hdx"}
 
 _SKIP_NAMES = {
     "manifest.jsonl", "manifest.json",
@@ -53,6 +65,7 @@ def ingest_directory(
         "discovered_documents": 0,
         "parsed_documents": 0,
         "unparsed_documents": 0,
+        "preprocessed_archives": 0,
         "skipped_files": 0,
         "failed_files": 0,
     }
@@ -76,8 +89,28 @@ def ingest_directory(
         try:
             content_bytes = file_path.read_bytes()
             raw_hash = compute_raw_hash(content_bytes)
+            metadata_json: dict[str, Any] = {}
 
-            if ext in PARSABLE_EXTENSIONS:
+            if ext in PREPROCESS_EXTENSIONS:
+                # .chm / .hdx — extract + convert to markdown on the fly.
+                try:
+                    content = archive_to_markdown(
+                        file_path,
+                        doc_title=file_path.stem,
+                    )
+                    summary["parsed_documents"] += 1
+                    summary["preprocessed_archives"] += 1
+                    metadata_json["source_format"] = ext.lstrip(".")
+                except Exception as e:
+                    logger.warning(
+                        "preprocess failed for %s: %s; registering without content",
+                        file_path, e,
+                    )
+                    content = ""
+                    summary["unparsed_documents"] += 1
+                    metadata_json["source_format"] = ext.lstrip(".")
+                    metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
+            elif ext in PARSABLE_EXTENSIONS:
                 content = content_bytes.decode("utf-8", errors="replace")
                 summary["parsed_documents"] += 1
             else:
@@ -100,7 +133,7 @@ def ingest_directory(
                 title=_infer_title(file_path, content, file_type),
                 scope_json=dict(batch_params.batch_scope),
                 tags_json=list(batch_params.tags),
-                metadata_json={},
+                metadata_json=metadata_json,
             )
             documents.append(doc)
         except Exception:
