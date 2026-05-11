@@ -1,6 +1,31 @@
-.claude/
-old/*
+# === Whitelist mode: ignore everything by default ===
+*
 
+# === Allowlisted directories ===
+!agent_serving/
+!agent_serving/**
+!databases/
+!databases/**
+!data/
+!data/**
+!knowledge_mining/
+!knowledge_mining/**
+!llm_service/
+!llm_service/**
+!mcp_server/
+!mcp_server/**
+
+# === Allowlisted root files ===
+!.env.example
+!.gitignore
+!README.md
+
+# === But still exclude these within allowlisted dirs ===
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# === Python cache (redundant safety) ===
 __pycache__/
 *.pyc
 *.pyo
