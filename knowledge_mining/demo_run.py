@@ -121,6 +121,7 @@ def main() -> None:
     result = run(
         input_path=DATA_DIR,
         publish_on_partial_failure=True,
+        llm_bypass_proxy=True,
     )
     elapsed = time.perf_counter() - t0
 
