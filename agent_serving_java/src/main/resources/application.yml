@@ -3,10 +3,14 @@ server:
 
 spring:
   datasource:
-    url: ${PG_URL:jdbc:postgresql://localhost:5432/coremasterkb}
-    username: ${PG_USER:postgres}
-    password: ${PG_PASSWORD:postgres}
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DBNAME:coremasterkb}
+    username: ${PG_USER:kb_user}
+    password: ${PG_PASSWORD:}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      minimum-idle: ${PG_POOL_MIN:2}
+      maximum-pool-size: ${PG_POOL_MAX:10}
+      connection-timeout: 5000
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml
@@ -14,14 +18,14 @@ mybatis:
 
 serving:
   scenario-packs-dir: ${SCENARIO_PACKS_DIR:../scenario_packs}
-  default-domain: ${DEFAULT_DOMAIN:cloud_core_network}
+  default-domain: ${COREMASTERKB_DOMAIN:${DEFAULT_DOMAIN:cloud_core_network}}
   llm:
-    base-url: ${LLM_BASE_URL:}
-    api-key: ${LLM_API_KEY:}
+    base-url: ${LLM_SERVICE_URL:}
+    api-key: ${LLM_SERVICE_PROVIDER_API_KEY:}
   zhipu:
-    api-key: ${ZHIPU_API_KEY:}
-    base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
-    rerank-model: ${RERANK_MODEL:bge-reranker-v2-m3}
+    api-key: ${RERANK_API_KEY:}
+    base-url: ${RERANK_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+    rerank-model: ${RERANK_MODEL:rerank-pro}
   embedding:
-    model: ${EMBEDDING_MODEL:}
+    model: ${EMBEDDING_MODEL:embedding-3}
     dimensions: ${EMBEDDING_DIMENSIONS:1024}

@@ -1,5 +1,6 @@
 package com.coremasterkb.serving.domain;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -24,6 +25,10 @@ public final class ServingConstants {
     public static final String ROUTE_LEXICAL_BM25 = "lexical_bm25";
     public static final String ROUTE_ENTITY_EXACT = "entity_exact";
     public static final String ROUTE_DENSE_VECTOR = "dense_vector";
+
+    public static final List<String> ALL_ROUTE_NAMES = List.of(
+            ROUTE_LEXICAL_BM25, ROUTE_ENTITY_EXACT, ROUTE_DENSE_VECTOR
+    );
 
     // ---- Role constants ----
     public static final String ROLE_SEED = "seed";
@@ -53,4 +58,10 @@ public final class ServingConstants {
             Map.entry("comparison", "comparison"),
             Map.entry("command_usage", "command_usage")
     );
+
+    // ---- Issue constants ----
+    public static final String ISSUE_NO_RESULT = "no_result";
+    public static final String ISSUE_LOW_CONFIDENCE = "low_confidence";
+    public static final String ISSUE_AMBIGUOUS_SCOPE = "ambiguous_scope";
+    public static final String ISSUE_PARTIAL_CONTEXT = "partial_context";
 }
