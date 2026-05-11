@@ -53,6 +53,171 @@
     </select>
 
     <!--
+        tsvector search with scope filter (facets_json JSONB @> containment).
+        scopeJsonParams is a list of JSON strings like {"product":["UDM"]}.
+        Each is applied as a separate facets_json @> condition.
+    -->
+    <select id="searchByFtsWithScope" resultMap="ftsResultMap">
+        SELECT ru.id,
+               ru.document_snapshot_id,
+               ru.text,
+               ru.title,
+               ru.block_type,
+               ru.semantic_role,
+               ru.source_refs_json,
+               ru.facets_json,
+               ru.target_type,
+               ru.target_ref_json,
+               ru.unit_type,
+               ru.source_segment_id,
+               ts_rank(
+                   to_tsvector('simple', ru.search_text),
+                   websearch_to_tsquery('simple', #{ftsQuery})
+               ) AS fts_score
+        FROM asset_retrieval_units ru
+        WHERE to_tsvector('simple', ru.search_text) @@ websearch_to_tsquery('simple', #{ftsQuery})
+          AND ru.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+        <if test="scopeJsonParams != null and scopeJsonParams.size() > 0">
+          AND
+          <foreach collection="scopeJsonParams" item="jp" separator=" AND ">
+              ru.facets_json @> #{jp}::jsonb
+          </foreach>
+        </if>
+        ORDER BY fts_score DESC
+        LIMIT #{limit}
+    </select>
+
+    <!--
+        pg_trgm trigram similarity fallback (no scope).
+        Uses similarity() for scoring and % operator for threshold filter.
+    -->
+    <select id="searchByTrigram" resultMap="ftsResultMap">
+        SELECT ru.id,
+               ru.document_snapshot_id,
+               ru.text,
+               ru.title,
+               ru.block_type,
+               ru.semantic_role,
+               ru.source_refs_json,
+               ru.facets_json,
+               ru.target_type,
+               ru.target_ref_json,
+               ru.unit_type,
+               ru.source_segment_id,
+               similarity(ru.text, #{queryText}) AS fts_score
+        FROM asset_retrieval_units ru
+        WHERE ru.text % #{queryText}
+          AND ru.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+        ORDER BY fts_score DESC
+        LIMIT #{limit}
+    </select>
+
+    <!--
+        pg_trgm trigram similarity with scope filter.
+    -->
+    <select id="searchByTrigramWithScope" resultMap="ftsResultMap">
+        SELECT ru.id,
+               ru.document_snapshot_id,
+               ru.text,
+               ru.title,
+               ru.block_type,
+               ru.semantic_role,
+               ru.source_refs_json,
+               ru.facets_json,
+               ru.target_type,
+               ru.target_ref_json,
+               ru.unit_type,
+               ru.source_segment_id,
+               similarity(ru.text, #{queryText}) AS fts_score
+        FROM asset_retrieval_units ru
+        WHERE ru.text % #{queryText}
+          AND ru.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+        <if test="scopeJsonParams != null and scopeJsonParams.size() > 0">
+          AND
+          <foreach collection="scopeJsonParams" item="jp" separator=" AND ">
+              ru.facets_json @> #{jp}::jsonb
+          </foreach>
+        </if>
+        ORDER BY fts_score DESC
+        LIMIT #{limit}
+    </select>
+
+    <!--
+        LIKE fallback (no scope): OR-connected LIKE clauses for each token.
+    -->
+    <select id="searchByLike" resultMap="ftsResultMap">
+        SELECT ru.id,
+               ru.document_snapshot_id,
+               ru.text,
+               ru.title,
+               ru.block_type,
+               ru.semantic_role,
+               ru.source_refs_json,
+               ru.facets_json,
+               ru.target_type,
+               ru.target_ref_json,
+               ru.unit_type,
+               ru.source_segment_id,
+               0.0 AS fts_score
+        FROM asset_retrieval_units ru
+        WHERE (
+          <foreach collection="likeTerms" item="term" separator=" OR ">
+              ru.text LIKE #{term}
+          </foreach>
+        )
+          AND ru.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+        LIMIT #{limit}
+    </select>
+
+    <!--
+        LIKE fallback with scope filter.
+    -->
+    <select id="searchByLikeWithScope" resultMap="ftsResultMap">
+        SELECT ru.id,
+               ru.document_snapshot_id,
+               ru.text,
+               ru.title,
+               ru.block_type,
+               ru.semantic_role,
+               ru.source_refs_json,
+               ru.facets_json,
+               ru.target_type,
+               ru.target_ref_json,
+               ru.unit_type,
+               ru.source_segment_id,
+               0.0 AS fts_score
+        FROM asset_retrieval_units ru
+        WHERE (
+          <foreach collection="likeTerms" item="term" separator=" OR ">
+              ru.text LIKE #{term}
+          </foreach>
+        )
+          AND ru.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+        <if test="scopeJsonParams != null and scopeJsonParams.size() > 0">
+          AND
+          <foreach collection="scopeJsonParams" item="jp" separator=" AND ">
+              ru.facets_json @> #{jp}::jsonb
+          </foreach>
+        </if>
+        LIMIT #{limit}
+    </select>
+
+    <!--
         Entity-exact search: finds units whose entity_refs_json (JSONB array)
         contains any element with a "name" matching one of the given entity names.
         Score is fixed at 0.95 to mark these as high-confidence exact matches.
