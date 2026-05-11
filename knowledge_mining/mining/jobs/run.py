@@ -20,6 +20,27 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+class MiningCancelled(Exception):
+    """Raised internally when a checkpoint observes mining_runs.status='cancelled'.
+
+    Caught at the top of _run_pipeline; never propagates out of run().
+    """
+
+
+def _check_cancelled(runtime_db: "MiningRuntimeDB", run_id: str) -> None:
+    """Cooperative cancel checkpoint.
+
+    Reads the current run row's status from PG; raises MiningCancelled if the
+    UI (or anyone else) has flipped it to 'cancelled'. Cheap (<1ms point query).
+    """
+    row = runtime_db._fetchone(
+        "SELECT status FROM mining_runs WHERE id = %s", (run_id,)
+    )
+    if row and row["status"] == "cancelled":
+        raise MiningCancelled()
+
+
 from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
 from knowledge_mining.mining.infra.pg_config import MiningDbConfig
 from knowledge_mining.mining.infra.pg_schema import ensure_schema
@@ -143,6 +164,8 @@ def run(
             publish_on_partial_failure, llm_services, embedding_generator,
             max_workers, profile,
         )
+    except MiningCancelled:
+        return {"run_id": run_id, "status": "cancelled"}
     except Exception as e:
         try:
             tracker = RuntimeTracker(runtime_db)
@@ -370,6 +393,7 @@ def _run_pipeline(
     snapshot_decisions: list[dict[str, Any]] = []
 
     # -- Phase 1a: Classify all docs, register in runtime, handle SKIP --
+    _check_cancelled(runtime_db, run_id)
     work_items: list[dict[str, Any]] = []  # docs that need pipeline processing
 
     for doc in docs:
@@ -430,7 +454,7 @@ def _run_pipeline(
             tags_json=doc.tags_json,
             title=doc.title,
         )
-        ctx = DocumentContext(raw_file=doc, profile=profile)
+        ctx = DocumentContext(raw_file=doc, profile=profile, run_document_id=rd_id)
         work_items.append({
             "doc": doc,
             "rd_id": rd_id,
@@ -442,6 +466,7 @@ def _run_pipeline(
         })
 
     # -- Phase 1b: Run streaming pipeline (all non-SKIP docs concurrently) --
+    _check_cancelled(runtime_db, run_id)
     if work_items:
         config = pipeline_config
         stages = [
@@ -453,7 +478,7 @@ def _run_pipeline(
             ("retrieval_units", lambda ctx: retrieval_units_stage(ctx, config), max_workers),
         ]
 
-        pipeline = StreamingPipeline(stages)
+        pipeline = StreamingPipeline(stages, run_id=run_id, tracker=tracker)
         ctxs = pipeline.process_all([item["ctx"] for item in work_items])
 
     # -- Phase 1c: Write results to DB (main thread, serial, no concurrency issues) --
