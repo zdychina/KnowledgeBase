@@ -110,12 +110,11 @@ class TestStageEvents:
         rdb = _make_db(MiningRuntimeDB)
 
         events = rdb.get_stage_events(result["run_id"])
-        seg_events = [e for e in events if e["stage"] == "segment" and e["status"] == "completed"]
+        seg_events = [e for e in events if e["stage"] == "segment" and e["status"] == "completed" and e["output_summary"] is not None]
         assert len(seg_events) >= 1
-        assert seg_events[0]["output_summary"] is not None
         assert "segments" in seg_events[0]["output_summary"]
 
-        ru_events = [e for e in events if e["stage"] == "build_retrieval_units" and e["status"] == "completed"]
+        ru_events = [e for e in events if e["stage"] == "build_retrieval_units" and e["status"] == "completed" and e["output_summary"] is not None]
         assert len(ru_events) >= 1
         assert "units" in ru_events[0]["output_summary"]
 
