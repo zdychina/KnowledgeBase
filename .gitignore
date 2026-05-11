@@ -10,6 +10,8 @@
 !data/**
 !knowledge_mining/
 !knowledge_mining/**
+!knowledge_mining_zym/
+!knowledge_mining_zym/**
 !llm_service/
 !llm_service/**
 !mcp_server/
