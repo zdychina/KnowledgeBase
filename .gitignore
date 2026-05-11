@@ -16,6 +16,8 @@
 !llm_service/**
 !mcp_server/
 !mcp_server/**
+!agent_serving_java/
+!agent_serving_java/**
 
 # === Allowlisted root files ===
 !.env.example
@@ -38,3 +40,14 @@ dist/
 build/
 *.egg
 .env
+
+# === Java/Maven build artifacts ===
+agent_serving_java/target/
+*.class
+*.jar
+*.war
+*.iml
+.idea/
+.settings/
+.project
+.classpath
