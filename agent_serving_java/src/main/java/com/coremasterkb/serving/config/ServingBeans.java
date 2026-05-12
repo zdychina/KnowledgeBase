@@ -16,6 +16,8 @@ import com.coremasterkb.serving.retrieval.EntityExactRetriever;
 import com.coremasterkb.serving.retrieval.FtsRetriever;
 import com.coremasterkb.serving.retrieval.GraphExpander;
 import com.coremasterkb.serving.retrieval.Retriever;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,6 +38,8 @@ import java.util.Map;
 @EnableConfigurationProperties(ServingProperties.class)
 public class ServingBeans {
 
+    private static final Logger log = LoggerFactory.getLogger(ServingBeans.class);
+
     // -------------------------------------------------------------------------
     // Infrastructure clients
     // -------------------------------------------------------------------------
@@ -47,7 +51,13 @@ public class ServingBeans {
 
     @Bean
     public LlmClient llmClient(RestTemplate restTemplate, ServingProperties properties) {
-        return new LlmClient(restTemplate, properties.llm().baseUrl(), properties.llm().apiKey());
+        LlmClient client = new LlmClient(restTemplate, properties.llm().baseUrl(), properties.llm().apiKey());
+        try {
+            client.ensureTemplates();
+        } catch (Exception e) {
+            log.warn("Template registration failed (non-fatal): {}", e.getMessage());
+        }
+        return client;
     }
 
     @Bean
