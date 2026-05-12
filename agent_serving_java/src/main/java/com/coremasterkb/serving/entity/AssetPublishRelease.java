@@ -5,6 +5,7 @@ public class AssetPublishRelease {
     private String id;
     private String status;
     private String domain;
+    private String channel;
     private String buildId;
 
     public String getId() {
@@ -29,6 +30,14 @@ public class AssetPublishRelease {
 
     public void setDomain(String domain) {
         this.domain = domain;
+    }
+
+    public String getChannel() {
+        return channel;
+    }
+
+    public void setChannel(String channel) {
+        this.channel = channel;
     }
 
     public String getBuildId() {

@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
             'other'
         )
     ),
+    domain        TEXT NOT NULL DEFAULT 'default',
     description   TEXT,
     created_by    TEXT,
     created_at    TEXT NOT NULL,
@@ -251,6 +252,7 @@ CREATE TABLE IF NOT EXISTS asset_builds (
         status IN ('building', 'validated', 'failed', 'published', 'archived')
     ),
     build_mode       TEXT NOT NULL CHECK (build_mode IN ('full', 'incremental')),
+    domain           TEXT NOT NULL DEFAULT 'default',
     source_batch_id  TEXT REFERENCES asset_source_batches(id) ON DELETE SET NULL,
     parent_build_id  TEXT REFERENCES asset_builds(id) ON DELETE SET NULL,
     mining_run_id    TEXT,
@@ -283,7 +285,8 @@ CREATE TABLE IF NOT EXISTS asset_publish_releases (
     id                   TEXT PRIMARY KEY,
     release_code         TEXT NOT NULL UNIQUE,
     build_id             TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE RESTRICT,
-    channel              TEXT NOT NULL,
+    domain               TEXT NOT NULL DEFAULT 'default',
+    channel              TEXT NOT NULL DEFAULT 'prod',
     status               TEXT NOT NULL CHECK (status IN ('staging', 'active', 'retired', 'failed')),
     previous_release_id  TEXT REFERENCES asset_publish_releases(id) ON DELETE SET NULL,
     released_by          TEXT,
@@ -293,15 +296,15 @@ CREATE TABLE IF NOT EXISTS asset_publish_releases (
     metadata_json        JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_channel_active
-    ON asset_publish_releases(channel)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_channel_active
+    ON asset_publish_releases(domain, channel)
     WHERE status = 'active';
 
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_build
     ON asset_publish_releases(build_id);
 
-CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_channel_status
-    ON asset_publish_releases(channel, status);
+CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_channel_status
+    ON asset_publish_releases(domain, channel, status);
 
 -- Function to auto-update search_vector from text + title + search_text
 CREATE OR REPLACE FUNCTION asset_retrieval_units_search_vector_update() RETURNS trigger AS $$

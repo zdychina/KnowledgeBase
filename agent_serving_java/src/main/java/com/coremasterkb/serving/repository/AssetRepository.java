@@ -48,21 +48,25 @@ public class AssetRepository {
      * @throws IllegalArgumentException("no_active_release") if zero active releases found
      * @throws IllegalArgumentException("multiple_active_releases") if more than 1 active releases found
      */
-    public ActiveScope resolveActiveScope(String domain) {
-        if (domain == null) {
-            domain = "default";
-        }
+    public ActiveScope resolveActiveScope(String domain, String channel) {
+        String effectiveDomain = (domain != null) ? domain : "default";
+        String effectiveChannel = (channel != null) ? channel : "prod";
 
-        List<AssetPublishRelease> releases = releaseMapper.selectActiveByDomain(domain);
+        List<AssetPublishRelease> releases = releaseMapper.selectActiveByDomain(effectiveDomain);
 
-        if (releases.isEmpty()) {
+        // Filter by channel
+        List<AssetPublishRelease> filtered = releases.stream()
+                .filter(r -> effectiveChannel.equals(r.getChannel()))
+                .toList();
+
+        if (filtered.isEmpty()) {
             throw new IllegalArgumentException("no_active_release");
         }
-        if (releases.size() > 1) {
+        if (filtered.size() > 1) {
             throw new IllegalArgumentException("multiple_active_releases");
         }
 
-        AssetPublishRelease release = releases.get(0);
+        AssetPublishRelease release = filtered.get(0);
 
         List<AssetBuildDocumentSnapshot> snapshots =
                 buildSnapshotMapper.selectByBuildIdAndStatus(release.getBuildId(), "active");
@@ -79,6 +83,11 @@ public class AssetRepository {
         }
 
         return new ActiveScope(release.getId(), release.getBuildId(), snapshotIds, documentSnapshotMap);
+    }
+
+    /** Convenience overload: default channel = "prod". */
+    public ActiveScope resolveActiveScope(String domain) {
+        return resolveActiveScope(domain, "prod");
     }
 
     // -------------------------------------------------------------------------

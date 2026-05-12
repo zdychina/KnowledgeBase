@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
     id            TEXT        NOT NULL,
     batch_code    TEXT        NOT NULL,
     source_type   TEXT        NOT NULL,   -- manual_upload | folder_scan | api_import | official_vendor | expert_authored | user_import | synthetic_coldstart | other
+    domain        TEXT        NOT NULL DEFAULT 'default',
     description   TEXT,
     created_by    TEXT,
     created_at    TEXT        NOT NULL,
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS asset_builds (
     build_code      TEXT NOT NULL,
     status          TEXT NOT NULL,   -- queued | running | succeeded | failed | cancelled
     build_mode      TEXT NOT NULL,
+    domain          TEXT NOT NULL DEFAULT 'default',
     source_batch_id TEXT,
     parent_build_id TEXT,
     mining_run_id   TEXT,
@@ -200,7 +202,8 @@ CREATE TABLE IF NOT EXISTS asset_publish_releases (
     id                  TEXT NOT NULL,
     release_code        TEXT NOT NULL,
     build_id            TEXT NOT NULL,
-    domain              TEXT NOT NULL,
+    domain              TEXT NOT NULL DEFAULT 'default',
+    channel             TEXT NOT NULL DEFAULT 'prod',
     status              TEXT NOT NULL,   -- active | inactive | archived
     previous_release_id TEXT,
     released_by         TEXT,
@@ -285,12 +288,21 @@ CREATE INDEX IF NOT EXISTS idx_asset_bds_snapshot
     ON asset_build_document_snapshots (document_snapshot_id);
 
 -- ---- asset_publish_releases ----
--- resolveActiveScope: WHERE domain=? AND status='active'
-CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_status
-    ON asset_publish_releases (domain, status);
+-- resolveActiveScope: WHERE domain=? AND channel=? AND status='active'
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_channel_active
+    ON asset_publish_releases(domain, channel) WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_channel_status
+    ON asset_publish_releases(domain, channel, status);
 
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_build
-    ON asset_publish_releases (build_id);
+    ON asset_publish_releases(build_id);
+
+CREATE INDEX IF NOT EXISTS idx_asset_builds_domain_status
+    ON asset_builds(domain, status);
+
+CREATE INDEX IF NOT EXISTS idx_asset_source_batches_domain
+    ON asset_source_batches(domain);
 
 
 -- =============================================================================
