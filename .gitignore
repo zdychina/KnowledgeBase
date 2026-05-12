@@ -18,6 +18,10 @@
 !mcp_server/**
 !agent_serving_java/
 !agent_serving_java/**
+!agent_serving_fzl/
+!agent_serving_fzl/**
+!agent_serving_zdy/
+!agent_serving_zdy/**
 
 # === Allowlisted root files ===
 !.env.example

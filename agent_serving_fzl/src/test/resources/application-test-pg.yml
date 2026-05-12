@@ -1,0 +1,31 @@
+server:
+  port: 0
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DBNAME:coremasterkb}
+    username: ${PG_USER:kb_user}
+    password: ${PG_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      minimum-idle: 1
+      maximum-pool-size: 3
+      connection-timeout: 3000
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.coremasterkb.serving.entity
+
+serving:
+  scenario-packs-dir: ${SCENARIO_PACKS_DIR:../scenario_packs}
+  default-domain: cloud_core_network
+  llm:
+    base-url: ""
+    api-key: ""
+  zhipu:
+    api-key: ""
+    base-url: ""
+    rerank-model: rerank-pro
+  embedding:
+    model: embedding-3
+    dimensions: 1024

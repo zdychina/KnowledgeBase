@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.coremasterkb.serving.system.HealthE2ETest
+-------------------------------------------------------------------------------
+Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.307 s -- in com.coremasterkb.serving.system.HealthE2ETest

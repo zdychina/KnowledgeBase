@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coremasterkb.serving.mapper.AssetBuildDocumentSnapshotMapper">
+
+    <resultMap id="buildSnapshotResult"
+               type="com.coremasterkb.serving.entity.AssetBuildDocumentSnapshot">
+        <result column="document_snapshot_id" property="documentSnapshotId"/>
+        <result column="build_id"             property="buildId"/>
+        <result column="document_id"          property="documentId"/>
+        <result column="selection_status"     property="selectionStatus"/>
+    </resultMap>
+
+    <select id="selectByBuildIdAndStatus" resultMap="buildSnapshotResult">
+        SELECT document_snapshot_id, build_id, document_id, selection_status
+        FROM asset_build_document_snapshots
+        WHERE build_id = #{buildId}
+          AND selection_status = #{selectionStatus}
+    </select>
+
+</mapper>
