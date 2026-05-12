@@ -49,6 +49,8 @@ build/
 
 # === Java/Maven build artifacts ===
 agent_serving_java/target/
+agent_serving_zdy/target/
+**/target/
 *.class
 *.jar
 *.war

@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.coremasterkb.serving.mapper.AssetRawSegmentMapperIT
--------------------------------------------------------------------------------
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 1, Time elapsed: 0.323 s -- in com.coremasterkb.serving.mapper.AssetRawSegmentMapperIT
