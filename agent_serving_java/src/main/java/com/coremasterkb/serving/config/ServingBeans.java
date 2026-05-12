@@ -132,11 +132,16 @@ public class ServingBeans {
     }
 
     @Bean
+    public LlmServiceReranker llmServiceReranker(LlmClient llmClient) {
+        return new LlmServiceReranker(llmClient);
+    }
+
+    @Bean
     public RerankPipeline rerankPipeline(
-            ZhipuModelReranker zhipuModelReranker,
+            LlmServiceReranker llmServiceReranker,
             LlmReranker llmReranker,
             ScoreReranker scoreReranker) {
-        return new RerankPipeline(zhipuModelReranker, llmReranker, scoreReranker);
+        return new RerankPipeline(llmServiceReranker, llmReranker, scoreReranker);
     }
 
     // -------------------------------------------------------------------------
