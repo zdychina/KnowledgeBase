@@ -8,7 +8,8 @@ public record ServingProperties(
     String defaultDomain,
     LlmConfig llm,
     ZhipuConfig zhipu,
-    EmbeddingConfig embedding
+    EmbeddingConfig embedding,
+    RerankConfig rerank
 ) {
     public record LlmConfig(String baseUrl, String apiKey) {
         public LlmConfig {
@@ -31,11 +32,18 @@ public record ServingProperties(
         }
     }
 
+    public record RerankConfig(String model) {
+        public RerankConfig {
+            if (model == null) model = "rerank-pro";
+        }
+    }
+
     public ServingProperties {
         if (scenarioPacksDir == null) scenarioPacksDir = "../scenario_packs";
         if (defaultDomain == null) defaultDomain = "cloud_core_network";
         if (llm == null) llm = new LlmConfig("", "");
         if (zhipu == null) zhipu = new ZhipuConfig("", "", "");
         if (embedding == null) embedding = new EmbeddingConfig("", 1024);
+        if (rerank == null) rerank = new RerankConfig("rerank-pro");
     }
 }

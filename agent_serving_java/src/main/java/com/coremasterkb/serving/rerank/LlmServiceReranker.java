@@ -28,7 +28,11 @@ public class LlmServiceReranker implements Reranker {
     private final int topN;
 
     public LlmServiceReranker(LlmClient llmClient) {
-        this(llmClient, "rerank", MAX_RERANK_DOCS);
+        this(llmClient, "rerank-pro", MAX_RERANK_DOCS);
+    }
+
+    public LlmServiceReranker(LlmClient llmClient, String model) {
+        this(llmClient, model, MAX_RERANK_DOCS);
     }
 
     public LlmServiceReranker(LlmClient llmClient, String model, int topN) {

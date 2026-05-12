@@ -132,8 +132,8 @@ public class ServingBeans {
     }
 
     @Bean
-    public LlmServiceReranker llmServiceReranker(LlmClient llmClient) {
-        return new LlmServiceReranker(llmClient);
+    public LlmServiceReranker llmServiceReranker(LlmClient llmClient, ServingProperties properties) {
+        return new LlmServiceReranker(llmClient, properties.rerank().model());
     }
 
     @Bean

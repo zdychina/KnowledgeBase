@@ -29,3 +29,5 @@ serving:
   embedding:
     model: ${EMBEDDING_MODEL:embedding-3}
     dimensions: ${EMBEDDING_DIMENSIONS:1024}
+  rerank:
+    model: ${RERANK_MODEL:rerank-pro}
