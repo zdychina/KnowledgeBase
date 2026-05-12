@@ -49,6 +49,13 @@ public class QueryLogService {
             entry.setDurationMs((int) Math.min(durationMs, Integer.MAX_VALUE));
             entry.setQueryText(request.query());
             entry.setMetadataJson("{}");
+            entry.setKeywordsJson("[]");
+            entry.setEntitiesJson("[]");
+            entry.setScopeJson("{}");
+            entry.setResultIssuesJson("[]");
+            entry.setResultItemsJson("[]");
+            entry.setResultSourcesJson("[]");
+            entry.setResultRelationsJson("[]");
 
             if (pack != null && pack.query() != null) {
                 ContextQuery q = pack.query();

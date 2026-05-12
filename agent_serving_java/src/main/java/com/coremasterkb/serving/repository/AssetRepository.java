@@ -5,6 +5,8 @@ import com.coremasterkb.serving.entity.AssetBuildDocumentSnapshot;
 import com.coremasterkb.serving.entity.AssetPublishRelease;
 import com.coremasterkb.serving.mapper.*;
 import com.coremasterkb.serving.mapper.result.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 import java.util.*;
@@ -15,6 +17,8 @@ import java.util.*;
  */
 @Repository
 public class AssetRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(AssetRepository.class);
 
     private final AssetPublishReleaseMapper releaseMapper;
     private final AssetBuildDocumentSnapshotMapper buildSnapshotMapper;
@@ -60,9 +64,14 @@ public class AssetRepository {
                 .toList();
 
         if (filtered.isEmpty()) {
+            log.warn("No active release found: domain={}, channel={}, total_active={}",
+                    effectiveDomain, effectiveChannel, releases.size());
             throw new IllegalArgumentException("no_active_release");
         }
         if (filtered.size() > 1) {
+            List<String> ids = filtered.stream().map(AssetPublishRelease::getId).toList();
+            log.error("Multiple active releases found: domain={}, channel={}, count={}, ids={}",
+                    effectiveDomain, effectiveChannel, filtered.size(), ids);
             throw new IllegalArgumentException("multiple_active_releases");
         }
 
