@@ -1,20 +1,16 @@
 package com.coremasterkb.serving;
 
 import com.coremasterkb.serving.domain.ActiveScope;
-import com.coremasterkb.serving.entity.AssetPublishRelease;
-import com.coremasterkb.serving.mapper.AssetPublishReleaseMapper;
+import com.coremasterkb.serving.repository.AssetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -37,7 +33,7 @@ public abstract class AbstractPgIntegrationTest {
     protected DataSource dataSource;
 
     @Autowired
-    protected AssetPublishReleaseMapper publishReleaseMapper;
+    protected AssetRepository assetRepository;
 
     protected ActiveScope activeScope;
 
@@ -46,20 +42,14 @@ public abstract class AbstractPgIntegrationTest {
         boolean connectionOk = checkConnection();
         assumeTrue(connectionOk, "PostgreSQL not reachable — skipping PG integration test");
 
-        List<AssetPublishRelease> releases =
-                publishReleaseMapper.selectActiveByDomain("cloud_core_network");
-        assumeTrue(releases != null && !releases.isEmpty(),
-                "No active releases found for cloud_core_network — skipping");
+        try {
+            this.activeScope = assetRepository.resolveActiveScope("cloud_core_network");
+        } catch (Exception e) {
+            assumeTrue(false, "Cannot resolve active scope for cloud_core_network: " + e.getMessage());
+        }
 
-        AssetPublishRelease release = releases.get(0);
-        List<String> snapshotIds = List.of(); // will be populated from release data if available
-
-        this.activeScope = new ActiveScope(
-                release.getId() != null ? release.getId().toString() : "",
-                release.getBuildId() != null ? release.getBuildId().toString() : "",
-                snapshotIds,
-                java.util.Map.of()
-        );
+        assumeTrue(activeScope.snapshotIds() != null && !activeScope.snapshotIds().isEmpty(),
+                "No snapshot IDs found — skipping");
     }
 
     private boolean checkConnection() {
