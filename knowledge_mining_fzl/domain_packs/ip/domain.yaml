@@ -1,0 +1,427 @@
+# IP / Datacenter Networking Domain Pack
+# 适用于 SDN / EVPN+VXLAN / Spine-Leaf / 智能无损 / Huawei CloudFabric 等 IP 数据中心网络资料
+
+domain_id: ip
+display_name: "IP / Datacenter Networking (SDN / CloudFabric)"
+
+# ---------------------------------------------------------------------------
+# Entity configuration
+# ---------------------------------------------------------------------------
+
+entity_types:
+  - command
+  - network_protocol
+  - network_role
+  - network_device
+  - network_feature
+  - interface
+  - parameter
+  - concept
+
+strong_entity_types:
+  - command
+  - network_protocol
+  - network_role
+  - network_device
+  - network_feature
+  - interface
+
+# ---------------------------------------------------------------------------
+# Semantic role mapping: section title keywords -> core semantic_role
+# ---------------------------------------------------------------------------
+
+role_keyword_rules:
+  - keywords: ["参数", "参数说明", "配置参数"]
+    role: parameter
+  - keywords: ["配置示例", "命令示例", "举例", "典型组网", "示例"]
+    role: example
+  - keywords: ["配置步骤", "操作步骤", "搬迁步骤", "部署步骤", "对接步骤", "前置检查", "checklist"]
+    role: procedure_step
+  - keywords: ["故障", "排障", "故障处理", "问题分析", "troubleshoot"]
+    role: troubleshooting_step
+  - keywords: ["注意事项", "限制", "约束", "前提条件", "适用范围", "constraint"]
+    role: constraint
+  - keywords: ["告警", "alarm"]
+    role: alarm
+  - keywords: ["概述", "简介", "原理", "背景", "架构"]
+    role: concept
+
+# ---------------------------------------------------------------------------
+# Heading role classification: heading keywords -> heading role
+# ---------------------------------------------------------------------------
+
+heading_role_keywords:
+  - keywords: ["参数", "参数说明", "配置参数"]
+    role: parameter_definition
+  - keywords: ["配置示例", "命令示例", "举例", "典型组网"]
+    role: example_section
+  - keywords: ["配置步骤", "操作步骤", "搬迁步骤", "部署步骤", "对接步骤"]
+    role: procedure_section
+  - keywords: ["故障", "排障", "问题分析"]
+    role: troubleshooting_section
+  - keywords: ["注意事项", "限制", "约束", "适用范围"]
+    role: constraint_section
+  - keywords: ["概述", "简介", "原理", "背景", "架构", "功能"]
+    role: overview_section
+
+# ---------------------------------------------------------------------------
+# Rule-based extractors (regex)
+# ---------------------------------------------------------------------------
+
+extractor_rules:
+  # 二/三层协议、路由协议、SDN/EVPN 类协议
+  - name: network_protocol
+    pattern: "(?<![A-Za-z0-9_])(VXLAN|EVPN|BGP[- ]EVPN|BGP|OSPFv3|OSPF|IS-IS|EIGRP|RIPng|RIP|VRRP|HSRP|MSTP|RSTP|PVST\\+?|STP|LACP|BFD|LLDP|ARP|NDP|GRE|IPSec|IPsec|MPLS|LDP|SR-MPLS|SRv6|SR|PIM|IGMP|MLD|DHCP|DHCPv6|DNS|NTP|SNMP|RADIUS|TACACS\\+?|SSH|SFTP|FTP|HTTP|HTTPS|gRPC|gNMI|NETCONF|RESTCONF|YANG|sFlow|NetStream|Telemetry|PFCP|GTP-U|GTPv2)(?![A-Za-z0-9_])"
+    entity_type: network_protocol
+
+  # 数据中心高性能/无损网络特性
+  - name: lossless_feature
+    pattern: "(?<![A-Za-z0-9_])(PFC|ECN|AI ECN|ABS PFC|RoCE|RoCEv2|NOF\\+?|iNOF|iNOFv6|DPFR|RPFR|MACSec|DCBX|ETS|QCN|HQoS|WRED|RED)(?![A-Za-z0-9_])"
+    entity_type: network_feature
+
+  # Spine-Leaf 角色
+  - name: network_role
+    pattern: "(?<![A-Za-z0-9_])(Border Leaf|Service Leaf|Server Leaf|DCI Leaf|Spine|TOR|Leaf|RR|Route Reflector|M-LAG|MLAG|VPC peer|vPC peer|Fabric|Underlay|Overlay)(?![A-Za-z0-9_])"
+    entity_type: network_role
+
+  # 华为/友商主流数据中心交换机/防火墙/存储
+  - name: network_device
+    pattern: "(?<![A-Za-z0-9_])(CE\\d{4,5}[A-Z0-9-]*|S\\d{4,5}[A-Z0-9-]*|NE\\d{2,4}[A-Z0-9-]*|Dorado\\s?V?\\d+|USG\\d{4,5}[A-Z0-9-]*|AR\\d{3,4}[A-Z0-9-]*|N9K-[A-Z0-9-]+|Nexus\\s?\\d{4,5}|ASR\\s?\\d{3,4}|Catalyst\\s?\\d{4,5})(?![A-Za-z0-9_])"
+    entity_type: network_device
+
+  # Huawei VRP CLI 命令片段（动词 + 对象）
+  - name: vrp_command
+    pattern: "(?<![A-Za-z0-9_])(display|undo|reset|debugging|interface|vlan|bridge-domain|evpn|bgp|ospf|isis|stp|m-lag|dcb|qos|acl|traffic-policy|nqa|ip|ipv6|route-policy|nvo3|vxlan|l2vpn|sysname|system-view|commit|save|return)(?:\\s+([A-Za-z][A-Za-z0-9_-]{0,40}(?:\\s+[A-Za-z0-9_./:-]{1,40}){0,4}))?(?![A-Za-z0-9_])"
+    entity_type: command
+    groups:
+      - index: 0
+        format: "{group1} {group2}"
+
+  # 接口名（GE/10GE/25GE/40GE/100GE/400GE/Eth-Trunk/Vlanif/LoopBack/Tunnel/Bridge-Domain）
+  - name: interface
+    pattern: "(?<![A-Za-z0-9_])(GE|10GE|25GE|40GE|100GE|400GE|Eth-Trunk|Trunk|Vlanif|Vlan-interface|LoopBack|Loopback|Tunnel|Bridge-Domain|BD|Nve|NVE)\\s?(\\d+(?:/\\d+){0,3})?(?![A-Za-z0-9_])"
+    entity_type: interface
+    groups:
+      - index: 0
+        format: "{group1}{group2}"
+
+  # VLAN/VNI/VPN-instance/VPC ID
+  - name: vlan_vni_id
+    pattern: "(?<![A-Za-z0-9_])(VLAN|VNI|BD|VPN-instance|VPC|VRF)\\s?(?:ID\\s?)?[:：]?\\s?([0-9]{1,8})(?![A-Za-z0-9_])"
+    entity_type: parameter
+    groups:
+      - index: 0
+        format: "{group1} {group2}"
+
+  # IPv4 / IPv6 CIDR
+  - name: ipv4_cidr
+    pattern: "(?<![0-9.])((?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}/[0-9]{1,2})(?![0-9.])"
+    entity_type: parameter
+
+  # 告警 / 事件
+  - name: alarm
+    pattern: "(?<![A-Za-z0-9_])(ALM-[A-Z][A-Z0-9_-]{2,40}|hwIfNetworkPort\\w*|hwBgp[A-Z]\\w*)(?![A-Za-z0-9_-])"
+    entity_type: alarm
+
+# ---------------------------------------------------------------------------
+# Table parameter column names (used by entity extractor for table segments)
+# ---------------------------------------------------------------------------
+
+parameter_column_names:
+  - "参数名称"
+  - "参数标识"
+  - "参数名"
+  - "字段"
+  - "Field"
+  - "Parameter"
+  - "命令字"
+
+# ---------------------------------------------------------------------------
+# Section-title command pattern
+# ---------------------------------------------------------------------------
+
+# Huawei VRP 风格命令通常是“display / undo / interface / bgp ...”作为标题
+section_title_command_pattern: "^(display|undo|reset|interface|vlan|bridge-domain|evpn|bgp|ospf|isis|stp|m-lag|dcb|qos|acl|nvo3|vxlan|l2vpn)\\s+(\\S+)"
+
+# ---------------------------------------------------------------------------
+# Retrieval policy
+# ---------------------------------------------------------------------------
+
+retrieval_policy:
+  raw_text: primary
+  generated_question: auxiliary
+  entity_card: strong_entities_only
+  table_row: structured_tables
+  max_questions_per_segment: 2
+  max_entity_cards_per_segment: 3
+
+# ---------------------------------------------------------------------------
+# LLM templates
+# ---------------------------------------------------------------------------
+
+llm_templates:
+  - template_key: mining-question-gen
+    template_version: "1"
+    purpose: "从 IP/数据中心网络段落生成假设性检索问题"
+    system_prompt: "你是 IP 数据中心网络（SDN / EVPN+VXLAN / Spine-Leaf / 智能无损）知识库的检索优化助手。你判断段落是否值得生成问题，如果是则生成高质量检索问题。"
+    user_prompt_template: >
+      分析以下 IP / 数据中心网络技术文档段落：
+
+      段落标题：$title
+      段落内容：$content
+
+      首先评估该段落是否包含值得生成问题的实质性知识：
+      - 如果是目录、导航列表、纯链接/锚点列表：输出空数组 []
+      - 如果是大量空值或占位符的稀疏表格：输出空数组 []
+      - 如果内容过于简短或模糊（如仅"概述"、"参考"等空标题）：输出空数组 []
+
+      如果段落确实包含实质性知识（协议原理、组网设计、配置步骤、命令、参数、故障处置等），生成 1-2 个问题：
+      - 问题必须能从该段落中找到明确答案
+      - 问题应测试知识理解，而非导航
+      - 优先生成"如何配置 X / X 的作用 / X 与 Y 的区别 / X 故障如何排查"这类工程师常问问题
+      - 避免生成高度相似或近义的问题
+
+      输出 JSON 数组，每个元素包含 question 字段。无合适问题时输出空数组 []。
+    expected_output_type: json_array
+    output_schema_json: '{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"],"additionalProperties":false}}'
+
+  - template_key: mining-segment-understanding
+    template_version: "1"
+    purpose: "从 IP / 数据中心网络段落提取实体、分类语义角色、评估内容质量"
+    system_prompt: "你是 IP 数据中心网络（SDN / EVPN+VXLAN / Spine-Leaf / 智能无损）知识库的内容理解助手。分析技术文档段落，提取关键实体、分类语义角色，并评估内容质量。"
+    user_prompt_template: >
+      分析以下 IP / 数据中心网络技术文档段落：
+
+      段落标题：$section_title
+      内容类型：$block_type
+      段落内容：$text
+
+      输出 JSON 对象，包含：
+      - entities: 实体列表，每个元素包含 type 和 name
+        type 可选值：command / network_protocol / network_role / network_device / network_feature / interface / parameter / concept
+
+      实体抽取指引：
+      - command: Huawei VRP / Cisco IOS 等 CLI 命令片段，例如 `dcb pfc global disable`、`display bgp evpn peer`
+      - network_protocol: BGP、OSPF、VRRP、EVPN、VXLAN、PFCP、LACP、BFD、MPLS、SRv6 等通信/路由/隧道协议
+      - network_role: Spine、Border Leaf、Service Leaf、Server Leaf、DCI Leaf、TOR、RR、M-LAG 等组网角色
+      - network_device: 具体型号，如 CE16800、CE6881、Dorado V6、Nexus 9508
+      - network_feature: 数据中心特性，如 AI ECN、ABS PFC、NOF+、iNOF、DPFR、MACSec、PFC 死锁检测
+      - interface: 物理或逻辑接口，如 100GE1/0/1、Vlanif10、Eth-Trunk1、Nve1、Loopback0
+      - parameter: 配置参数 / 字段（VLAN ID、VNI、MTU、ECN 阈值、超时时间等）
+      - concept: 文档显式定义的非上述类型概念（VPC、Underlay、Overlay、Fabric 等）
+      - 仅提取段落中明确出现、有专有名称的实体；不要强行分类
+
+      - semantic_role: 语义角色（concept / parameter / example / note / procedure_step / troubleshooting_step / constraint / alarm / checklist / unknown）
+      - document_type: 文档类型提示（command / feature / procedure / troubleshooting / alarm / constraint / checklist / reference / other）
+      - content_assessment: 内容质量评估
+        - is_substantive: 是否包含实质性知识
+        - is_navigation: 是否是导航/目录内容
+        - assessment_reason: 一句话说明判断依据
+
+      内容质量评估指引：
+      - 锚点列表、目录索引、纯链接 → is_substantive=false, is_navigation=true
+      - 含具体协议描述、配置步骤、参数说明、命令、故障处置 → is_substantive=true
+      - 稀疏表格（大量空值或"-"占位）视为非实质性内容
+    expected_output_type: json_object
+    output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
+
+  - template_key: mining-discourse-relation
+    template_version: "1"
+    purpose: "分析 IP / 数据中心网络段落间的语篇关系（RST 修辞结构理论）"
+    system_prompt: "你是 IP 数据中心网络技术文档的语篇关系分析专家。分析给定段落列表中相邻段落之间的修辞关系。"
+    user_prompt_template: >
+      分析以下编号段落之间的语篇关系：
+
+      $segments
+
+      对每对相邻或同节段落，判断其修辞关系。可选关系类型：
+      - ELABORATES / EVIDENCES / CAUSES / RESULTS_IN / BACKGROUNDS / CONDITIONS
+      - SUMMARIZES / JUSTIFIES / ENABLES / CONTRASTS_WITH / PARALLELS / SEQUENCES / UNRELATED
+
+      输出 JSON 数组，每个元素包含：
+      - source: 源段落编号（整数）
+      - target: 目标段落编号（整数）
+      - relation: 关系类型（大写）
+      - confidence: 置信度（0.0-1.0）
+
+      只输出有明确关系的段落对，跳过 UNRELATED 的。
+    expected_output_type: json_array
+    output_schema_json: '{"type":"array","items":{"type":"object","properties":{"source":{"type":"integer"},"target":{"type":"integer"},"relation":{"type":"string"},"confidence":{"type":"number","minimum":0.0,"maximum":1.0}},"required":["source","target","relation","confidence"],"additionalProperties":false}}'
+
+  - template_key: mining-contextual-retrieval
+    template_version: "1"
+    purpose: "为 IP / 数据中心网络段落生成上下文描述，增强检索效果"
+    system_prompt: "你是 IP 数据中心网络技术文档的检索上下文定位助手。"
+    user_prompt_template: >
+      文档全文：
+      $document
+
+      段落内容：
+      $segment
+
+      请生成一句 20-40 字的中文上下文标签，说明该段落在文档中的位置和主题（例如所属章节、面向的组网场景）。
+      不要复述段落内容，只补充从段落文本中无法直接看出的上下文信息。
+      输出 JSON 对象，包含 context 字段。
+    expected_output_type: json_object
+    output_schema_json: '{"type":"object","properties":{"context":{"type":"string"}},"required":["context"],"additionalProperties":false}'
+
+# ---------------------------------------------------------------------------
+# Eval questions (golden queries for IP / datacenter networking)
+# ---------------------------------------------------------------------------
+
+eval_questions:
+  - id: ip001
+    question: "什么是 EVPN+VXLAN？它解决了传统二层网络的什么问题？"
+    expected_entities: ["EVPN", "VXLAN"]
+    expected_evidence_contains: ["EVPN", "VXLAN"]
+    expected_semantic_role: concept
+    notes: "Overlay 概念解释"
+
+  - id: ip002
+    question: "Spine-Leaf 架构中 Border Leaf、Service Leaf、Server Leaf 各承担什么角色？"
+    expected_entities: ["Spine", "Border Leaf", "Service Leaf", "Server Leaf"]
+    expected_evidence_contains: ["Leaf", "Spine"]
+    expected_semantic_role: concept
+    notes: "组网角色对比"
+
+  - id: ip003
+    question: "M-LAG 和 vPC 有什么区别？双归接入如何配置？"
+    expected_entities: ["M-LAG", "vPC"]
+    expected_evidence_contains: ["M-LAG"]
+    notes: "双归 / 跨设备链路聚合"
+
+  - id: ip004
+    question: "如何配置 BGP EVPN 邻居？需要哪些前提条件？"
+    expected_entities: ["BGP EVPN", "BGP"]
+    expected_evidence_contains: ["BGP", "EVPN"]
+    expected_semantic_role: procedure_step
+    notes: "EVPN 控制面配置"
+
+  - id: ip005
+    question: "VXLAN 隧道的 VNI 和 VLAN 怎么映射？"
+    expected_entities: ["VXLAN", "VNI", "VLAN"]
+    expected_evidence_contains: ["VNI", "VLAN"]
+    notes: "Overlay/Underlay 映射"
+
+  - id: ip006
+    question: "PFC 死锁检测（Deadlock）原理是什么？如何启用？"
+    expected_entities: ["PFC"]
+    expected_evidence_contains: ["PFC", "死锁"]
+    expected_semantic_role: concept
+    notes: "智能无损特性"
+
+  - id: ip007
+    question: "AI ECN 与传统 ECN 的差异？什么场景需要 AI ECN？"
+    expected_entities: ["AI ECN", "ECN"]
+    expected_evidence_contains: ["ECN"]
+    notes: "智能无损 AI 特性"
+
+  - id: ip008
+    question: "RoCE 流量为什么需要 PFC？PFC 不开会出现什么问题？"
+    expected_entities: ["RoCE", "PFC"]
+    expected_evidence_contains: ["RoCE", "PFC"]
+    notes: "RDMA / 智能无损"
+
+  - id: ip009
+    question: "iNOF 和 NOF+ 是什么？分别用在什么场景？"
+    expected_entities: ["NOF+", "iNOF"]
+    expected_evidence_contains: ["NOF"]
+    notes: "存储网络特性"
+
+  - id: ip010
+    question: "传统数据中心搬迁到 SDN 有哪些步骤？"
+    expected_entities: ["SDN"]
+    expected_evidence_contains: ["搬迁", "SDN"]
+    expected_semantic_role: procedure_step
+    notes: "整网搬迁流程"
+
+  - id: ip011
+    question: "Underlay 路由协议为什么推荐 OSPF 或 eBGP？"
+    expected_entities: ["OSPF", "BGP", "Underlay"]
+    expected_evidence_contains: ["Underlay"]
+    notes: "Underlay 设计选型"
+
+  - id: ip012
+    question: "CE16800 系列交换机适用于什么角色？它支持哪些数据中心特性？"
+    expected_entities: ["CE16800"]
+    expected_evidence_contains: ["CE16800"]
+    notes: "设备型号能力"
+
+  - id: ip013
+    question: "VPC 隔离是如何在 Overlay 网络中实现的？"
+    expected_entities: ["VPC", "Overlay"]
+    expected_evidence_contains: ["VPC"]
+    notes: "多租户隔离"
+
+  - id: ip014
+    question: "DCI Leaf 跨数据中心互联怎么部署？"
+    expected_entities: ["DCI Leaf"]
+    expected_evidence_contains: ["DCI"]
+    expected_semantic_role: procedure_step
+    notes: "DCI 场景"
+
+  - id: ip015
+    question: "BGP 邻居建立失败如何排查？"
+    expected_entities: ["BGP"]
+    expected_evidence_contains: ["BGP", "邻居"]
+    expected_semantic_role: troubleshooting_step
+    notes: "BGP 排障"
+
+  - id: ip016
+    question: "OSPF 邻接卡在 ExStart/Exchange 状态如何定位？"
+    expected_entities: ["OSPF"]
+    expected_evidence_contains: ["OSPF"]
+    expected_semantic_role: troubleshooting_step
+    notes: "OSPF 排障"
+
+  - id: ip017
+    question: "MACSec 与 IPSec 在数据中心场景下如何选型？"
+    expected_entities: ["MACSec", "IPSec"]
+    expected_evidence_contains: ["MACSec"]
+    notes: "加密特性对比"
+
+  - id: ip018
+    question: "DPFR 和 RPFR 分别解决什么故障场景？"
+    expected_entities: ["DPFR", "RPFR"]
+    expected_evidence_contains: ["DPFR"]
+    notes: "快速故障倒换"
+
+  - id: ip019
+    question: "M-LAG 双活设备主备角色如何选举？"
+    expected_entities: ["M-LAG"]
+    expected_evidence_contains: ["M-LAG"]
+    notes: "双活协议细节"
+
+  - id: ip020
+    question: "如何让 vCenter / OpenStack 与 CloudFabric 联动下发网络？"
+    expected_entities: ["CloudFabric", "vCenter", "OpenStack"]
+    expected_evidence_contains: ["CloudFabric"]
+    expected_semantic_role: procedure_step
+    notes: "云网联动"
+
+# ---------------------------------------------------------------------------
+# Serving configuration
+# ---------------------------------------------------------------------------
+
+serving:
+  route_policy:
+    default:
+      lexical_bm25: {weight: 1.0, top_k: 50}
+      entity_exact: {weight: 1.0, top_k: 30}
+      dense_vector: {weight: 0.8, top_k: 50}
+    command_usage:
+      entity_exact: {weight: 1.4, top_k: 20}
+      lexical_bm25: {weight: 1.0, top_k: 50}
+      dense_vector: {weight: 0.5, top_k: 30}
+    concept_lookup:
+      dense_vector: {weight: 1.2, top_k: 50}
+      lexical_bm25: {weight: 1.0, top_k: 50}
+      entity_exact: {weight: 0.6, top_k: 20}
+    troubleshooting:
+      lexical_bm25: {weight: 1.0, top_k: 50}
+      entity_exact: {weight: 1.2, top_k: 30}
+      dense_vector: {weight: 0.6, top_k: 30}
+    comparison:
+      lexical_bm25: {weight: 1.0, top_k: 50}
+      dense_vector: {weight: 1.0, top_k: 50}
+      entity_exact: {weight: 1.0, top_k: 30}
