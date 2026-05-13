@@ -24,6 +24,7 @@ public record SearchRequest(
         String mode
 ) {
     public SearchRequest {
+        if (query == null || query.isBlank()) throw new IllegalArgumentException("query_required");
         if (scope == null) scope = Map.of();
         if (entities == null) entities = List.of();
         if (mode == null) mode = "evidence";

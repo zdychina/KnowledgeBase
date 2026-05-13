@@ -29,4 +29,26 @@ class ErrorHandlingE2ETest extends AbstractPgIntegrationTest {
                         .content("{\"query\":\"test\",\"domain\":\"nonexistent_domain\"}"))
                 .andExpect(result -> assertThat(result.getResponse().getStatus()).isGreaterThanOrEqualTo(400));
     }
+
+    @Test
+    @DisplayName("blank query returns 400 query_required")
+    void blankQueryReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/search")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"query\":\"  \",\"domain\":\"cloud_core_network\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("query_required"));
+    }
+
+    @Test
+    @DisplayName("missing query field returns 400 query_required")
+    void missingQueryReturns400() throws Exception {
+        mockMvc.perform(post("/api/v1/search")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"cloud_core_network\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("query_required"));
+    }
 }

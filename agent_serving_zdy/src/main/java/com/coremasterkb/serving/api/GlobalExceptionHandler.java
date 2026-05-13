@@ -16,6 +16,10 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        if ("query_required".equals(ex.getMessage())) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "query_required", "message", "Query text is required and must not be blank"));
+        }
         if ("unknown_domain".equals(ex.getMessage())) {
             log.warn("Unknown domain in request");
             return ResponseEntity.badRequest()

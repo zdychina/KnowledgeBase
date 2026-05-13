@@ -15,6 +15,15 @@ class GlobalExceptionHandlerTest {
     private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
 
     @Test
+    @DisplayName("query_required -> 400")
+    void queryRequired() {
+        ResponseEntity<Map<String, Object>> resp =
+                handler.handleIllegalArgument(new IllegalArgumentException("query_required"));
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(resp.getBody()).containsEntry("error", "query_required");
+    }
+
+    @Test
     @DisplayName("unknown_domain -> 400")
     void unknownDomain() {
         ResponseEntity<Map<String, Object>> resp =
