@@ -2,6 +2,8 @@ package com.coremasterkb.serving.config;
 
 import com.coremasterkb.serving.application.SearchService;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
+import com.coremasterkb.serving.domainpack.DomainPoolManager;
+import com.coremasterkb.serving.domainpack.DomainRoutingDataSource;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
 import com.coremasterkb.serving.infrastructure.ZhipuClient;
@@ -16,13 +18,19 @@ import com.coremasterkb.serving.retrieval.EntityExactRetriever;
 import com.coremasterkb.serving.retrieval.FtsRetriever;
 import com.coremasterkb.serving.retrieval.GraphExpander;
 import com.coremasterkb.serving.retrieval.Retriever;
+import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.web.client.RestTemplate;
 
+import javax.sql.DataSource;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -39,6 +47,51 @@ import java.util.Map;
 public class ServingBeans {
 
     private static final Logger log = LoggerFactory.getLogger(ServingBeans.class);
+
+    // -------------------------------------------------------------------------
+    // DataSource configuration (DataSourceAutoConfiguration is excluded)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Binds spring.datasource.* connection properties (url, username, password, driver).
+     * DataSourceAutoConfiguration is excluded so we own the full DataSource lifecycle.
+     */
+    @Bean
+    @ConfigurationProperties("spring.datasource")
+    public DataSourceProperties dataSourceProperties() {
+        return new DataSourceProperties();
+    }
+
+    /**
+     * Default HikariCP pool — used as the fallback when no domain-specific DB is configured.
+     * Pool settings (minimum-idle, maximum-pool-size, connection-timeout) come from
+     * spring.datasource.hikari.* via @ConfigurationProperties.
+     */
+    @Bean("defaultDataSource")
+    @ConfigurationProperties("spring.datasource.hikari")
+    public HikariDataSource defaultDataSource(DataSourceProperties dataSourceProperties) {
+        return dataSourceProperties.initializeDataSourceBuilder()
+                .type(HikariDataSource.class)
+                .build();
+    }
+
+    /**
+     * Primary DataSource that routes every JDBC connection to the pool owned by the
+     * current request's domain. Falls back to {@code defaultDataSource} when no domain
+     * is set on the thread (health checks, startup probes, test setup).
+     *
+     * <p>Named "dataSource" as an alias so that Spring Boot autoconfiguration classes
+     * (JdbcTemplateAutoConfiguration, DataSourceTransactionManagerAutoConfiguration)
+     * that look up {@code @Qualifier("dataSource")} find this routing bean rather than
+     * failing with NoSuchBeanDefinitionException.
+     */
+    @Bean({"dataSource", "domainRoutingDataSource"})
+    @Primary
+    public DataSource domainRoutingDataSource(
+            DomainPoolManager poolManager,
+            @Qualifier("defaultDataSource") DataSource defaultDataSource) {
+        return new DomainRoutingDataSource(poolManager, defaultDataSource);
+    }
 
     // -------------------------------------------------------------------------
     // Infrastructure clients

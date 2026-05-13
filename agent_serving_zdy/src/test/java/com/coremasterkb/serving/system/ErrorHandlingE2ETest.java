@@ -9,6 +9,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -21,11 +22,11 @@ class ErrorHandlingE2ETest extends AbstractPgIntegrationTest {
     private MockMvc mockMvc;
 
     @Test
-    @DisplayName("nonexistent domain returns error status")
+    @DisplayName("nonexistent domain returns error status (4xx when registry loaded, 5xx otherwise)")
     void nonexistentDomainReturnsError() throws Exception {
         mockMvc.perform(post("/api/v1/search")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"query\":\"test\",\"domain\":\"nonexistent_domain\"}"))
-                .andExpect(status().is5xxServerError());
+                .andExpect(result -> assertThat(result.getResponse().getStatus()).isGreaterThanOrEqualTo(400));
     }
 }

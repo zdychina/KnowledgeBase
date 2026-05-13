@@ -16,6 +16,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+        if ("unknown_domain".equals(ex.getMessage())) {
+            log.warn("Unknown domain in request");
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "unknown_domain", "message", "Unknown or unsupported domain"));
+        }
         if ("no_active_release".equals(ex.getMessage())) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "no_active_release", "message", "No active release found for the requested domain"));

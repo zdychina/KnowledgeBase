@@ -1,7 +1,10 @@
 package com.coremasterkb.serving.application;
 
 import com.coremasterkb.serving.domain.*;
+import com.coremasterkb.serving.domainpack.DomainContext;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
+import com.coremasterkb.serving.domainpack.DomainPoolManager;
+import com.coremasterkb.serving.domainpack.DomainRegistry;
 import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.observability.TraceCollector;
@@ -32,6 +35,8 @@ public class SearchService {
     private final RerankPipeline rerankPipeline;
     private final ContextAssembler assembler;
     private final DomainPackReader domainPackReader;
+    private final DomainRegistry domainRegistry;
+    private final DomainPoolManager domainPoolManager;
     private final EmbeddingClient embeddingClient;
 
     public SearchService(
@@ -41,6 +46,8 @@ public class SearchService {
             RerankPipeline rerankPipeline,
             ContextAssembler assembler,
             DomainPackReader domainPackReader,
+            DomainRegistry domainRegistry,
+            DomainPoolManager domainPoolManager,
             EmbeddingClient embeddingClient) {
         this.quEngine = quEngine;
         this.router = router;
@@ -48,6 +55,8 @@ public class SearchService {
         this.rerankPipeline = rerankPipeline;
         this.assembler = assembler;
         this.domainPackReader = domainPackReader;
+        this.domainRegistry = domainRegistry;
+        this.domainPoolManager = domainPoolManager;
         this.embeddingClient = embeddingClient;
     }
 
@@ -78,64 +87,80 @@ public class SearchService {
                 "routes=" + routePlan.routes().size()
                         + ", fusion=" + routePlan.fusion().method());
 
-        // 4. Resolve Active Scope
-        trace.startStage("resolve_scope");
-        ActiveScope scope;
-        try {
-            // Resolve using the domain from the request
-            String domain = request.domain() != null && !request.domain().isBlank()
-                    ? request.domain() : "default";
-            scope = resolveActiveScope(domain);
-        } catch (IllegalArgumentException e) {
-            trace.endStage("resolve_scope", "error=" + e.getMessage());
-            throw e;
-        }
-        trace.endStage("resolve_scope", "snapshots=" + scope.snapshotIds().size());
+        // 4. Resolve domain and channel; validate DB availability
+        String effectiveDomain = (request.domain() != null && !request.domain().isBlank())
+                ? request.domain() : "default";
+        String channel = (request.channel() != null && !request.channel().isBlank())
+                ? request.channel()
+                : domainRegistry.getDefaultChannel(effectiveDomain);
 
-        // 5. Generate query embedding (if dense route enabled)
+        // Validate DB reachable before touching the routing DataSource
+        // (throws domain_database_unavailable if the pool cannot connect)
+        domainPoolManager.getDataSource(effectiveDomain);
+
+        // All DB operations on this thread now route to the domain's pool
+        DomainContext.set(effectiveDomain);
+        ActiveScope scope = null;
+        List<RetrievalCandidate> ranked = List.of();
+        ContextPack pack = null;
         float[] queryEmbedding = null;
-        boolean denseEnabled = routePlan.routes().stream()
-                .anyMatch(r -> "dense_vector".equals(r.name()) && r.enabled());
-        if (denseEnabled && embeddingClient != null) {
-            trace.startStage("embedding");
+        try {
+            trace.startStage("resolve_scope");
             try {
-                queryEmbedding = embeddingClient.embed(request.query());
-            } catch (Exception e) {
-                log.warn("Query embedding failed: {}", e.getMessage());
+                scope = resolveActiveScope(effectiveDomain, channel);
+            } catch (IllegalArgumentException e) {
+                trace.endStage("resolve_scope", "error=" + e.getMessage());
+                throw e;
             }
-            trace.endStage("embedding",
-                    "dim=" + (queryEmbedding != null ? queryEmbedding.length : 0));
+            trace.endStage("resolve_scope", "snapshots=" + scope.snapshotIds().size());
+
+            // 5. Generate query embedding (if dense route enabled)
+            boolean denseEnabled = routePlan.routes().stream()
+                    .anyMatch(r -> "dense_vector".equals(r.name()) && r.enabled());
+            if (denseEnabled && embeddingClient != null) {
+                trace.startStage("embedding");
+                try {
+                    queryEmbedding = embeddingClient.embed(request.query());
+                } catch (Exception e) {
+                    log.warn("Query embedding failed: {}", e.getMessage());
+                }
+                trace.endStage("embedding",
+                        "dim=" + (queryEmbedding != null ? queryEmbedding.length : 0));
+            }
+
+            // 6. Retrieve from all configured routes
+            trace.startStage("retrieve");
+            OrchestratorResult orchResult = orchestrator.execute(
+                    understanding, routePlan, queryEmbedding, scope.snapshotIds());
+            List<RetrievalCandidate> rawCandidates = orchResult.candidates();
+            trace.endStage("retrieve", "candidates=" + rawCandidates.size());
+
+            // 7. Fuse
+            trace.startStage("fusion");
+            FusionStrategy fusion = switch (routePlan.fusion().method()) {
+                case "weighted_rrf" -> new WeightedRRFFusion();
+                case "rrf" -> new RRFFusion();
+                default -> new IdentityFusion();
+            };
+            List<RetrievalCandidate> fused = fusion.fuse(rawCandidates, routePlan);
+            trace.endStage("fusion",
+                    "fused=" + fused.size() + ", method=" + routePlan.fusion().method());
+
+            // 8. Rerank (cascading: model -> LLM -> score)
+            trace.startStage("rerank");
+            var rerankResult = rerankPipeline.rerank(fused, routePlan, understanding);
+            ranked = rerankResult.candidates();
+            trace.endStage("rerank", "ranked=" + ranked.size());
+
+            // 9. Assemble ContextPack
+            trace.startStage("assembly");
+            pack = assembler.assemble(
+                    request.query(), understanding, scope, ranked, routePlan);
+            trace.endStage("assembly", "items=" + pack.items().size());
+
+        } finally {
+            DomainContext.clear();
         }
-
-        // 6. Retrieve from all configured routes
-        trace.startStage("retrieve");
-        OrchestratorResult orchResult = orchestrator.execute(
-                understanding, routePlan, queryEmbedding, scope.snapshotIds());
-        List<RetrievalCandidate> rawCandidates = orchResult.candidates();
-        trace.endStage("retrieve", "candidates=" + rawCandidates.size());
-
-        // 7. Fuse
-        trace.startStage("fusion");
-        FusionStrategy fusion = switch (routePlan.fusion().method()) {
-            case "weighted_rrf" -> new WeightedRRFFusion();
-            case "rrf" -> new RRFFusion();
-            default -> new IdentityFusion();
-        };
-        List<RetrievalCandidate> fused = fusion.fuse(rawCandidates, routePlan);
-        trace.endStage("fusion",
-                "fused=" + fused.size() + ", method=" + routePlan.fusion().method());
-
-        // 8. Rerank (cascading: model -> LLM -> score)
-        trace.startStage("rerank");
-        var rerankResult = rerankPipeline.rerank(fused, routePlan, understanding);
-        List<RetrievalCandidate> ranked = rerankResult.candidates();
-        trace.endStage("rerank", "ranked=" + ranked.size());
-
-        // 9. Assemble ContextPack
-        trace.startStage("assembly");
-        ContextPack pack = assembler.assemble(
-                request.query(), understanding, scope, ranked, routePlan);
-        trace.endStage("assembly", "items=" + pack.items().size());
 
         // 10. Build debug info if requested
         if (request.debug()) {
@@ -143,7 +168,7 @@ public class SearchService {
             Map<String, Object> debugInfo = new LinkedHashMap<>();
             debugInfo.put("understanding", understandingToMap(understanding));
             debugInfo.put("route_plan", routePlanToMap(routePlan));
-            debugInfo.put("scope", scopeToMap(scope));
+            debugInfo.put("domain_context", domainContextToMap(effectiveDomain, channel, scope));
             debugInfo.put("trace", traceToMap(fullTrace));
             debugInfo.put("candidate_count", ranked.size());
             debugInfo.put("fusion_method", routePlan.fusion().method());
@@ -179,9 +204,9 @@ public class SearchService {
         return this;
     }
 
-    private ActiveScope resolveActiveScope(String domain) {
+    private ActiveScope resolveActiveScope(String domain, String channel) {
         if (assetRepository != null) {
-            return assetRepository.resolveActiveScope(domain);
+            return assetRepository.resolveActiveScope(domain, channel);
         }
         throw new IllegalStateException("AssetRepository not configured — call withAssetRepository() first");
     }
@@ -208,10 +233,23 @@ public class SearchService {
         return map;
     }
 
-    private static Map<String, Object> scopeToMap(ActiveScope s) {
+    private Map<String, Object> domainContextToMap(String domain, String channel, ActiveScope scope) {
         Map<String, Object> map = new LinkedHashMap<>();
-        map.put("release_id", s.releaseId());
-        map.put("snapshot_count", s.snapshotIds().size());
+        map.put("domain", domain);
+        map.put("channel", channel);
+        domainRegistry.findEntry(domain).ifPresentOrElse(
+                entry -> {
+                    map.put("database", entry.databaseUrlEnv() != null ? entry.databaseUrlEnv() : "n/a");
+                    map.put("scenario_pack", entry.scenarioPack());
+                },
+                () -> {
+                    map.put("database", "n/a");
+                    map.put("scenario_pack", domain);
+                }
+        );
+        map.put("release_id", scope.releaseId());
+        map.put("build_id", scope.buildId());
+        map.put("snapshot_count", scope.snapshotIds().size());
         return map;
     }
 

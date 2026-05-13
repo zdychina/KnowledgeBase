@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "serving")
 public record ServingProperties(
     String scenarioPacksDir,
+    String domainRegistryPath,
     String defaultDomain,
     LlmConfig llm,
     ZhipuConfig zhipu,
@@ -40,6 +41,7 @@ public record ServingProperties(
 
     public ServingProperties {
         if (scenarioPacksDir == null) scenarioPacksDir = "../scenario_packs";
+        if (domainRegistryPath == null) domainRegistryPath = "../domain_registry.yaml";
         if (defaultDomain == null) defaultDomain = "cloud_core_network";
         if (llm == null) llm = new LlmConfig("", "");
         if (zhipu == null) zhipu = new ZhipuConfig("", "", "");

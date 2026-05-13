@@ -18,6 +18,7 @@ mybatis:
 
 serving:
   scenario-packs-dir: ${SCENARIO_PACKS_DIR:../scenario_packs}
+  domain-registry-path: ${DOMAIN_REGISTRY_PATH:../domain_registry.yaml}
   default-domain: ${COREMASTERKB_DOMAIN:${DEFAULT_DOMAIN:cloud_core_network}}
   llm:
     base-url: ${LLM_SERVICE_URL:}

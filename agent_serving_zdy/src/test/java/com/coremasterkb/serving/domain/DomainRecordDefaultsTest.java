@@ -21,7 +21,7 @@ class DomainRecordDefaultsTest {
         @Test
         @DisplayName("null scope defaults to empty map")
         void nullScopeDefaultsToEmptyMap() {
-            var req = new SearchRequest("test", null, null, false, "cloud_core_network", null);
+            var req = new SearchRequest("test", null, null, false, "cloud_core_network", null, null);
             assertThat(req.scope()).isEmpty();
             assertThat(req.entities()).isEmpty();
             assertThat(req.mode()).isEqualTo("evidence");

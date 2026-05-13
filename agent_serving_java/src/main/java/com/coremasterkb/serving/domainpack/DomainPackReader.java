@@ -53,10 +53,20 @@ public class DomainPackReader {
     }
 
     public ServingDomainProfile getProfile(String domainId) {
-        if (domainId == null || domainId.isBlank()) {
-            return cache.getOrDefault(defaultDomain, ServingDomainProfile.defaults("default"));
+        String effectiveDomain = (domainId == null || domainId.isBlank()) ? defaultDomain : domainId;
+
+        ServingDomainProfile profile = cache.get(effectiveDomain);
+        if (profile != null) {
+            return profile;
         }
-        return cache.getOrDefault(domainId, ServingDomainProfile.defaults(domainId));
+
+        if (!cache.isEmpty()) {
+            log.warn("Unknown domain requested: {}, known domains: {}", effectiveDomain, cache.keySet());
+            throw new IllegalArgumentException("unknown_domain");
+        }
+
+        log.debug("No domain packs loaded, using defaults for domain: {}", effectiveDomain);
+        return ServingDomainProfile.defaults(effectiveDomain);
     }
 
     private ServingDomainProfile parseYaml(String domainId, Path yamlPath) throws IOException {

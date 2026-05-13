@@ -20,10 +20,14 @@ public class DomainPackReader {
     private final Map<String, ServingDomainProfile> cache = new ConcurrentHashMap<>();
     private final String packsDir;
     private final String defaultDomain;
+    private final DomainRegistry domainRegistry;
+    /** True only when the packs directory was found and scanned at startup. */
+    private boolean packsDirectoryFound = false;
 
-    public DomainPackReader(ServingProperties props) {
+    public DomainPackReader(ServingProperties props, DomainRegistry domainRegistry) {
         this.packsDir = props.scenarioPacksDir();
         this.defaultDomain = props.defaultDomain();
+        this.domainRegistry = domainRegistry;
     }
 
     @PostConstruct
@@ -33,6 +37,7 @@ public class DomainPackReader {
             log.info("Scenario packs directory not found: {}, using defaults", packsDir);
             return;
         }
+        packsDirectoryFound = true;
         try (var dirs = Files.list(root)) {
             dirs.filter(Files::isDirectory).forEach(dir -> {
                 Path yamlPath = dir.resolve("domain.yaml");
@@ -53,10 +58,31 @@ public class DomainPackReader {
     }
 
     public ServingDomainProfile getProfile(String domainId) {
-        if (domainId == null || domainId.isBlank()) {
-            return cache.getOrDefault(defaultDomain, ServingDomainProfile.defaults("default"));
+        String effectiveDomain = (domainId == null || domainId.isBlank()) ? defaultDomain : domainId;
+
+        // Registry validation: throws unknown_domain / domain_disabled if registry is loaded
+        domainRegistry.resolve(effectiveDomain);
+
+        ServingDomainProfile profile = cache.get(effectiveDomain);
+        if (profile != null) {
+            return profile;
         }
-        return cache.getOrDefault(domainId, ServingDomainProfile.defaults(domainId));
+
+        // Registry not loaded, fall back to cache-based enforcement
+        if (!domainRegistry.isLoaded() && !cache.isEmpty()) {
+            log.warn("Unknown domain '{}', known domains: {}", effectiveDomain, cache.keySet());
+            throw new IllegalArgumentException("unknown_domain");
+        }
+
+        // Registry IS loaded and packs directory was found — missing pack is a deployment error
+        if (domainRegistry.isLoaded() && packsDirectoryFound) {
+            log.error("Scenario pack missing for domain '{}' — packs directory '{}' was scanned but no pack found",
+                    effectiveDomain, packsDir);
+            throw new IllegalStateException("scenario_pack_missing");
+        }
+
+        log.debug("No scenario pack for domain '{}', using defaults", effectiveDomain);
+        return ServingDomainProfile.defaults(effectiveDomain);
     }
 
     private ServingDomainProfile parseYaml(String domainId, Path yamlPath) throws IOException {
