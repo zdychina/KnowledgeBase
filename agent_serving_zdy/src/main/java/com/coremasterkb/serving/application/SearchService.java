@@ -62,6 +62,9 @@ public class SearchService {
         this.domainPoolManager = domainPoolManager;
         this.embeddingClient = embeddingClient;
         this.assetRepository = assetRepository;
+        if (!embeddingClient.isConfigured()) {
+            log.info("Embedding client not configured (LLM_SERVICE_URL blank) — dense retrieval disabled");
+        }
     }
 
     /**
@@ -118,10 +121,10 @@ public class SearchService {
             }
             trace.endStage("resolve_scope", "snapshots=" + scope.snapshotIds().size());
 
-            // 5. Generate query embedding (if dense route enabled)
+            // 5. Generate query embedding (if dense route enabled and client ready)
             boolean denseEnabled = routePlan.routes().stream()
                     .anyMatch(r -> "dense_vector".equals(r.name()) && r.enabled());
-            if (denseEnabled && embeddingClient != null) {
+            if (denseEnabled && embeddingClient.isConfigured()) {
                 trace.startStage("embedding");
                 try {
                     queryEmbedding = embeddingClient.embed(request.query());

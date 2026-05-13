@@ -3,6 +3,7 @@ package com.coremasterkb.serving.domainpack;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.env.Environment;
 
 import javax.sql.DataSource;
 import java.util.Optional;
@@ -17,6 +18,7 @@ class DomainPoolManagerTest {
 
     private final DomainRegistry registry = mock(DomainRegistry.class);
     private final DataSource defaultDs = mock(DataSource.class);
+    private final Environment env = mock(Environment.class);
 
     @Nested
     @DisplayName("no registry loaded")
@@ -28,7 +30,7 @@ class DomainPoolManagerTest {
             when(registry.knownDomains()).thenReturn(Set.of());
             when(registry.findEntry(anyString())).thenReturn(Optional.empty());
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
             mgr.init();
 
             DataSource result = mgr.getDataSource("cloud_core_network");
@@ -47,7 +49,7 @@ class DomainPoolManagerTest {
             var entry = new DomainRegistryEntry("cloud_core_network", true, null, "cloud_core_network", "prod");
             when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entry));
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
             mgr.init();
 
             DataSource result = mgr.getDataSource("cloud_core_network");
@@ -59,12 +61,12 @@ class DomainPoolManagerTest {
         void returnsDefaultWhenEnvVarNotSet() {
             when(registry.isLoaded()).thenReturn(true);
             when(registry.knownDomains()).thenReturn(Set.of("cloud_core_network"));
-            // Use an env var name that definitely isn't set
+            // env mock returns null for any unstubbed property — simulates missing var
             var entry = new DomainRegistryEntry("cloud_core_network", true,
                     "COREMASTERKB_TEST_UNSET_ENV_VAR_12345", "cloud_core_network", "prod");
             when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entry));
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
             mgr.init();
 
             DataSource result = mgr.getDataSource("cloud_core_network");
@@ -82,7 +84,7 @@ class DomainPoolManagerTest {
             when(registry.knownDomains()).thenReturn(Set.of());
             when(registry.findEntry(anyString())).thenReturn(Optional.empty());
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
             mgr.init();
 
             DataSource result = mgr.getDataSource("nonexistent");

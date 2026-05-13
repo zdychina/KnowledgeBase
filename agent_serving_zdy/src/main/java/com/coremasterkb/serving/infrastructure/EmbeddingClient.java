@@ -14,6 +14,10 @@ public class EmbeddingClient {
         this.dimensions = dimensions;
     }
 
+    public boolean isConfigured() {
+        return llmClient.isAvailable();
+    }
+
     @SuppressWarnings("unchecked")
     public float[] embed(String text) {
         Map<String, Object> response = llmClient.embed(List.of(text), model, dimensions);

@@ -15,16 +15,14 @@ public class LlmClient {
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
-    private final String apiKey;
 
     // Health check cache
     private final AtomicLong lastHealthCheckMs = new AtomicLong(0);
     private volatile boolean cachedHealth = false;
 
-    public LlmClient(RestTemplate restTemplate, String baseUrl, String apiKey) {
+    public LlmClient(RestTemplate restTemplate, String baseUrl) {
         this.restTemplate = restTemplate;
         this.baseUrl = baseUrl != null ? baseUrl.replaceAll("/+$", "") : null;
-        this.apiKey = apiKey;
     }
 
     // =========================================================================
@@ -32,7 +30,7 @@ public class LlmClient {
     // =========================================================================
 
     public boolean isAvailable() {
-        if (baseUrl == null || baseUrl.isBlank() || apiKey == null || apiKey.isBlank()) {
+        if (baseUrl == null || baseUrl.isBlank()) {
             return false;
         }
         // Use cached health result within TTL
@@ -176,9 +174,6 @@ public class LlmClient {
     private HttpHeaders buildHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        if (apiKey != null && !apiKey.isBlank()) {
-            headers.setBearerAuth(apiKey);
-        }
         return headers;
     }
 }

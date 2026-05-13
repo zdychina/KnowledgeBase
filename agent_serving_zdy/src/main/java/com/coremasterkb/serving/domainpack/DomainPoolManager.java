@@ -7,6 +7,7 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
@@ -38,6 +39,7 @@ public class DomainPoolManager {
 
     private final DomainRegistry domainRegistry;
     private final DataSource defaultDataSource;
+    private final Environment environment;
 
     /** domain → resolved DataSource (may be the default for unconfigured domains). */
     private final Map<String, DataSource> pools = new ConcurrentHashMap<>();
@@ -45,9 +47,11 @@ public class DomainPoolManager {
     private final List<HikariDataSource> ownedPools = new ArrayList<>();
 
     public DomainPoolManager(DomainRegistry domainRegistry,
-                              @Qualifier("defaultDataSource") DataSource defaultDataSource) {
+                              @Qualifier("defaultDataSource") DataSource defaultDataSource,
+                              Environment environment) {
         this.domainRegistry = domainRegistry;
         this.defaultDataSource = defaultDataSource;
+        this.environment = environment;
     }
 
     @PostConstruct
@@ -82,7 +86,7 @@ public class DomainPoolManager {
         return domainRegistry.findEntry(domain)
                 .filter(e -> e.databaseUrlEnv() != null && !e.databaseUrlEnv().isBlank())
                 .map(entry -> {
-                    String jdbcUrl = System.getenv(entry.databaseUrlEnv());
+                    String jdbcUrl = environment.getProperty(entry.databaseUrlEnv());
                     if (jdbcUrl == null || jdbcUrl.isBlank()) {
                         log.debug("Env var '{}' not set for domain '{}' — using default DataSource",
                                 entry.databaseUrlEnv(), domain);

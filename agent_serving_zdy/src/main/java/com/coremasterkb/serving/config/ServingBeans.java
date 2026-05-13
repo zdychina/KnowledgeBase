@@ -6,7 +6,6 @@ import com.coremasterkb.serving.domainpack.DomainPoolManager;
 import com.coremasterkb.serving.domainpack.DomainRoutingDataSource;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
-import com.coremasterkb.serving.infrastructure.ZhipuClient;
 import com.coremasterkb.serving.mapper.AssetRawSegmentMapper;
 import com.coremasterkb.serving.mapper.AssetRawSegmentRelationMapper;
 import com.coremasterkb.serving.mapper.AssetRetrievalEmbeddingMapper;
@@ -104,22 +103,13 @@ public class ServingBeans {
 
     @Bean
     public LlmClient llmClient(RestTemplate restTemplate, ServingProperties properties) {
-        LlmClient client = new LlmClient(restTemplate, properties.llm().baseUrl(), properties.llm().apiKey());
+        LlmClient client = new LlmClient(restTemplate, properties.llm().baseUrl());
         try {
             client.ensureTemplates();
         } catch (Exception e) {
             log.warn("Template registration failed (non-fatal): {}", e.getMessage());
         }
         return client;
-    }
-
-    @Bean
-    public ZhipuClient zhipuClient(ServingProperties properties) {
-        return new ZhipuClient(
-                properties.zhipu().apiKey(),
-                properties.zhipu().baseUrl(),
-                properties.zhipu().rerankModel()
-        );
     }
 
     @Bean
@@ -172,11 +162,6 @@ public class ServingBeans {
     @Bean
     public ScoreReranker scoreReranker() {
         return new ScoreReranker();
-    }
-
-    @Bean
-    public ZhipuModelReranker zhipuModelReranker(ZhipuClient zhipuClient) {
-        return new ZhipuModelReranker(zhipuClient);
     }
 
     @Bean

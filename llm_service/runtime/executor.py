@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
@@ -26,6 +26,19 @@ class Executor:
         self._mgr = task_manager
         self._bus = event_bus
         self._provider = provider
+
+    async def _reclaim(self, task_id: str) -> bool:
+        """Re-claim a queued task for this executor. Returns False if Worker already took it."""
+        now = datetime.now(timezone.utc)
+        lease_dt = now + timedelta(seconds=300)
+        cur = await self._db.execute(
+            """UPDATE agent_llm_tasks
+               SET status = 'running', lease_expires_at = ?, updated_at = ?
+               WHERE id = ? AND status = 'queued'
+               RETURNING id""",
+            (lease_dt.isoformat(), now.isoformat(), task_id),
+        )
+        return await cur.fetchone() is not None
 
     async def run(
         self,
@@ -128,7 +141,6 @@ class Executor:
                     return None
                 else:
                     await self._mgr.fail(task_id, e.error_type, e.message)
-                    # Read backoff time and sleep before retry
                     cur = await self._db.execute("SELECT available_at FROM agent_llm_tasks WHERE id = ?", (task_id,))
                     row = await cur.fetchone()
                     if row is None:
@@ -137,6 +149,9 @@ class Executor:
                     delay = (available_at - datetime.now(timezone.utc)).total_seconds()
                     if delay > 0:
                         await asyncio.sleep(delay)
+                    # Re-claim atomically; if Worker already took it, let Worker handle it
+                    if not await self._reclaim(task_id):
+                        return None
             except Exception as e:
                 latency = int((time.monotonic() - start) * 1000)
                 finished = datetime.now(timezone.utc).isoformat()
@@ -165,3 +180,6 @@ class Executor:
                     delay = (available_at - datetime.now(timezone.utc)).total_seconds()
                     if delay > 0:
                         await asyncio.sleep(delay)
+                    # Re-claim atomically; if Worker already took it, let Worker handle it
+                    if not await self._reclaim(task_id):
+                        return None
