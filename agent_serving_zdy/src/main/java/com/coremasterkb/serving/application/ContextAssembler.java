@@ -1,6 +1,7 @@
 package com.coremasterkb.serving.application;
 
 import com.coremasterkb.serving.domain.*;
+import com.coremasterkb.serving.evidence.EvidenceRoleClassifier;
 import com.coremasterkb.serving.mapper.result.DocumentSourceRow;
 import com.coremasterkb.serving.mapper.result.ExpandedSegmentRow;
 import com.coremasterkb.serving.mapper.result.RelationRow;
@@ -59,6 +60,7 @@ public class ContextAssembler {
 
     private final AssetRepository repo;
     private final GraphExpander graphExpander;
+    private final EvidenceRoleClassifier evidenceRoleClassifier = new EvidenceRoleClassifier();
 
     public ContextAssembler(AssetRepository repo, GraphExpander graphExpander) {
         this.repo = repo;
@@ -192,7 +194,8 @@ public class ContextAssembler {
         // 7. Build issues
         List<Issue> issues = buildIssues(seedItems, understanding);
 
-        // 8. Assemble final pack — combine and truncate
+        // 8. Classify evidence roles for all items, then assemble and truncate
+        seedItems = evidenceRoleClassifier.classify(seedItems, understanding);
         List<ContextItem> allItems = new ArrayList<>(seedItems);
         allItems.addAll(sourceItems);
         allItems.addAll(expandedItems);
@@ -215,6 +218,9 @@ public class ContextAssembler {
         }
 
         // 9. Build ContextQuery from understanding
+        String releaseId = scope.releaseId() != null ? scope.releaseId() : "";
+        String buildId   = scope.buildId()   != null ? scope.buildId()   : "";
+        int snapshotCount = scope.snapshotIds() != null ? scope.snapshotIds().size() : 0;
         ContextQuery contextQuery;
         if (understanding != null) {
             contextQuery = new ContextQuery(
@@ -223,10 +229,15 @@ public class ContextAssembler {
                     understanding.intent(),
                     understanding.entities(),
                     understanding.scope(),
-                    understanding.keywords()
+                    understanding.keywords(),
+                    understanding.source(),
+                    releaseId,
+                    buildId,
+                    snapshotCount
             );
         } else {
-            contextQuery = new ContextQuery(query, "", null, null, null, null);
+            contextQuery = new ContextQuery(query, "", null, null, null, null,
+                    null, releaseId, buildId, snapshotCount);
         }
 
         // 10. Build evidence groups and suggestions

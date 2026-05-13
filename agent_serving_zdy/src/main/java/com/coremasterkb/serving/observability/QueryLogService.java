@@ -23,7 +23,7 @@ import java.util.*;
 public class QueryLogService {
 
     private static final Logger log = LoggerFactory.getLogger(QueryLogService.class);
-    private static final String DEFAULT_CHANNEL = "default";
+    private static final String FALLBACK_CHANNEL = "default";
 
     private final ServingQueryLogMapper logMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -42,9 +42,13 @@ public class QueryLogService {
      */
     public void record(String queryId, SearchRequest request, ContextPack pack, long durationMs) {
         try {
+            String channel = request.channel() != null && !request.channel().isBlank()
+                    ? request.channel()
+                    : (request.domain() != null && !request.domain().isBlank() ? request.domain() : FALLBACK_CHANNEL);
+
             ServingQueryLog entry = new ServingQueryLog();
             entry.setId(queryId);
-            entry.setChannel(DEFAULT_CHANNEL);
+            entry.setChannel(channel);
             entry.setQueriedAt(Instant.now().toString());
             entry.setDurationMs((int) Math.min(durationMs, Integer.MAX_VALUE));
             entry.setQueryText(request.query());
@@ -60,9 +64,13 @@ public class QueryLogService {
             if (pack != null && pack.query() != null) {
                 ContextQuery q = pack.query();
                 entry.setIntent(q.intent());
+                entry.setNormalizerSource(q.source());
                 entry.setKeywordsJson(toJson(q.keywords()));
                 entry.setEntitiesJson(toJson(q.entities()));
                 entry.setScopeJson(toJson(q.scope()));
+                entry.setReleaseId(q.releaseId());
+                entry.setBuildId(q.buildId());
+                entry.setSnapshotCount(q.snapshotCount());
             }
 
             if (pack != null) {
@@ -139,10 +147,11 @@ public class QueryLogService {
     }
 
     private String toJson(Object obj) {
+        if (obj == null) return "[]";
         try {
-            return objectMapper.writeValueAsString(obj != null ? obj : Collections.emptyList());
+            return objectMapper.writeValueAsString(obj);
         } catch (JsonProcessingException e) {
-            return "[]";
+            return obj instanceof java.util.Map ? "{}" : "[]";
         }
     }
 }

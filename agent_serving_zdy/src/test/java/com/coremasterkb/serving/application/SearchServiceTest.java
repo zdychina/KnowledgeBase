@@ -35,6 +35,7 @@ class SearchServiceTest {
     private DomainRegistry domainRegistry;
     private DomainPoolManager domainPoolManager;
     private EmbeddingClient embeddingClient;
+    private com.coremasterkb.serving.repository.AssetRepository assetRepo;
     private SearchService searchService;
 
     @BeforeEach
@@ -48,14 +49,18 @@ class SearchServiceTest {
         domainRegistry = mock(DomainRegistry.class);
         domainPoolManager = mock(DomainPoolManager.class);
         embeddingClient = mock(EmbeddingClient.class);
+        assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
 
         when(domainRegistry.getDefaultChannel(anyString())).thenReturn("prod");
         when(domainRegistry.findEntry(anyString())).thenReturn(java.util.Optional.empty());
         when(domainPoolManager.getDataSource(anyString())).thenReturn(mock(javax.sql.DataSource.class));
+        when(assetRepo.resolveActiveScope(anyString(), anyString()))
+                .thenReturn(new ActiveScope("rel1", "b1", List.of("snap1"), Map.of()));
 
         searchService = new SearchService(
                 quEngine, router, orchestrator, rerankPipeline,
-                assembler, domainPackReader, domainRegistry, domainPoolManager, embeddingClient);
+                assembler, domainPackReader, domainRegistry, domainPoolManager,
+                embeddingClient, assetRepo);
     }
 
     @Nested
@@ -87,12 +92,6 @@ class SearchServiceTest {
             var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
                     "cloud_core_network", null, "evidence");
 
-            // SearchService needs an asset repo for scope resolution
-            var assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
-            when(assetRepo.resolveActiveScope(anyString(), anyString()))
-                    .thenReturn(new ActiveScope("rel1", "b1", List.of("snap1"), Map.of()));
-            searchService.withAssetRepository(assetRepo);
-
             var result = searchService.search(request);
 
             assertThat(result).isNotNull();
@@ -123,11 +122,6 @@ class SearchServiceTest {
             when(assembler.assemble(anyString(), any(), any(), any(), any()))
                     .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()));
 
-            var assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
-            when(assetRepo.resolveActiveScope(anyString(), anyString()))
-                    .thenReturn(new ActiveScope("rel1", "b1", List.of("snap1"), Map.of()));
-            searchService.withAssetRepository(assetRepo);
-
             var request = new SearchRequest("test", Map.of(), List.of(), true,
                     "cloud_core_network", null, "evidence");
             var result = searchService.search(request);
@@ -135,30 +129,6 @@ class SearchServiceTest {
             assertThat(result.debug()).containsKey("understanding");
             assertThat(result.debug()).containsKey("trace");
             assertThat(result.debug()).containsKey("fusion_method");
-        }
-
-        @Test
-        @DisplayName("no asset repo throws IllegalStateException")
-        void noAssetRepoThrows() {
-            var understanding = new QueryUnderstanding("test", "general",
-                    List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
-            var routePlan = new RetrievalRoutePlan(
-                    List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
-                    Map.of(), new FusionConfig("identity", 60),
-                    new RerankConfig("score", "score"),
-                    AssemblyConfig.defaults(), ExpansionConfig.defaults());
-
-            when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
-            when(router.route(any(), any())).thenReturn(routePlan);
-
-            var request = new SearchRequest("test", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence");
-
-            assertThatThrownBy(() -> searchService.search(request))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("AssetRepository not configured");
         }
 
         @Test
@@ -176,11 +146,8 @@ class SearchServiceTest {
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
             when(quEngine.understand(anyString(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-
-            var assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
             when(assetRepo.resolveActiveScope(anyString(), anyString()))
                     .thenThrow(new IllegalArgumentException("no_active_release"));
-            searchService.withAssetRepository(assetRepo);
 
             var request = new SearchRequest("test", Map.of(), List.of(), false,
                     "cloud_core_network", null, "evidence");

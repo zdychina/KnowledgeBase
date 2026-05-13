@@ -197,18 +197,4 @@ public class ServingBeans {
         return new RerankPipeline(llmServiceReranker, llmReranker, scoreReranker);
     }
 
-    // -------------------------------------------------------------------------
-    // SearchService asset repository injection
-    // -------------------------------------------------------------------------
-
-    /**
-     * Wire the AssetRepository into SearchService via its withAssetRepository() method.
-     * SearchService is auto-detected by component scanning, so we use a BeanPostProcessor
-     * approach via an initializer bean.
-     */
-    @Bean
-    public SearchService searchServiceInitializer(SearchService searchService,
-                                                   com.coremasterkb.serving.repository.AssetRepository assetRepository) {
-        return searchService.withAssetRepository(assetRepository);
-    }
 }

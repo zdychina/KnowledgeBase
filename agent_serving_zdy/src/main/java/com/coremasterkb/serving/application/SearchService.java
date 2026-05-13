@@ -10,6 +10,7 @@ import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.observability.TraceCollector;
 import com.coremasterkb.serving.pipeline.*;
 import com.coremasterkb.serving.rerank.RerankPipeline;
+import com.coremasterkb.serving.repository.AssetRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -38,6 +39,7 @@ public class SearchService {
     private final DomainRegistry domainRegistry;
     private final DomainPoolManager domainPoolManager;
     private final EmbeddingClient embeddingClient;
+    private final AssetRepository assetRepository;
 
     public SearchService(
             QueryUnderstandingEngine quEngine,
@@ -48,7 +50,8 @@ public class SearchService {
             DomainPackReader domainPackReader,
             DomainRegistry domainRegistry,
             DomainPoolManager domainPoolManager,
-            EmbeddingClient embeddingClient) {
+            EmbeddingClient embeddingClient,
+            AssetRepository assetRepository) {
         this.quEngine = quEngine;
         this.router = router;
         this.orchestrator = orchestrator;
@@ -58,6 +61,7 @@ public class SearchService {
         this.domainRegistry = domainRegistry;
         this.domainPoolManager = domainPoolManager;
         this.embeddingClient = embeddingClient;
+        this.assetRepository = assetRepository;
     }
 
     /**
@@ -192,23 +196,11 @@ public class SearchService {
     }
 
     // =========================================================================
-    // Scope resolution (delegates to repository — needs domain)
+    // Scope resolution
     // =========================================================================
 
-    // This will be injected via AssetRepository in the actual wiring.
-    // For now, we use a separate method that can be overridden or wired.
-    private com.coremasterkb.serving.repository.AssetRepository assetRepository;
-
-    public SearchService withAssetRepository(com.coremasterkb.serving.repository.AssetRepository repo) {
-        this.assetRepository = repo;
-        return this;
-    }
-
     private ActiveScope resolveActiveScope(String domain, String channel) {
-        if (assetRepository != null) {
-            return assetRepository.resolveActiveScope(domain, channel);
-        }
-        throw new IllegalStateException("AssetRepository not configured — call withAssetRepository() first");
+        return assetRepository.resolveActiveScope(domain, channel);
     }
 
     // =========================================================================
