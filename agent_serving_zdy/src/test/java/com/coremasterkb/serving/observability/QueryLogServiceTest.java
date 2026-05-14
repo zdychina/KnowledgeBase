@@ -54,21 +54,22 @@ class QueryLogServiceTest {
         }
 
         @Test
-        @DisplayName("falls back to domain when channel is blank")
-        void fallsBackToDomain() {
+        @DisplayName("falls back to 'prod' when channel is blank")
+        void fallsBackToProd() {
             service.record("id2", req("q", "cloud_core_network", null), null, 100);
             var captor = ArgumentCaptor.forClass(ServingQueryLog.class);
             verify(logMapper).insert(captor.capture());
-            assertThat(captor.getValue().getChannel()).isEqualTo("cloud_core_network");
+            assertThat(captor.getValue().getChannel()).isEqualTo("prod");
         }
 
         @Test
-        @DisplayName("falls back to 'default' when both channel and domain are blank")
-        void fallsBackToDefault() {
-            service.record("id3", req("q", null, null), null, 100);
+        @DisplayName("domain is stored separately from channel")
+        void domainStoredSeparately() {
+            service.record("id3", req("q", "cloud_core_network", null), null, 100);
             var captor = ArgumentCaptor.forClass(ServingQueryLog.class);
             verify(logMapper).insert(captor.capture());
-            assertThat(captor.getValue().getChannel()).isEqualTo("default");
+            assertThat(captor.getValue().getDomain()).isEqualTo("cloud_core_network");
+            assertThat(captor.getValue().getChannel()).isEqualTo("prod");
         }
     }
 

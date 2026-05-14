@@ -23,7 +23,7 @@ import java.util.*;
 public class QueryLogService {
 
     private static final Logger log = LoggerFactory.getLogger(QueryLogService.class);
-    private static final String FALLBACK_CHANNEL = "default";
+    private static final String FALLBACK_CHANNEL = "prod";
 
     private final ServingQueryLogMapper logMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -42,12 +42,14 @@ public class QueryLogService {
      */
     public void record(String queryId, SearchRequest request, ContextPack pack, long durationMs) {
         try {
+            String domain = request.domain() != null && !request.domain().isBlank()
+                    ? request.domain() : "default";
             String channel = request.channel() != null && !request.channel().isBlank()
-                    ? request.channel()
-                    : (request.domain() != null && !request.domain().isBlank() ? request.domain() : FALLBACK_CHANNEL);
+                    ? request.channel() : FALLBACK_CHANNEL;
 
             ServingQueryLog entry = new ServingQueryLog();
             entry.setId(queryId);
+            entry.setDomain(domain);
             entry.setChannel(channel);
             entry.setQueriedAt(Instant.now().toString());
             entry.setDurationMs((int) Math.min(durationMs, Integer.MAX_VALUE));

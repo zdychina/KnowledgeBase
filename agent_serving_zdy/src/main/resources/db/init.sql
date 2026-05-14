@@ -314,6 +314,7 @@ CREATE TABLE IF NOT EXISTS serving_query_logs (
 
     -- Original input
     query_text          TEXT    NOT NULL,
+    domain              TEXT    NOT NULL DEFAULT 'default',
     channel             TEXT    NOT NULL,
 
     -- Query analysis results (from NormalizedQuery)

@@ -66,6 +66,7 @@ class ServingQueryLogMapperIT {
 
         assertThat(row.get("id")).isEqualTo(testId);
         assertThat(row.get("query_text")).isEqualTo("SMF配置查询");
+        assertThat(row.get("domain")).isEqualTo("cloud_core_network");
         assertThat(row.get("channel")).isEqualTo("prod");
         assertThat(row.get("intent")).isEqualTo("command_usage");
         assertThat(row.get("normalizer_source")).isEqualTo("llm");
@@ -115,6 +116,7 @@ class ServingQueryLogMapperIT {
         ServingQueryLog e = new ServingQueryLog();
         e.setId(id);
         e.setQueryText("SMF配置查询");
+        e.setDomain("cloud_core_network");
         e.setChannel("prod");
         e.setIntent("command_usage");
         e.setNormalizerSource("llm");

@@ -5,6 +5,8 @@ import com.coremasterkb.serving.domain.SearchRequest;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
@@ -16,6 +18,8 @@ import java.util.UUID;
 @Aspect
 @Component
 public class QueryLogAspect {
+
+    private static final Logger log = LoggerFactory.getLogger(QueryLogAspect.class);
 
     private final QueryLogService queryLogService;
 
@@ -29,15 +33,32 @@ public class QueryLogAspect {
         String queryId = UUID.randomUUID().toString();
         SearchRequest request = (SearchRequest) pjp.getArgs()[0];
 
+        log.info("[search] start id={} domain={} query=\"{}\"",
+                queryId, request.domain(), abbreviate(request.query(), 60));
+
         ContextPack pack = null;
+        Throwable thrown = null;
         try {
             Object result = pjp.proceed();
             if (result instanceof ContextPack cp) {
                 pack = cp;
             }
             return result;
+        } catch (Throwable t) {
+            thrown = t;
+            throw t;
         } finally {
-            queryLogService.record(queryId, request, pack, System.currentTimeMillis() - startMs);
+            long durationMs = System.currentTimeMillis() - startMs;
+            if (thrown != null) {
+                log.warn("[search] error id={} domain={} duration={}ms error={}",
+                        queryId, request.domain(), durationMs, thrown.getMessage());
+            }
+            queryLogService.record(queryId, request, pack, durationMs);
         }
+    }
+
+    private static String abbreviate(String s, int maxLen) {
+        if (s == null) return "";
+        return s.length() <= maxLen ? s : s.substring(0, maxLen) + "...";
     }
 }

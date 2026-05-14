@@ -105,6 +105,11 @@ public class SearchService {
         // (throws domain_database_unavailable if the pool cannot connect)
         domainPoolManager.getDataSource(effectiveDomain);
 
+        String dbEnvVar = domainRegistry.findEntry(effectiveDomain)
+                .map(e -> e.databaseUrlEnv() != null ? e.databaseUrlEnv() : "default(shared)")
+                .orElse("default(shared)");
+        log.info("[search] routing domain={} channel={} db={}", effectiveDomain, channel, dbEnvVar);
+
         // All DB operations on this thread now route to the domain's pool
         DomainContext.set(effectiveDomain);
         ActiveScope scope = null;

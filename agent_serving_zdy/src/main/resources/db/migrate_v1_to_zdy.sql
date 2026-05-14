@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS serving_query_logs (
     id                  TEXT    NOT NULL,
 
     query_text          TEXT    NOT NULL,
+    domain              TEXT    NOT NULL DEFAULT 'default',
     channel             TEXT    NOT NULL,
 
     intent              TEXT,

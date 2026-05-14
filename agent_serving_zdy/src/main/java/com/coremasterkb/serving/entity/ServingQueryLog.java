@@ -6,6 +6,7 @@ public class ServingQueryLog {
 
     // Original input
     private String queryText;
+    private String domain;
     private String channel;
 
     // Query parsing results
@@ -43,6 +44,9 @@ public class ServingQueryLog {
 
     public String getQueryText() { return queryText; }
     public void setQueryText(String queryText) { this.queryText = queryText; }
+
+    public String getDomain() { return domain; }
+    public void setDomain(String domain) { this.domain = domain; }
 
     public String getChannel() { return channel; }
     public void setChannel(String channel) { this.channel = channel; }
