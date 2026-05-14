@@ -79,7 +79,7 @@
                 <artifactId>maven-failsafe-plugin</artifactId>
                 <configuration>
                     <!-- Level 2: integration tests — include pg-integration, exclude e2e -->
-                    <includedGroups>pg-integration</includedGroups>
+                    <groups>pg-integration</groups>
                     <excludedGroups>e2e</excludedGroups>
                 </configuration>
                 <executions>
@@ -103,7 +103,7 @@
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
                         <configuration>
-                            <includedGroups>pg-integration</includedGroups>
+                            <groups>pg-integration</groups>
                             <excludedGroups combine.self="override"/>
                             <includes>
                                 <include>**/system/*E2ETest.java</include>

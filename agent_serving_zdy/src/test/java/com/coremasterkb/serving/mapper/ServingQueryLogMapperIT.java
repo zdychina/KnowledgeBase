@@ -88,6 +88,7 @@ class ServingQueryLogMapperIT {
         ServingQueryLog entry = new ServingQueryLog();
         entry.setId(testId);
         entry.setQueryText("minimal query");
+        entry.setDomain("default");
         entry.setChannel("default");
         entry.setQueriedAt(Instant.now().toString());
         entry.setMetadataJson("{}");

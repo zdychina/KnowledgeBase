@@ -8,6 +8,7 @@ import com.coremasterkb.serving.mapper.result.FtsResultRow;
 import com.huaban.analysis.jieba.JiebaSegmenter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.BadSqlGrammarException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -129,17 +130,23 @@ public class FtsRetriever implements Retriever {
         String queryText = String.join(" ", tokens);
         List<String> scopeJsonParams = buildScopeJsonParams(scope);
 
-        List<FtsResultRow> rows = retrievalUnitMapper.searchByTrigramWithScope(
-                queryText, snapshotIds, scopeJsonParams, limit);
+        try {
+            List<FtsResultRow> rows = retrievalUnitMapper.searchByTrigramWithScope(
+                    queryText, snapshotIds, scopeJsonParams, limit);
 
-        if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
-            log.info("Scope filter eliminated all trigram results, retrying without scope");
-            rows = retrievalUnitMapper.searchByTrigram(queryText, snapshotIds, limit);
+            if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
+                log.info("Scope filter eliminated all trigram results, retrying without scope");
+                rows = retrievalUnitMapper.searchByTrigram(queryText, snapshotIds, limit);
+            }
+
+            return rows.stream()
+                    .map(row -> toCandidate(row, SOURCE_TRIGRAM))
+                    .toList();
+        } catch (BadSqlGrammarException e) {
+            // pg_trgm extension not installed — skip this level and fall through to LIKE
+            log.warn("pg_trgm not available, skipping trigram fallback: {}", e.getMostSpecificCause().getMessage());
+            return Collections.emptyList();
         }
-
-        return rows.stream()
-                .map(row -> toCandidate(row, SOURCE_TRIGRAM))
-                .toList();
     }
 
     // -------------------------------------------------------------------------
