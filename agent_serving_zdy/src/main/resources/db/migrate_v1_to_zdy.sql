@@ -78,9 +78,58 @@ CREATE INDEX IF NOT EXISTS idx_asset_source_batches_domain
 
 
 -- ---------------------------------------------------------------------------
--- Step 6: post-migration verification
+-- Step 6: serving_query_logs — new table (did not exist in v1)
 -- ---------------------------------------------------------------------------
--- Confirm columns exist:
+CREATE TABLE IF NOT EXISTS serving_query_logs (
+    id                  TEXT    NOT NULL,
+
+    query_text          TEXT    NOT NULL,
+    channel             TEXT    NOT NULL,
+
+    intent              TEXT,
+    normalizer_source   TEXT,
+    keywords_json       TEXT    NOT NULL DEFAULT '[]',
+    entities_json       TEXT    NOT NULL DEFAULT '[]',
+    scope_json          TEXT    NOT NULL DEFAULT '{}',
+
+    release_id          TEXT,
+    build_id            TEXT,
+    snapshot_count      INTEGER,
+
+    result_item_count   INTEGER,
+    result_seed_count   INTEGER,
+    result_has_result   BOOLEAN NOT NULL DEFAULT TRUE,
+    result_issues_json  TEXT    NOT NULL DEFAULT '[]',
+
+    result_items_json       TEXT    NOT NULL DEFAULT '[]',
+    result_sources_json     TEXT    NOT NULL DEFAULT '[]',
+    result_relations_json   TEXT    NOT NULL DEFAULT '[]',
+
+    duration_ms         INTEGER,
+
+    queried_at          TEXT    NOT NULL,
+    metadata_json       TEXT    NOT NULL DEFAULT '{}',
+
+    CONSTRAINT pk_serving_query_logs PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sql_queried_at
+    ON serving_query_logs (queried_at);
+
+CREATE INDEX IF NOT EXISTS idx_sql_intent
+    ON serving_query_logs (intent, queried_at);
+
+CREATE INDEX IF NOT EXISTS idx_sql_channel_release
+    ON serving_query_logs (channel, release_id);
+
+CREATE INDEX IF NOT EXISTS idx_sql_has_result
+    ON serving_query_logs (result_has_result, queried_at);
+
+
+-- ---------------------------------------------------------------------------
+-- Step 7: post-migration verification
+-- ---------------------------------------------------------------------------
+-- Confirm domain columns exist:
 --
 -- SELECT column_name, data_type, column_default, is_nullable
 -- FROM information_schema.columns
@@ -88,15 +137,24 @@ CREATE INDEX IF NOT EXISTS idx_asset_source_batches_domain
 --   AND column_name IN ('domain', 'channel')
 -- ORDER BY table_name, column_name;
 --
+-- Confirm serving_query_logs table exists:
+--
+-- SELECT table_name FROM information_schema.tables
+-- WHERE table_name = 'serving_query_logs';
+--
 -- Confirm indexes exist:
 --
 -- SELECT indexname, indexdef
 -- FROM pg_indexes
--- WHERE tablename IN ('asset_source_batches', 'asset_builds', 'asset_publish_releases')
+-- WHERE tablename IN ('asset_source_batches', 'asset_builds', 'asset_publish_releases', 'serving_query_logs')
 --   AND indexname IN (
 --       'uq_asset_publish_releases_domain_channel_active',
 --       'idx_asset_publish_releases_domain_channel_status',
 --       'idx_asset_builds_domain_status',
---       'idx_asset_source_batches_domain'
+--       'idx_asset_source_batches_domain',
+--       'idx_sql_queried_at',
+--       'idx_sql_intent',
+--       'idx_sql_channel_release',
+--       'idx_sql_has_result'
 --   )
 -- ORDER BY tablename, indexname;
