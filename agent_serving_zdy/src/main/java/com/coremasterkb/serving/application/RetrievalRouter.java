@@ -23,12 +23,16 @@ public class RetrievalRouter {
     static {
         Map<String, Map<String, Map<String, Double>>> routes = new LinkedHashMap<>();
 
+        // entity_exact weight=0.8 gives it a voice in the fusion without dominating
         routes.put("default", Map.of(
                 "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
-                "dense_vector", Map.of("weight", 0.9, "top_k", 50.0)
+                "dense_vector", Map.of("weight", 0.9, "top_k", 50.0),
+                "entity_exact", Map.of("weight", 0.8, "top_k", 20.0)
         ));
 
+        // command_usage: entity_exact is the highest-confidence route — commands are exact-match
         routes.put("command_usage", Map.of(
+                "entity_exact", Map.of("weight", 1.5, "top_k", 20.0),
                 "lexical_bm25", Map.of("weight", 1.2, "top_k", 50.0),
                 "dense_vector", Map.of("weight", 0.6, "top_k", 30.0)
         ));
@@ -40,7 +44,8 @@ public class RetrievalRouter {
 
         routes.put("troubleshooting", Map.of(
                 "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
-                "dense_vector", Map.of("weight", 0.8, "top_k", 40.0)
+                "dense_vector", Map.of("weight", 0.8, "top_k", 40.0),
+                "entity_exact", Map.of("weight", 0.7, "top_k", 15.0)
         ));
 
         routes.put("comparison", Map.of(

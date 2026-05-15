@@ -200,7 +200,8 @@ public class ContextAssembler {
         allItems.addAll(sourceItems);
         allItems.addAll(expandedItems);
 
-        int maxItems = routePlan.assembly().maxItems() + routePlan.assembly().maxExpanded();
+        AssemblyConfig assembly = routePlan.assembly() != null ? routePlan.assembly() : AssemblyConfig.defaults();
+        int maxItems = assembly.maxItems() + assembly.maxExpanded();
         if (allItems.size() > maxItems) {
             allItems = allItems.subList(0, maxItems);
         }

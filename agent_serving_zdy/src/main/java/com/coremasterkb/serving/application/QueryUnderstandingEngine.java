@@ -67,6 +67,10 @@ public class QueryUnderstandingEngine {
             "AUSF", "BSF", "NSSF", "SCP", "UDSF", "UDR");
     private static final List<String> DEFAULT_PRODUCTS = List.of("UDG", "UNC", "CloudCore");
 
+    // Pre-compiled word-boundary patterns for the default lists (avoid per-request Pattern.compile)
+    private static final Map<String, Pattern> DEFAULT_NE_PATTERNS       = buildPatternMap(DEFAULT_NE);
+    private static final Map<String, Pattern> DEFAULT_PRODUCT_PATTERNS  = buildPatternMap(DEFAULT_PRODUCTS);
+
     // ---- Stopwords (Chinese + English, same as Python) ----
     private static final Set<String> STOPWORDS_ZH = Set.of(
             "的", "了", "在", "是", "和", "与", "及", "或", "也", "都",
@@ -242,8 +246,11 @@ public class QueryUnderstandingEngine {
             }
         }
 
+        Map<String, Pattern> nePatterns      = (neList == DEFAULT_NE)      ? DEFAULT_NE_PATTERNS      : buildPatternMap(neList);
+        Map<String, Pattern> productPatterns = (products == DEFAULT_PRODUCTS) ? DEFAULT_PRODUCT_PATTERNS : buildPatternMap(products);
+
         List<EntityRef> entities = extractEntities(query, profile, cmdRe, opMap);
-        Map<String, Object> scope = extractScope(query, neList, products);
+        Map<String, Object> scope = extractScope(query, nePatterns, productPatterns);
         String intent = detectIntent(query, entities);
         List<String> keywords = extractKeywords(query, cmdRe);
 
@@ -326,34 +333,39 @@ public class QueryUnderstandingEngine {
     // Scope extraction
     // =========================================================================
 
-    private Map<String, Object> extractScope(String query, List<String> neList, List<String> products) {
+    private Map<String, Object> extractScope(
+            String query,
+            Map<String, Pattern> nePatterns,
+            Map<String, Pattern> productPatterns) {
         Map<String, Object> scope = new LinkedHashMap<>();
 
         Set<String> prods = new TreeSet<>();
-        for (String p : products) {
-            Pattern pat = Pattern.compile("(?<![A-Za-z0-9_])" + Pattern.quote(p) + "(?![A-Za-z0-9_])",
-                    Pattern.CASE_INSENSITIVE);
-            if (pat.matcher(query).find()) {
-                prods.add(p.toUpperCase());
+        for (Map.Entry<String, Pattern> e : productPatterns.entrySet()) {
+            if (e.getValue().matcher(query).find()) {
+                prods.add(e.getKey().toUpperCase());
             }
         }
-        if (!prods.isEmpty()) {
-            scope.put("products", List.copyOf(prods));
-        }
+        if (!prods.isEmpty()) scope.put("products", List.copyOf(prods));
 
         Set<String> nes = new TreeSet<>();
-        for (String n : neList) {
-            Pattern pat = Pattern.compile("(?<![A-Za-z0-9_])" + Pattern.quote(n) + "(?![A-Za-z0-9_])",
-                    Pattern.CASE_INSENSITIVE);
-            if (pat.matcher(query).find()) {
-                nes.add(n.toUpperCase());
+        for (Map.Entry<String, Pattern> e : nePatterns.entrySet()) {
+            if (e.getValue().matcher(query).find()) {
+                nes.add(e.getKey().toUpperCase());
             }
         }
-        if (!nes.isEmpty()) {
-            scope.put("network_elements", List.copyOf(nes));
-        }
+        if (!nes.isEmpty()) scope.put("network_elements", List.copyOf(nes));
 
         return scope;
+    }
+
+    private static Map<String, Pattern> buildPatternMap(List<String> terms) {
+        Map<String, Pattern> map = new LinkedHashMap<>();
+        for (String t : terms) {
+            map.put(t, Pattern.compile(
+                    "(?<![A-Za-z0-9_])" + Pattern.quote(t) + "(?![A-Za-z0-9_])",
+                    Pattern.CASE_INSENSITIVE));
+        }
+        return Collections.unmodifiableMap(map);
     }
 
     // =========================================================================

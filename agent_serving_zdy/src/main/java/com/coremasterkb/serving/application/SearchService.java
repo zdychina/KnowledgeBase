@@ -74,6 +74,10 @@ public class SearchService {
      * @return assembled context pack with results
      */
     public ContextPack search(SearchRequest request) {
+        if (request.query() == null || request.query().isBlank()) {
+            throw new IllegalArgumentException("query_required");
+        }
+
         TraceCollector trace = new TraceCollector();
 
         // 1. Load Domain Profile

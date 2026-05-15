@@ -40,7 +40,7 @@ public class GlobalExceptionHandler {
         }
         log.warn("Bad request: {}", ex.getMessage());
         return ResponseEntity.badRequest()
-                .body(Map.of("error", "bad_request", "message", ex.getMessage()));
+                .body(Map.of("error", "bad_request", "message", "Bad request"));
     }
 
     @ExceptionHandler(IllegalStateException.class)

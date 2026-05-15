@@ -98,13 +98,15 @@ public class RetrievalOrchestrator {
                 continue;
             }
 
-            // Execute with exception isolation
+            // Execute with exception isolation — catch here so one failing route
+            // doesn't abort the others; failure is recorded in the trace.
             long start = System.nanoTime();
             List<RetrievalCandidate> candidates;
             try {
-                candidates = safeRetrieve(retriever, retrievalQuery, snapshotIds, routeCfg.topK());
+                candidates = retriever.retrieve(retrievalQuery, snapshotIds, routeCfg.topK());
             } catch (Exception e) {
-                traces.add(new RouteTrace(routeName, true, 0, e.getMessage(), 0));
+                double latencyMs = (System.nanoTime() - start) / 1_000_000.0;
+                traces.add(new RouteTrace(routeName, false, 0, e.getMessage(), latencyMs));
                 continue;
             }
             double latencyMs = (System.nanoTime() - start) / 1_000_000.0;
@@ -124,15 +126,4 @@ public class RetrievalOrchestrator {
         return new OrchestratorResult(allCandidates, traces);
     }
 
-    private List<RetrievalCandidate> safeRetrieve(
-            Retriever retriever,
-            RetrievalQuery query,
-            List<String> snapshotIds,
-            int topK) {
-        try {
-            return retriever.retrieve(query, snapshotIds, topK);
-        } catch (Exception e) {
-            return List.of();
-        }
-    }
 }
