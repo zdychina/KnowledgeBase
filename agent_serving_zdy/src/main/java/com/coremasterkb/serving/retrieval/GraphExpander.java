@@ -54,7 +54,13 @@ public class GraphExpander {
 
         Set<String> visited = new LinkedHashSet<>(seedIds);
         Set<String> frontier = new LinkedHashSet<>(seedIds);
-        Map<String, Integer> expandedIds = new LinkedHashMap<>(); // neighborId -> depth
+        Map<String, Integer> expandedIds = new LinkedHashMap<>();  // neighborId -> depth
+        Map<String, String>  rootSeed    = new LinkedHashMap<>();  // nodeId -> original seed ID
+
+        // Seeds map to themselves as root
+        for (String sid : seedIds) {
+            rootSeed.put(sid, sid);
+        }
 
         for (int depth = 1; depth <= maxDepth; depth++) {
             if (frontier.isEmpty()) {
@@ -71,9 +77,11 @@ public class GraphExpander {
                     visited.add(neighborId);
                     nextFrontier.add(neighborId);
                     expandedIds.putIfAbsent(neighborId, depth);
+                    // Inherit the root seed from the frontier node that produced this neighbor
+                    rootSeed.putIfAbsent(neighborId, rootSeed.getOrDefault(row.getFromId(), row.getFromId()));
 
                     if (expandedIds.size() >= maxResults) {
-                        return resolveSegments(expandedIds, snapshotIds);
+                        return resolveSegments(expandedIds, rootSeed, snapshotIds);
                     }
                 }
             }
@@ -84,21 +92,26 @@ public class GraphExpander {
             return Collections.emptyList();
         }
 
-        return resolveSegments(expandedIds, snapshotIds);
+        return resolveSegments(expandedIds, rootSeed, snapshotIds);
     }
 
     /**
      * Fetch full segment data for expanded segment IDs and build result rows.
      */
     private List<ExpandedSegmentRow> resolveSegments(
-            Map<String, Integer> expandedIds, List<String> snapshotIds) {
+            Map<String, Integer> expandedIds,
+            Map<String, String> rootSeed,
+            List<String> snapshotIds) {
 
         List<SegmentWithMetaRow> segments = segmentMapper.selectWithMeta(
                 new ArrayList<>(expandedIds.keySet()), snapshotIds);
 
         return segments.stream()
                 .filter(seg -> seg.getId() != null && expandedIds.containsKey(seg.getId()))
-                .map(seg -> new ExpandedSegmentRow(seg, expandedIds.get(seg.getId())))
+                .map(seg -> new ExpandedSegmentRow(
+                        seg,
+                        expandedIds.get(seg.getId()),
+                        rootSeed.getOrDefault(seg.getId(), "")))
                 .toList();
     }
 }

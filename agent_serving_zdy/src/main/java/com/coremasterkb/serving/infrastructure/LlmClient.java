@@ -2,6 +2,7 @@ package com.coremasterkb.serving.infrastructure;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 
@@ -12,6 +13,8 @@ public class LlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(LlmClient.class);
     private static final long HEALTH_CACHE_TTL_MS = 30_000;
+    private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE =
+            new ParameterizedTypeReference<>() {};
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
@@ -33,7 +36,6 @@ public class LlmClient {
         if (baseUrl == null || baseUrl.isBlank()) {
             return false;
         }
-        // Use cached health result within TTL
         long now = System.currentTimeMillis();
         long last = lastHealthCheckMs.get();
         if (now - last < HEALTH_CACHE_TTL_MS) {
@@ -47,12 +49,11 @@ public class LlmClient {
 
     public boolean checkHealth() {
         try {
-            HttpHeaders headers = buildHeaders();
-            ResponseEntity<Map> response = restTemplate.exchange(
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                     baseUrl + "/health",
                     HttpMethod.GET,
-                    new HttpEntity<>(headers),
-                    Map.class
+                    new HttpEntity<>(buildHeaders()),
+                    MAP_TYPE
             );
             return response.getStatusCode().is2xxSuccessful();
         } catch (Exception e) {
@@ -76,10 +77,11 @@ public class LlmClient {
         payload.put("input", input);
         payload.put("caller_domain", "serving");
 
-        HttpHeaders headers = buildHeaders();
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                baseUrl + "/api/v1/execute", entity, Map.class);
+        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                baseUrl + "/api/v1/execute",
+                HttpMethod.POST,
+                new HttpEntity<>(payload, buildHeaders()),
+                MAP_TYPE);
         return response.getBody() != null ? response.getBody() : Map.of();
     }
 
@@ -97,10 +99,11 @@ public class LlmClient {
         if (model != null) payload.put("model", model);
         if (dimensions != null) payload.put("dimensions", dimensions);
 
-        HttpHeaders headers = buildHeaders();
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                baseUrl + "/api/v1/models/embeddings", entity, Map.class);
+        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                baseUrl + "/api/v1/models/embeddings",
+                HttpMethod.POST,
+                new HttpEntity<>(payload, buildHeaders()),
+                MAP_TYPE);
         return response.getBody() != null ? response.getBody() : Map.of();
     }
 
@@ -119,10 +122,11 @@ public class LlmClient {
         if (model != null) payload.put("model", model);
         if (topN != null) payload.put("top_n", topN);
 
-        HttpHeaders headers = buildHeaders();
-        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
-        ResponseEntity<Map> response = restTemplate.postForEntity(
-                baseUrl + "/api/v1/models/rerank", entity, Map.class);
+        ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                baseUrl + "/api/v1/models/rerank",
+                HttpMethod.POST,
+                new HttpEntity<>(payload, buildHeaders()),
+                MAP_TYPE);
         return response.getBody() != null ? response.getBody() : Map.of();
     }
 
@@ -137,7 +141,6 @@ public class LlmClient {
         }
         for (var tpl : ServingTemplates.ALL) {
             try {
-                // Resolve placeholders in system_prompt
                 Map<String, Object> payload = new HashMap<>(tpl);
                 String schemaStr = (String) payload.getOrDefault("output_schema_json", "");
                 String exampleStr = (String) payload.remove("_example_json");
@@ -148,21 +151,21 @@ public class LlmClient {
                                         .replace("{example}", exampleStr != null ? exampleStr : ""));
                 }
 
-                HttpHeaders headers = buildHeaders();
-                HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
-                ResponseEntity<Map> response = restTemplate.postForEntity(
-                        baseUrl + "/api/v1/templates", entity, Map.class);
+                ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                        baseUrl + "/api/v1/templates",
+                        HttpMethod.POST,
+                        new HttpEntity<>(payload, buildHeaders()),
+                        MAP_TYPE);
 
-                if (response.getStatusCode().is2xxSuccessful()
-                        || response.getStatusCode() == HttpStatus.CREATED
-                        || response.getStatusCode() == HttpStatus.CONFLICT) {
+                HttpStatusCode status = response.getStatusCode();
+                if (status.is2xxSuccessful() || status == HttpStatus.CONFLICT) {
                     log.info("Registered template: {}", tpl.get("template_key"));
                 } else {
-                    log.warn("Failed to register template {}: HTTP {}",
-                            tpl.get("template_key"), response.getStatusCode());
+                    log.warn("Failed to register template '{}': HTTP {}",
+                            tpl.get("template_key"), status);
                 }
             } catch (Exception e) {
-                log.warn("Failed to register template: {}", tpl.get("template_key"));
+                log.warn("Failed to register template '{}': {}", tpl.get("template_key"), e.getMessage());
             }
         }
     }

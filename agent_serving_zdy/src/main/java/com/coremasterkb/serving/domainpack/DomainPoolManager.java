@@ -60,15 +60,10 @@ public class DomainPoolManager {
             log.info("Domain registry not loaded — DomainPoolManager running in single-datasource mode");
             return;
         }
+        // Log registered domains without connecting — pools are created lazily on first request
+        // to avoid blocking startup when many domain databases exist.
         for (String domain : domainRegistry.knownDomains()) {
-            try {
-                DataSource ds = resolveDataSource(domain);
-                pools.put(domain, ds);
-                log.info("Domain pool ready: {} (custom={})", domain, ds != defaultDataSource);
-            } catch (IllegalStateException e) {
-                // domain_database_unavailable — log as WARN; the error is raised at request time
-                log.warn("Domain pool init failed for '{}': {}", domain, e.getMessage());
-            }
+            log.info("Domain registered: {} (pool will be created on first request)", domain);
         }
     }
 

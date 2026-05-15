@@ -70,15 +70,15 @@ class TraceCollectorTest {
     @DisplayName("buildTrace")
     class BuildTrace {
         @Test
-        @DisplayName("empty trace has zero total duration")
+        @DisplayName("empty trace has non-negative total duration (wall-clock from construction)")
         void emptyTraceZeroDuration() {
             var trace = collector.buildTrace("req-0");
             assertThat(trace.stages()).isEmpty();
-            assertThat(trace.totalDurationMs()).isEqualTo(0.0);
+            assertThat(trace.totalDurationMs()).isGreaterThanOrEqualTo(0.0);
         }
 
         @Test
-        @DisplayName("totalDuration is sum of stage durations")
+        @DisplayName("totalDuration is wall-clock and >= sum of stage durations")
         void totalDurationIsSum() {
             collector.startStage("a");
             collector.endStage("a", "done");
@@ -88,7 +88,7 @@ class TraceCollectorTest {
             var trace = collector.buildTrace("req-5");
             double stageSum = trace.stages().stream()
                     .mapToDouble(s -> s.durationMs()).sum();
-            assertThat(trace.totalDurationMs()).isEqualTo(stageSum);
+            assertThat(trace.totalDurationMs()).isGreaterThanOrEqualTo(stageSum);
         }
 
         @Test

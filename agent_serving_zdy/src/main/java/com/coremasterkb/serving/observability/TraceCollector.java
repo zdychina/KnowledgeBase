@@ -19,6 +19,7 @@ import java.util.*;
  */
 public class TraceCollector {
 
+    private final long startNanos = System.nanoTime();
     private final List<TraceStage> stages = new ArrayList<>();
     private final Map<String, Long> stageStartTimes = new HashMap<>();
 
@@ -51,9 +52,7 @@ public class TraceCollector {
     }
 
     public Trace buildTrace(String requestId) {
-        double totalDuration = stages.stream()
-                .mapToDouble(TraceStage::durationMs)
-                .sum();
+        double totalDuration = (System.nanoTime() - startNanos) / 1_000_000.0;
         return new Trace(requestId, List.copyOf(stages), totalDuration);
     }
 }

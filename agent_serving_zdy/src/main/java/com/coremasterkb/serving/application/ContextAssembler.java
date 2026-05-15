@@ -136,12 +136,13 @@ public class ContextAssembler {
 
             expandedItems = buildExpandedItems(expansions);
 
-            // Build expansion relations
+            // Build expansion relations using the actual root seed that triggered each expansion
             for (var exp : expansions) {
                 SegmentWithMetaRow seg = exp.segment();
                 if (seg != null && seg.getId() != null) {
-                    // Find which seed this expansion came from (approximate: use first seed)
-                    String fromId = uniqueSegIds.isEmpty() ? "" : uniqueSegIds.get(0);
+                    String fromId = exp.sourceSegmentId() != null && !exp.sourceSegmentId().isBlank()
+                            ? exp.sourceSegmentId()
+                            : (uniqueSegIds.isEmpty() ? "" : uniqueSegIds.get(0));
                     relationItems.add(new ContextRelation(
                             "rel-" + fromId + "-" + seg.getId(),
                             fromId,
