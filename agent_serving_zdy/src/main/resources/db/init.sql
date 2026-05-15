@@ -10,6 +10,7 @@
 -- Required extensions
 -- -----------------------------------------------------------------------------
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- -----------------------------------------------------------------------------
 -- Chinese segmentation extension (optional, requires pg_jieba plugin)
