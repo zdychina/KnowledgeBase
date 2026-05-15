@@ -98,12 +98,13 @@ public class QueryUnderstandingEngine {
             "general", List.of()
     );
 
+    private static final ThreadLocal<JiebaSegmenter> SEGMENTER_TL =
+            ThreadLocal.withInitial(JiebaSegmenter::new);
+
     private final LlmClient llmClient;
-    private final JiebaSegmenter jiebaSegmenter;
 
     public QueryUnderstandingEngine(LlmClient llmClient) {
         this.llmClient = llmClient;
-        this.jiebaSegmenter = new JiebaSegmenter();
     }
 
     /**
@@ -395,7 +396,7 @@ public class QueryUnderstandingEngine {
         // jieba tokenization
         List<String> tokens;
         try {
-            tokens = jiebaSegmenter.sentenceProcess(cleaned);
+            tokens = SEGMENTER_TL.get().sentenceProcess(cleaned);
         } catch (Exception e) {
             // Fallback: simple split
             tokens = Arrays.stream(cleaned.split("[\\s,，、？?。.！!]+"))

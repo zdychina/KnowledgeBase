@@ -5,7 +5,6 @@ import com.coremasterkb.serving.domain.RetrievalQuery;
 import com.coremasterkb.serving.domain.ScoreChain;
 import com.coremasterkb.serving.mapper.AssetRetrievalEmbeddingMapper;
 import com.coremasterkb.serving.mapper.result.EmbeddingRow;
-import com.coremasterkb.serving.util.JsonUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,11 +12,12 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Dense vector retriever using pgvector cosine distance.
+ * Dense vector retriever using pgvector cosine distance (server-side ANN).
  *
- * <p>Uses the pre-computed query embedding from {@link RetrievalQuery#queryEmbedding()}.
- * Loads stored embeddings scoped to active snapshots and computes cosine similarity
- * in Java. Scope filter is applied via facets_json JSONB containment.</p>
+ * <p>Delegates ranking entirely to PostgreSQL via the {@code <=>} operator,
+ * avoiding the previous approach of loading all embeddings into the JVM.
+ * Scope filter (facets_json JSONB containment) is pushed down to the SQL query.
+ * When the scope filter eliminates all results, the query is retried without scope.</p>
  */
 public class DenseVectorRetriever implements Retriever {
 
@@ -25,15 +25,9 @@ public class DenseVectorRetriever implements Retriever {
     private static final String SOURCE_NAME = "dense_vector";
 
     private final AssetRetrievalEmbeddingMapper embeddingMapper;
-    private final int maxLoad;
 
-    /**
-     * @param embeddingMapper mapper for loading stored embeddings with unit metadata
-     * @param maxLoad         safety cap to prevent unbounded memory use during cosine computation
-     */
-    public DenseVectorRetriever(AssetRetrievalEmbeddingMapper embeddingMapper, int maxLoad) {
+    public DenseVectorRetriever(AssetRetrievalEmbeddingMapper embeddingMapper) {
         this.embeddingMapper = embeddingMapper;
-        this.maxLoad = maxLoad;
     }
 
     @Override
@@ -41,79 +35,43 @@ public class DenseVectorRetriever implements Retriever {
         if (snapshotIds == null || snapshotIds.isEmpty()) {
             return Collections.emptyList();
         }
-
         float[] queryVec = query.queryEmbedding();
         if (queryVec == null || queryVec.length == 0) {
             return Collections.emptyList();
         }
 
-        // Load stored embeddings with unit metadata (capped at maxLoad)
-        List<EmbeddingRow> rows = embeddingMapper.selectWithUnitMeta(snapshotIds, maxLoad);
-        if (rows.isEmpty()) {
-            return Collections.emptyList();
+        String vectorStr = formatVector(queryVec);
+        List<String> scopeParams = FtsRetriever.buildScopeJsonParams(query.scope());
+
+        List<EmbeddingRow> rows = embeddingMapper.selectTopKByVector(
+                snapshotIds, vectorStr, queryVec.length, scopeParams, topK);
+
+        if (rows.isEmpty() && !scopeParams.isEmpty()) {
+            log.info("Scope filter eliminated all dense results, retrying without scope");
+            rows = embeddingMapper.selectTopKByVector(
+                    snapshotIds, vectorStr, queryVec.length, List.of(), topK);
         }
 
-        // Compute cosine similarity; skip rows whose stored dim mismatches the query vector
-        record Scored(double score, EmbeddingRow row) {}
-
-        List<Scored> scored = new ArrayList<>();
-        for (EmbeddingRow row : rows) {
-            if (row.getEmbeddingDim() != queryVec.length) {
-                continue;
-            }
-            float[] stored = parseVector(row.getEmbeddingVector());
-            if (stored.length == 0) {
-                continue;
-            }
-            double sim = cosineSimilarity(queryVec, stored);
-            scored.add(new Scored(sim, row));
-        }
-
-        // Sort descending by score, truncate to topK
-        scored.sort(Comparator.comparingDouble(Scored::score).reversed());
-        int limit = Math.min(topK, scored.size());
-
-        // Build scope params for metadata annotation (filtering already done above in Java)
-        return scored.subList(0, limit).stream()
-                .map(s -> toCandidate(s.row(), s.score()))
-                .collect(Collectors.toList());
+        return rows.stream().map(this::toCandidate).collect(Collectors.toList());
     }
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
-    /** Parse embedding_vector stored as JSON float array: [0.1, 0.2, ...] */
-    @SuppressWarnings("unchecked")
-    private float[] parseVector(String json) {
-        if (json == null || json.isBlank()) {
-            return new float[0];
+    /** Format a float array as a pgvector literal: [v0,v1,...,vn] */
+    static String formatVector(float[] vec) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < vec.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(vec[i]);
         }
-        try {
-            List<Number> list = JsonUtils.mapper().readValue(json, List.class);
-            float[] result = new float[list.size()];
-            for (int i = 0; i < list.size(); i++) {
-                result[i] = list.get(i).floatValue();
-            }
-            return result;
-        } catch (Exception e) {
-            log.debug("Failed to parse embedding vector: {}", e.getMessage());
-            return new float[0];
-        }
+        sb.append("]");
+        return sb.toString();
     }
 
-    private static double cosineSimilarity(float[] a, float[] b) {
-        double dot = 0, normA = 0, normB = 0;
-        for (int i = 0; i < a.length; i++) {
-            dot += (double) a[i] * b[i];
-            normA += (double) a[i] * a[i];
-            normB += (double) b[i] * b[i];
-        }
-        double denom = Math.sqrt(normA) * Math.sqrt(normB);
-        return denom == 0.0 ? 0.0 : dot / denom;
-    }
-
-    private RetrievalCandidate toCandidate(EmbeddingRow row, double score) {
+    private RetrievalCandidate toCandidate(EmbeddingRow row) {
+        double score = row.getCosineScore();
         Map<String, Object> metadata = new HashMap<>();
         putIfNotNull(metadata, "document_snapshot_id", row.getDocumentSnapshotId());
         putIfNotNull(metadata, "text", row.getText());

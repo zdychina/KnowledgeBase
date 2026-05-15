@@ -7,8 +7,9 @@ package com.coremasterkb.serving.mapper.result;
 public class EmbeddingRow {
 
     private String retrievalUnitId;
-    private String embeddingVector;     // serialized JSON float array
+    private String embeddingVector;     // serialized JSON float array (legacy selectWithUnitMeta)
     private int    embeddingDim;
+    private double cosineScore;
 
     // Fields from asset_retrieval_units (needed to build RetrievalCandidate)
     private String documentSnapshotId;
@@ -31,6 +32,9 @@ public class EmbeddingRow {
 
     public int getEmbeddingDim() { return embeddingDim; }
     public void setEmbeddingDim(int embeddingDim) { this.embeddingDim = embeddingDim; }
+
+    public double getCosineScore() { return cosineScore; }
+    public void setCosineScore(double cosineScore) { this.cosineScore = cosineScore; }
 
     public String getDocumentSnapshotId() { return documentSnapshotId; }
     public void setDocumentSnapshotId(String documentSnapshotId) { this.documentSnapshotId = documentSnapshotId; }

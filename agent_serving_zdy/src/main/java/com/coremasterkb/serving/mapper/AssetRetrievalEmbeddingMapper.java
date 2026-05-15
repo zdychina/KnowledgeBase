@@ -15,4 +15,17 @@ public interface AssetRetrievalEmbeddingMapper {
     List<EmbeddingRow> selectWithUnitMeta(
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("limit") int limit);
+
+    /**
+     * Return the top-K nearest neighbours using pgvector cosine distance.
+     * Scoring and ranking are done server-side; no in-JVM vector math needed.
+     * Scope filter (facets_json JSONB containment) is pushed down to SQL.
+     * Pass an empty {@code scopeJsonParams} list to skip scope filtering.
+     */
+    List<EmbeddingRow> selectTopKByVector(
+            @Param("snapshotIds") List<String> snapshotIds,
+            @Param("queryVector") String queryVector,
+            @Param("dim") int dim,
+            @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("topK") int topK);
 }

@@ -36,7 +36,8 @@ public class FtsRetriever implements Retriever {
     private static final String SOURCE_TRIGRAM = "trigram_fallback";
     private static final String SOURCE_LIKE = "like_fallback";
 
-    private static final JiebaSegmenter SEGMENTER = new JiebaSegmenter();
+    private static final ThreadLocal<JiebaSegmenter> SEGMENTER_TL =
+            ThreadLocal.withInitial(JiebaSegmenter::new);
     private static final Pattern CJK_PATTERN = Pattern.compile("[\\u4e00-\\u9fff]");
 
     private static final Set<String> STOPWORDS_ZH = loadStopwords("fts/stopwords_zh.txt");
@@ -210,7 +211,7 @@ public class FtsRetriever implements Retriever {
         if (text == null || text.isBlank()) {
             return Collections.emptyList();
         }
-        List<String> raw = SEGMENTER.sentenceProcess(text).stream()
+        List<String> raw = SEGMENTER_TL.get().sentenceProcess(text).stream()
                 .map(String::trim)
                 .filter(t -> !t.isBlank())
                 .toList();
