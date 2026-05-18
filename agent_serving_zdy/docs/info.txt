@@ -1,0 +1,5 @@
+DOMAIN_REGISTRY_PATH=domain_registry.yaml
+SCENARIO_PACKS_DIR=scenario_packs
+LLM_SERVICE_URL=http://localhost:8900
+COREMASTERKB_DB_CLOUD_CORE=jdbc:postgresql://localhost:15432/cloud_core_network_db?user=zdy&password=zdy1234
+COREMASTERKB_DB_GENERIC=jdbc:postgresql://localhost:15432/generic_db?user=zdy&password=zdy1234
