@@ -1,0 +1,22 @@
+# Domain Registry — CoreMasterKB
+# Maps domain identifiers to database, scenario pack, and release channel.
+# Both Mining and Serving read this file.
+#
+# Fields:
+#   enabled          - whether this domain is active; disabled domains return 400 domain_disabled
+#   database_url_env - env var name that holds the PostgreSQL URL for this domain
+#   scenario_pack    - sub-directory name under scenario_packs/ to load domain.yaml from
+#   default_channel  - the release channel used when the caller omits channel (default: prod)
+
+domains:
+  cloud_core_network:
+    enabled: true
+    database_url_env: COREMASTERKB_DB_CLOUD_CORE
+    scenario_pack: cloud_core_network
+    default_channel: prod
+
+  generic:
+    enabled: true
+    database_url_env: COREMASTERKB_DB_GENERIC
+    scenario_pack: generic
+    default_channel: prod

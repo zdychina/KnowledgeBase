@@ -1,0 +1,179 @@
+# Scenario pack for the cloud_core_network domain.
+# 5G core network knowledge base: SMF/UPF/AMF command reference, procedures,
+# troubleshooting, and concept documentation.
+
+# Entity types present in this domain's knowledge base.
+entity_types:
+  - command
+  - network_function
+  - interface
+  - protocol
+  - parameter
+  - concept
+
+# Strong entity types trigger entity_exact retrieval even when intent is ambiguous.
+strong_entity_types:
+  - command
+  - network_function
+
+# Custom entity extraction rules applied before the default command regex.
+extractor_rules:
+  - pattern: "\\b(AMF|SMF|UPF|UDM|PCF|NRF|AUSF|BSF|NSSF|SCP|UDSF|UDR)\\b"
+    entity_type: network_function
+  - pattern: "\\b(N[1-9]|N1[0-9]|Xn|Uu|NG-RAN)\\b"
+    entity_type: interface
+  - pattern: "\\b(PFCP|GTP-U|HTTP/2|SBI|TLS|IPSec|NAS)\\b"
+    entity_type: protocol
+
+# Query understanding overrides for the rule-based fallback path.
+serving:
+  query_understanding:
+    # Same default pattern — kept explicit so it can be customised per product line.
+    command_regex: "(ADD|MOD|DEL|SET|SHOW|LST|DSP|REG|DEREG)\\s+([A-Z][A-Z0-9_]*)"
+    op_map:
+      新增: ADD
+      添加: ADD
+      创建: ADD
+      修改: MOD
+      更改: MOD
+      编辑: MOD
+      删除: DEL
+      移除: DEL
+      查询: SHOW
+      查看: DSP
+      显示: LST
+      设置: SET
+      配置: SET
+    network_elements:
+      - AMF
+      - SMF
+      - UPF
+      - UDM
+      - PCF
+      - NRF
+      - AUSF
+      - BSF
+      - NSSF
+      - SCP
+      - UDSF
+      - UDR
+    products:
+      - UDG
+      - UNC
+      - CloudCore
+
+  # Per-intent retrieval weights and top-k limits.
+  # Rationale:
+  #   command_usage  — exact entity match is most reliable; dense adds little noise reduction
+  #   concept_lookup — semantic similarity dominates; entity exact rarely helpful
+  #   troubleshooting — keywords and entity names both critical; dense for "similar symptoms"
+  #   procedure      — step text is lexically specific; entity anchors the NF context
+  #   comparison     — need semantically similar chunks across multiple NFs
+  #   navigational   — user knows the target; entity_exact should find it directly
+  #   general/default — balanced; no strong prior on retrieval strategy
+  route_policy:
+    default:
+      lexical_bm25:
+        weight: 1.0
+        top_k: 50
+      entity_exact:
+        weight: 1.0
+        top_k: 20
+      dense_vector:
+        weight: 0.8
+        top_k: 50
+
+    command_usage:
+      entity_exact:
+        weight: 1.6
+        top_k: 20
+      lexical_bm25:
+        weight: 1.0
+        top_k: 50
+      dense_vector:
+        weight: 0.4
+        top_k: 20
+
+    concept_lookup:
+      dense_vector:
+        weight: 1.3
+        top_k: 60
+      lexical_bm25:
+        weight: 1.0
+        top_k: 50
+      entity_exact:
+        weight: 0.5
+        top_k: 15
+
+    troubleshooting:
+      lexical_bm25:
+        weight: 1.2
+        top_k: 60
+      entity_exact:
+        weight: 1.1
+        top_k: 30
+      dense_vector:
+        weight: 0.7
+        top_k: 30
+
+    procedure:
+      lexical_bm25:
+        weight: 1.1
+        top_k: 50
+      entity_exact:
+        weight: 1.0
+        top_k: 25
+      dense_vector:
+        weight: 0.8
+        top_k: 40
+
+    comparison:
+      dense_vector:
+        weight: 1.2
+        top_k: 60
+      lexical_bm25:
+        weight: 1.0
+        top_k: 50
+      entity_exact:
+        weight: 0.7
+        top_k: 20
+
+    navigational:
+      entity_exact:
+        weight: 1.5
+        top_k: 10
+      lexical_bm25:
+        weight: 0.8
+        top_k: 20
+      dense_vector:
+        weight: 0.3
+        top_k: 10
+
+    general:
+      lexical_bm25:
+        weight: 1.0
+        top_k: 50
+      dense_vector:
+        weight: 1.0
+        top_k: 50
+      entity_exact:
+        weight: 0.8
+        top_k: 20
+
+# Representative eval questions used for offline retrieval quality checks.
+eval_questions:
+  - question: "ADD SMF_ROUTE 命令的参数有哪些？"
+    intent: command_usage
+    expected_entity: ADD SMF_ROUTE
+  - question: "SMF 和 UPF 之间的 N4 接口作用是什么？"
+    intent: concept_lookup
+    expected_entity: SMF
+  - question: "PFCP 会话建立失败如何排查？"
+    intent: troubleshooting
+    expected_entity: PFCP
+  - question: "SMF 与 AMF 在 PDU 会话管理中的职责区别"
+    intent: comparison
+    expected_entity: SMF
+  - question: "如何配置 UPF 的 N6 接口？"
+    intent: procedure
+    expected_entity: UPF
