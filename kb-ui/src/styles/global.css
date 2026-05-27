@@ -1,0 +1,105 @@
+/* Global styles — Element Plus overrides + base typography */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  color: var(--kb-text-primary);
+  background: var(--kb-bg-page);
+}
+
+/* Element Plus table refinements */
+.el-table {
+  --el-table-border-color: var(--kb-border-light);
+  --el-table-header-bg-color: transparent;
+  --el-table-row-hover-bg-color: var(--kb-accent-soft);
+  --el-table-bg-color: transparent;
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kb-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--kb-border) !important;
+}
+
+.el-table td.el-table__cell {
+  border-bottom: 1px solid var(--kb-border-light) !important;
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: var(--kb-bg-card-hover);
+}
+
+/* Element Plus button refinements */
+.el-button--primary {
+  --el-button-bg-color: var(--kb-accent);
+  --el-button-border-color: var(--kb-accent);
+  --el-button-hover-bg-color: #0e7490;
+  --el-button-hover-border-color: #0e7490;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.el-button--default {
+  border-radius: 8px;
+}
+
+/* Element Plus tag refinements */
+.el-tag {
+  border-radius: 6px;
+}
+
+/* Element Plus dialog refinements */
+.el-dialog {
+  border-radius: var(--kb-radius-lg) !important;
+}
+
+.el-dialog__header {
+  border-bottom: 1px solid var(--kb-border-light);
+  padding-bottom: 16px;
+}
+
+/* Element Plus select refinements */
+.el-select__wrapper {
+  border-radius: 8px !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--kb-text-tertiary);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--kb-text-secondary);
+}
+
+/* Loading spinner */
+.el-loading-spinner .circular {
+  width: 28px;
+  height: 28px;
+}

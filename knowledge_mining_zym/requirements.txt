@@ -1,0 +1,35 @@
+# Requirements for running mining_ui.py
+# Install: pip install -r knowledge_mining_zym/requirements.txt
+
+# ── UI ──────────────────────────────────────────────────────────────────────
+nicegui>=1.4
+
+# ── Data ────────────────────────────────────────────────────────────────────
+pandas>=2.0
+
+# ── PostgreSQL ───────────────────────────────────────────────────────────────
+# psycopg v3 (not v2/psycopg2); [binary] bundles the C extension — remove
+# the extra and install libpq-dev separately if you prefer the pure-Python build
+psycopg[binary]>=3.1
+psycopg-pool>=3.1
+
+# ── Settings / config ───────────────────────────────────────────────────────
+pydantic-settings>=2.2
+
+# ── HTTP client (LLM & embedding calls) ─────────────────────────────────────
+httpx>=0.27
+
+# ── Markdown parsing ─────────────────────────────────────────────────────────
+markdown-it-py>=3.0
+
+# ── YAML (domain pack loading) ───────────────────────────────────────────────
+PyYAML>=6.0
+
+# ── PDF extraction (ingestion of .pdf files) ────────────────────────────────
+pdfminer.six>=20231228
+
+# ── Optional: load .env file ─────────────────────────────────────────────────
+python-dotenv>=1.0
+
+# ── Optional: CJK tokenization (faster search index for Chinese text) ────────
+# jieba>=0.42

@@ -1,0 +1,23 @@
+# .dockerignore
+.git
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+node_modules
+*.log
+*.tar.gz
+
+# 不需要打包的目录
+agent_serving/
+agent_serving_fzl/
+agent_serving_zdy/
+knowledge_mining_fzl/
+knowledge_mining_zym/
+MML/
+old/
+docs/
+scripts/
+data/
+.claude/
+tests/

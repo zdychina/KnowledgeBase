@@ -1,0 +1,57 @@
+:root {
+  /* Accent — electric teal */
+  --kb-accent: #0891b2;
+  --kb-accent-light: #22d3ee;
+  --kb-accent-soft: rgba(8, 145, 178, 0.08);
+  --kb-accent-medium: rgba(8, 145, 178, 0.15);
+
+  /* Surfaces */
+  --kb-bg-page: #f1f5f9;
+  --kb-bg-card: #ffffff;
+  --kb-bg-card-hover: #f8fafc;
+  --kb-bg-sidebar: #0f172a;
+  --kb-bg-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --kb-bg-sidebar-active: rgba(255, 255, 255, 0.1);
+
+  /* Text */
+  --kb-text-primary: #0f172a;
+  --kb-text-secondary: #64748b;
+  --kb-text-tertiary: #94a3b8;
+  --kb-text-sidebar: #94a3b8;
+  --kb-text-sidebar-active: #f1f5f9;
+
+  /* Borders */
+  --kb-border: #e2e8f0;
+  --kb-border-light: #f1f5f9;
+
+  /* Status */
+  --kb-success: #10b981;
+  --kb-success-soft: rgba(16, 185, 129, 0.1);
+  --kb-warning: #f59e0b;
+  --kb-warning-soft: rgba(245, 158, 11, 0.1);
+  --kb-danger: #ef4444;
+  --kb-danger-soft: rgba(239, 68, 68, 0.1);
+  --kb-info: #3b82f6;
+
+  /* Spacing */
+  --kb-sidebar-width: 240px;
+  --kb-header-height: 60px;
+
+  /* Shadows — layered for depth */
+  --kb-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --kb-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --kb-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+  --kb-shadow-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --kb-shadow-elevated: 0 8px 30px rgba(0, 0, 0, 0.08);
+
+  /* Radius */
+  --kb-radius-sm: 6px;
+  --kb-radius: 10px;
+  --kb-radius-lg: 14px;
+  --kb-radius-xl: 20px;
+
+  /* Transitions */
+  --kb-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --kb-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --kb-duration: 180ms;
+}
