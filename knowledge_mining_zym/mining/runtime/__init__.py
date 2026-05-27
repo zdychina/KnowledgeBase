@@ -8,8 +8,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from knowledge_mining.mining.infra.db import MiningRuntimeDB
-from knowledge_mining.mining.contracts.models import (
+from knowledge_mining_zym.mining.infra.db import MiningRuntimeDB
+from knowledge_mining_zym.mining.contracts.models import (
     MiningRunData,
     MiningRunDocumentData,
     StageEvent,

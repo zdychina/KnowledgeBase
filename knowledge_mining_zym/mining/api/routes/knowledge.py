@@ -33,17 +33,20 @@ async def knowledge_stats(request: Request) -> dict:
         )
         type_dist = {r["unit_type"]: r["c"] for r in await cur.fetchall()}
 
-        # Active release
+        # Active releases by (domain, channel) — each domain+channel has at most one active.
         cur = await conn.execute(
-            "SELECT id FROM asset_publish_releases WHERE status = 'active' LIMIT 1"
+            "SELECT domain, channel, id FROM asset_publish_releases WHERE status = 'active'"
         )
-        active = await cur.fetchone()
-        active_release = active["id"] if active else None
+        active_rows = await cur.fetchall()
+        active_releases = [
+            {"domain": r["domain"], "channel": r["channel"], "release_id": r["id"]}
+            for r in active_rows
+        ]
 
     return {
         **counts,
         "retrieval_units_by_type": type_dist,
-        "active_release": active_release,
+        "active_releases": active_releases,
     }
 
 

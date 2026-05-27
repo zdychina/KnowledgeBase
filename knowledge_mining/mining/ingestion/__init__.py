@@ -16,6 +16,7 @@ from knowledge_mining.mining.ingestion.preprocessing import (
     SUPPORTED_ARCHIVE_EXTS,
     archive_to_markdown,
 )
+from knowledge_mining.mining.ingestion.pdf_preprocessing import pdf_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ _EXTENSION_MAP: dict[str, str] = {
 }
 
 PARSABLE_EXTENSIONS = {".md", ".markdown", ".txt"}
+PDF_EXTENSIONS = {".pdf"}
 PREPROCESS_EXTENSIONS = SUPPORTED_ARCHIVE_EXTS  # {".chm", ".hdx"}
 
 _SKIP_NAMES = {
@@ -66,6 +68,7 @@ def ingest_directory(
         "parsed_documents": 0,
         "unparsed_documents": 0,
         "preprocessed_archives": 0,
+        "preprocessed_pdfs": 0,
         "skipped_files": 0,
         "failed_files": 0,
     }
@@ -109,6 +112,22 @@ def ingest_directory(
                     content = ""
                     summary["unparsed_documents"] += 1
                     metadata_json["source_format"] = ext.lstrip(".")
+                    metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
+            elif ext in PDF_EXTENSIONS:
+                # .pdf — extract text via pdfminer.six on the fly.
+                try:
+                    content = pdf_to_text(file_path)
+                    summary["parsed_documents"] += 1
+                    summary["preprocessed_pdfs"] += 1
+                    metadata_json["source_format"] = "pdf"
+                except Exception as e:
+                    logger.warning(
+                        "pdf preprocessing failed for %s: %s; registering without content",
+                        file_path, e,
+                    )
+                    content = ""
+                    summary["unparsed_documents"] += 1
+                    metadata_json["source_format"] = "pdf"
                     metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
             elif ext in PARSABLE_EXTENSIONS:
                 content = content_bytes.decode("utf-8", errors="replace")

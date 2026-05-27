@@ -2,7 +2,7 @@
 
 Defines:
 - DocumentContext: per-document immutable pipeline state
-- Segmenter / RelationBuilder Protocols
+- Segmenter Protocol
 - PipelineConfig: composable pipeline configuration
 - MiningPipeline: orchestrates per-document processing (sequential)
 - StreamingPipeline: queue-based parallel pipeline (stages run concurrently)
@@ -10,6 +10,7 @@ Defines:
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
@@ -23,7 +24,8 @@ from knowledge_mining.mining.contracts.models import (
     SectionNode,
     SegmentRelationData,
 )
-from knowledge_mining.mining.contracts.protocols import Segmenter, RelationBuilder
+from knowledge_mining.mining.contracts.protocols import Segmenter
+from knowledge_mining.mining.snapshot import select_or_create_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,13 @@ class DocumentContext:
     run_document_id: str | None = None
     sequence_id: int = 0
 
+    # Phase 1c fields (set by Phase 1a, consumed by db_write_stage)
+    action: str | None = None
+    existing_doc: dict | None = None
+    embeddings: tuple[dict, ...] = ()
+    document_id: str | None = None
+    snapshot_id: str | None = None
+
     def with_updates(self, **kwargs: Any) -> DocumentContext:
         """Return a new DocumentContext with specified fields replaced."""
         current = {
@@ -60,6 +69,11 @@ class DocumentContext:
             "error": self.error,
             "run_document_id": self.run_document_id,
             "sequence_id": self.sequence_id,
+            "action": self.action,
+            "existing_doc": self.existing_doc,
+            "embeddings": self.embeddings,
+            "document_id": self.document_id,
+            "snapshot_id": self.snapshot_id,
         }
         current.update(kwargs)
         return DocumentContext(**current)
@@ -83,12 +97,17 @@ class PipelineConfig:
     parser_factory: Callable[[str], Any] = field(default=None)
     segmenter: Segmenter | None = None
     enricher: Any | None = None  # Enricher Protocol
-    relation_builder: RelationBuilder | None = None
     question_generator: Any | None = None  # QuestionGenerator Protocol
     embedding_generator: Any | None = None  # EmbeddingGenerator Protocol
     discourse_relation_builder: Any | None = None  # DiscourseRelationBuilder
     contextualizer: Any | None = None  # Contextualizer Protocol
     domain_profile: Any | None = None  # DomainProfile
+
+    # DB handles for db_write_stage (set by run.py)
+    asset_db: Any | None = None
+    runtime_db: Any | None = None
+    tracker: Any | None = None
+    batch_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +150,7 @@ class MiningPipeline:
         parser = cfg.parser_factory(raw.file_type) if cfg.parser_factory else None
         if parser is None:
             return ctx
-        tree = parser.parse(raw.content, raw.file_name, {})
+        tree = parser.parse(raw.content, raw.file_name, {"file_path": raw.file_path})
         ctx = ctx.with_updates(tree=tree)
 
         if tree is None:
@@ -157,26 +176,19 @@ class MiningPipeline:
             enriched = enricher.enrich_batch(list(ctx.segments))
             ctx = ctx.with_updates(segments=tuple(enriched))
 
-        # Stage 4: Build relations
-        if stage_callback:
-            stage_callback("build_relations", ctx)
-        rb = cfg.relation_builder
-        if rb is not None and ctx.segments:
-            relations, seg_ids = rb.build(list(ctx.segments))
-            ctx = ctx.with_updates(
-                relations=tuple(relations),
-                seg_ids=seg_ids,
-            )
+        # Stage 4: Assign segment UUIDs
+        if ctx.segments:
+            from knowledge_mining.mining.stages.relations import build_seg_ids
+            ctx = ctx.with_updates(seg_ids=build_seg_ids(list(ctx.segments)))
 
         # Stage 4b: Build discourse relations (LLM-driven RST analysis)
         drb = cfg.discourse_relation_builder
-        if drb is not None and ctx.segments and ctx.seg_ids:
+        if drb is not None and ctx.segments:
             if stage_callback:
                 stage_callback("discourse_relations", ctx)
-            extra_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
-            if extra_relations:
-                all_relations = list(ctx.relations) + extra_relations
-                ctx = ctx.with_updates(relations=tuple(all_relations))
+            discourse_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
+            if discourse_relations:
+                ctx = ctx.with_updates(relations=tuple(discourse_relations))
 
         # Stage 5: Build retrieval units
         if stage_callback:
@@ -241,6 +253,10 @@ def _worker(
             result = fn(item)
         except Exception as e:
             err_msg = str(e)[:500]
+            logger.exception(
+                "stage=%s failed for run_document_id=%s: %s",
+                stage_name, rd_id, err_msg,
+            )
             if evt_id is not None:
                 try:
                     tracker.end_stage(evt_id, run_id, stage_name,
@@ -328,17 +344,28 @@ def parse_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     parser = cfg.parser_factory(raw.file_type) if cfg.parser_factory else None
     if parser is None:
         return ctx
-    tree = parser.parse(raw.content, raw.file_name, {})
+    tree = parser.parse(raw.content, raw.file_name, {"file_path": raw.file_path})
     return ctx.with_updates(tree=tree)
 
 
 def segment_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
-    """Stage 2: Segment tree into raw segments."""
+    """Stage 2: Segment tree into raw segments + assign stable seg UUIDs.
+
+    seg_ids are computed here (not in a separate stage) because the work is
+    trivial in-memory work and the DB CHECK constraint on stage_events does
+    not allocate a slot for a standalone 'seg_ids' stage.
+    """
     seg = cfg.segmenter
     if seg is None or ctx.tree is None or ctx.profile is None:
         return ctx
     segments = seg.segment(ctx.tree, ctx.profile)
-    return ctx.with_updates(segments=tuple(segments))
+    if not segments:
+        return ctx.with_updates(segments=tuple(segments))
+    from knowledge_mining.mining.stages.relations import build_seg_ids
+    return ctx.with_updates(
+        segments=tuple(segments),
+        seg_ids=build_seg_ids(list(segments)),
+    )
 
 
 def enrich_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
@@ -350,24 +377,14 @@ def enrich_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     return ctx.with_updates(segments=tuple(enriched))
 
 
-def relations_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
-    """Stage 4: Build structural relations."""
-    rb = cfg.relation_builder
-    if rb is None or not ctx.segments:
-        return ctx
-    relations, seg_ids = rb.build(list(ctx.segments))
-    return ctx.with_updates(relations=tuple(relations), seg_ids=seg_ids)
-
-
 def discourse_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     """Stage 4b: Build discourse relations (LLM-driven RST analysis)."""
     drb = cfg.discourse_relation_builder
-    if drb is None or not ctx.segments or not ctx.seg_ids:
+    if drb is None or not ctx.segments:
         return ctx
-    extra_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
-    if extra_relations:
-        all_relations = list(ctx.relations) + extra_relations
-        return ctx.with_updates(relations=tuple(all_relations))
+    discourse_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
+    if discourse_relations:
+        return ctx.with_updates(relations=tuple(discourse_relations))
     return ctx
 
 
@@ -386,3 +403,214 @@ def retrieval_units_stage(ctx: DocumentContext, cfg: PipelineConfig) -> Document
         profile=cfg.domain_profile,
     )
     return ctx.with_updates(retrieval_units=tuple(units))
+
+
+def embedding_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
+    """Stage 6: Generate embeddings for retrieval units (parallel HTTP to embedding API).
+
+    Designed to run with multiple workers — each invocation is stateless and only
+    makes HTTP calls to the embedding service.
+    """
+    gen = cfg.embedding_generator
+    if gen is None or not ctx.retrieval_units:
+        return ctx
+    try:
+        texts = [ru.text for ru in ctx.retrieval_units if ru.text]
+        keys = [ru.unit_key for ru in ctx.retrieval_units if ru.text]
+        if not texts:
+            return ctx
+        embeddings = gen.embed_batch(texts)
+        if embeddings and len(embeddings) == len(texts):
+            emb_data = tuple(
+                {"unit_key": k, "vector": v}
+                for k, v in zip(keys, embeddings)
+                if v
+            )
+            return ctx.with_updates(embeddings=emb_data)
+    except Exception as e:
+        logger.warning("Embedding generation failed for %s: %s",
+                        getattr(ctx.raw_file, "file_path", "?"), e)
+    return ctx
+
+
+def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
+    """Stage 7: Write all results to DB (serial, 1 worker for thread safety).
+
+    Handles: select_snapshot → UPDATE cleanup → commit_segments → build_relations
+    → build_retrieval_units → insert embeddings → tracker.commit_document.
+
+    On failure, calls tracker.fail_document and returns ctx with error set.
+    """
+    import json as _json
+
+    asset_db = cfg.asset_db
+    tracker = cfg.tracker
+    batch_id = cfg.batch_id
+    run_id = None  # not available in ctx; tracker uses run_document_id
+
+    rd_id = ctx.run_document_id
+    raw = ctx.raw_file
+    doc_profile = ctx.profile
+
+    # Skip if upstream error
+    if ctx.error:
+        if tracker and rd_id:
+            tracker.fail_document(rd_id, ctx.error)
+            try:
+                cfg.runtime_db.commit()
+            except Exception:
+                pass
+        return ctx
+
+    # Skip if no parse tree
+    if ctx.tree is None:
+        if tracker and rd_id:
+            tracker.skip_document(rd_id)
+            try:
+                cfg.runtime_db.commit()
+            except Exception:
+                pass
+        return ctx
+
+    try:
+        segments = list(ctx.segments)
+        relations = list(ctx.relations)
+        seg_id_map = ctx.seg_ids
+        retrieval_units = list(ctx.retrieval_units)
+
+        # --- select_snapshot ---
+        if tracker and rd_id:
+            _run_id = tracker._db._fetchone(
+                "SELECT run_id FROM mining_run_documents WHERE id = %s", (rd_id,)
+            )
+            run_id = _run_id["run_id"] if _run_id else None
+
+        document_id, snapshot_id, link_id = select_or_create_snapshot(
+            asset_db, raw, doc_profile, batch_id=batch_id,
+        )
+        asset_db.commit()
+
+        # --- UPDATE cleanup: remove old snapshot data ---
+        action = ctx.action
+        existing_doc = ctx.existing_doc
+        if action == "UPDATE" and existing_doc is not None:
+            old_links = asset_db._fetchall(
+                "SELECT document_snapshot_id FROM asset_document_snapshot_links "
+                "WHERE document_id = %s ORDER BY linked_at DESC",
+                (existing_doc["id"],),
+            )
+            for old_link in old_links[1:] if len(old_links) > 1 else []:
+                old_snap_id = old_link["document_snapshot_id"]
+                asset_db.delete_retrieval_units_by_snapshot(old_snap_id)
+                asset_db.delete_relations_by_snapshot(old_snap_id)
+                asset_db.delete_segments_by_snapshot(old_snap_id)
+            asset_db.commit()
+
+        # --- commit_segments ---
+        for seg in segments:
+            seg_key = f"{seg.document_key}#{seg.segment_index}"
+            seg_id = seg_id_map.get(seg_key, uuid.uuid4().hex)
+            asset_db.insert_raw_segment(
+                segment_id=seg_id,
+                document_snapshot_id=snapshot_id,
+                segment_key=seg_key,
+                segment_index=seg.segment_index,
+                block_type=seg.block_type,
+                semantic_role=seg.semantic_role,
+                section_path=seg.section_path,
+                section_title=seg.section_title,
+                raw_text=seg.raw_text,
+                normalized_text=seg.normalized_text,
+                content_hash=seg.content_hash,
+                normalized_hash=seg.normalized_hash,
+                token_count=seg.token_count,
+                structure_json=seg.structure_json,
+                source_offsets_json=seg.source_offsets_json,
+                entity_refs_json=seg.entity_refs_json,
+                metadata_json=seg.metadata_json,
+            )
+
+        # --- build_relations ---
+        for rel in relations:
+            src_id = seg_id_map.get(rel.source_segment_key, "")
+            tgt_id = seg_id_map.get(rel.target_segment_key, "")
+            if src_id and tgt_id:
+                asset_db.insert_segment_relation(
+                    relation_id=uuid.uuid4().hex,
+                    document_snapshot_id=snapshot_id,
+                    source_segment_id=src_id,
+                    target_segment_id=tgt_id,
+                    relation_type=rel.relation_type,
+                    weight=rel.weight,
+                    confidence=rel.confidence,
+                    distance=rel.distance,
+                    metadata_json=rel.metadata_json,
+                )
+
+        # --- build_retrieval_units ---
+        ru_id_map: dict[str, str] = {}
+        for ru in retrieval_units:
+            unit_id = uuid.uuid4().hex
+            ru_id_map[ru.unit_key] = unit_id
+            asset_db.insert_retrieval_unit(
+                unit_id=unit_id,
+                document_snapshot_id=snapshot_id,
+                unit_key=ru.unit_key,
+                unit_type=ru.unit_type,
+                target_type=ru.target_type,
+                target_ref_json=ru.target_ref_json,
+                title=ru.title,
+                text=ru.text,
+                search_text=ru.search_text,
+                block_type=ru.block_type,
+                semantic_role=ru.semantic_role,
+                facets_json=ru.facets_json,
+                entity_refs_json=ru.entity_refs_json,
+                source_refs_json=ru.source_refs_json,
+                llm_result_refs_json=ru.llm_result_refs_json,
+                source_segment_id=ru.source_segment_id,
+                weight=ru.weight,
+                metadata_json=ru.metadata_json,
+            )
+
+        asset_db.commit()
+
+        # --- insert embeddings ---
+        if ctx.embeddings:
+            for emb in ctx.embeddings:
+                unit_key = emb["unit_key"]
+                embedding_vec = emb["vector"]
+                if unit_key in ru_id_map and embedding_vec:
+                    asset_db.insert_retrieval_embedding(
+                        embedding_id=uuid.uuid4().hex,
+                        retrieval_unit_id=ru_id_map[unit_key],
+                        embedding_model=cfg.embedding_generator.model_name,
+                        embedding_provider="zhipu",
+                        text_kind="full",
+                        embedding_dim=len(embedding_vec),
+                        embedding_vector=_json.dumps(embedding_vec),
+                        content_hash="",
+                    )
+            asset_db.commit()
+
+        # --- commit_document ---
+        if tracker and rd_id:
+            tracker.commit_document(rd_id, document_id, snapshot_id)
+            cfg.runtime_db.commit()
+
+        return ctx.with_updates(
+            document_id=document_id,
+            snapshot_id=snapshot_id,
+        )
+
+    except Exception as e:
+        err_msg = str(e)[:500]
+        logger.exception("db_write_stage failed for %s: %s",
+                         getattr(raw, "file_path", "?"), err_msg)
+        if tracker and rd_id:
+            try:
+                tracker.fail_document(rd_id, err_msg)
+                cfg.runtime_db.commit()
+            except Exception:
+                logger.exception("tracker.fail_document also failed")
+        return ctx.with_updates(error=err_msg)

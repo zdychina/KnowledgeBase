@@ -40,7 +40,7 @@ def input_dir(tmp_dir, md_content):
 class TestIncrementalRun:
     def test_second_run_skips_unchanged(self, input_dir, tmp_dir):
         """Second run with identical content should SKIP all documents."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         # First run
         result1 = run(str(input_dir))
@@ -58,7 +58,7 @@ class TestIncrementalRun:
 
     def test_second_run_detects_update(self, input_dir, tmp_dir):
         """Second run with changed content should UPDATE the document."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         # First run
         result1 = run(str(input_dir))
@@ -78,7 +78,7 @@ class TestIncrementalRun:
 
     def test_mixed_new_update_skip(self, input_dir, tmp_dir):
         """Run with mix of NEW, UPDATE, and SKIP documents."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         # First run with one file
         result1 = run(str(input_dir))

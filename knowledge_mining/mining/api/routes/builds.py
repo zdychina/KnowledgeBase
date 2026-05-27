@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from knowledge_mining.mining.infra.domain_pack import resolve_domain
+
 router = APIRouter(tags=["builds"])
 
 
@@ -10,6 +12,7 @@ router = APIRouter(tags=["builds"])
 async def list_builds(
     request: Request,
     status: str | None = None,
+    domain: str | None = None,
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -21,6 +24,9 @@ async def list_builds(
     if status:
         conditions.append("status = %s")
         params.append(status)
+    if domain:
+        conditions.append("domain = %s")
+        params.append(domain)
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -31,7 +37,7 @@ async def list_builds(
         total = (await count_cur.fetchone())["c"]
 
         cur = await conn.execute(
-            f"SELECT id, build_code, status, build_mode, source_batch_id, "
+            f"SELECT id, build_code, status, build_mode, domain, source_batch_id, "
             f"parent_build_id, mining_run_id, created_at, finished_at "
             f"FROM asset_builds {where} "
             f"ORDER BY created_at DESC LIMIT %s OFFSET %s",
@@ -49,7 +55,7 @@ async def get_build(build_id: str, request: Request) -> dict:
 
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT id, build_code, status, build_mode, source_batch_id, "
+            "SELECT id, build_code, status, build_mode, domain, source_batch_id, "
             "parent_build_id, mining_run_id, created_at, finished_at "
             "FROM asset_builds WHERE id = %s", [build_id]
         )
@@ -71,22 +77,37 @@ async def get_build(build_id: str, request: Request) -> dict:
 @router.get("/api/releases")
 async def list_releases(
     request: Request,
+    domain: str | None = None,
+    channel: str | None = None,
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List releases."""
     pool = request.app.state.pg_pool
 
+    conditions = []
+    params: list[str] = []
+    if domain:
+        conditions.append("domain = %s")
+        params.append(domain)
+    if channel:
+        conditions.append("channel = %s")
+        params.append(channel)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
     async with pool.connection() as conn:
-        count_cur = await conn.execute("SELECT COUNT(*) as c FROM asset_publish_releases")
+        count_cur = await conn.execute(
+            f"SELECT COUNT(*) as c FROM asset_publish_releases {where}", params
+        )
         total = (await count_cur.fetchone())["c"]
 
         cur = await conn.execute(
-            "SELECT id, release_code, build_id, channel, status, "
+            "SELECT id, release_code, build_id, domain, channel, status, "
             "released_by, activated_at, deactivated_at "
-            "FROM asset_publish_releases "
+            f"FROM asset_publish_releases {where} "
             "ORDER BY activated_at DESC LIMIT %s OFFSET %s",
-            [limit, offset],
+            params + [limit, offset],
         )
         rows = await cur.fetchall()
 
@@ -94,15 +115,29 @@ async def list_releases(
 
 
 @router.get("/api/releases/active")
-async def get_active_release(request: Request) -> dict:
-    """Get current active release."""
+async def get_active_release(
+    request: Request,
+    domain: str = Query(..., description="Domain to get active release for"),
+    channel: str = Query("prod", description="Channel name"),
+) -> dict:
+    """Get current active release for a domain+channel."""
+    # Validate domain exists and is enabled in registry
+    try:
+        resolve_domain(domain)
+    except KeyError:
+        raise HTTPException(400, f"Unknown domain: {domain}")
+    except ValueError:
+        raise HTTPException(400, f"Domain is disabled: {domain}")
+
     pool = request.app.state.pg_pool
 
     async with pool.connection() as conn:
         cur = await conn.execute(
-            "SELECT id, release_code, build_id, channel, status, "
+            "SELECT id, release_code, build_id, domain, channel, status, "
             "released_by, activated_at, deactivated_at "
-            "FROM asset_publish_releases WHERE status = 'active' LIMIT 1"
+            "FROM asset_publish_releases WHERE status = 'active' "
+            "AND domain = %s AND channel = %s LIMIT 1",
+            [domain, channel],
         )
         release = await cur.fetchone()
         if not release:

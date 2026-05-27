@@ -11,7 +11,8 @@ async def test_full_sync_execute_flow(api_client):
     exec_resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "extract",
             "messages": [{"role": "user", "content": "extract entities"}],
             "expected_output_type": "json_object",
@@ -45,7 +46,8 @@ async def test_async_submit_then_get(api_client):
     submit = await api_client.post(
         "/api/v1/tasks",
         json={
-            "caller_domain": "serving",
+            "caller_service": "serving",
+            "knowledge_domain": "generic",
             "pipeline_stage": "search",
             "messages": [{"role": "user", "content": "search query"}],
             "priority": 50,
@@ -56,14 +58,16 @@ async def test_async_submit_then_get(api_client):
 
     task = (await api_client.get(f"/api/v1/tasks/{task_id}")).json()
     assert task["status"] == "queued"
-    assert task["caller_domain"] == "serving"
+    assert task["caller_service"] == "serving"
+    assert task["knowledge_domain"] == "generic"
     assert task["pipeline_stage"] == "search"
 
 
 async def test_idempotency_key_dedup(api_client):
     """Same idempotency_key returns same task_id."""
     payload = {
-        "caller_domain": "mining",
+        "caller_service": "mining",
+        "knowledge_domain": "cloud_core_network",
         "pipeline_stage": "normalize",
         "messages": [{"role": "user", "content": "normalize"}],
         "idempotency_key": "idem-integration-001",
@@ -82,7 +86,7 @@ async def test_cancel_prevents_execution(api_client):
     """Submit → cancel → verify status."""
     submit = await api_client.post(
         "/api/v1/tasks",
-        json={"caller_domain": "mining", "pipeline_stage": "test"},
+        json={"caller_service": "mining", "knowledge_domain": "cloud_core_network", "pipeline_stage": "test"},
     )
     task_id = submit.json()["task_id"]
 
@@ -94,15 +98,11 @@ async def test_cancel_prevents_execution(api_client):
 
 
 async def test_template_crud_and_usage(api_client):
-    """Dashboard endpoint works; templates can be queried."""
-    # Verify dashboard renders without error
-    dash = await api_client.get("/dashboard")
-    assert dash.status_code == 200
-
+    """Templates can be queried via API."""
     # Verify stats API
-    stats = await api_client.get("/dashboard/api/stats")
+    stats = await api_client.get("/api/v1/stats")
     assert stats.status_code == 200
-    assert isinstance(stats.json()["tasks_by_status"], dict)
+    assert isinstance(stats.json()["data"]["tasks_by_status"], dict)
 
 
 async def test_execute_with_text_output_type(api_client):
@@ -110,7 +110,7 @@ async def test_execute_with_text_output_type(api_client):
     resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "evaluation",
+            "caller_service": "evaluation",
             "pipeline_stage": "grade",
             "messages": [{"role": "user", "content": "grade this"}],
             "expected_output_type": "text",
@@ -127,7 +127,8 @@ async def test_schema_validation(api_client):
     resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "validate",
             "messages": [{"role": "user", "content": "test"}],
             "expected_output_type": "json_object",
@@ -145,7 +146,8 @@ async def test_metadata_persisted(api_client):
     resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "extract",
             "messages": [{"role": "user", "content": "test"}],
             "metadata": {"source": "unit-test", "batch_no": 42},
@@ -175,7 +177,8 @@ async def test_template_key_expands_messages(api_client):
     resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "test",
             "template_key": "nonexistent-template",
             "input": {"query": "test"},
@@ -186,42 +189,22 @@ async def test_template_key_expands_messages(api_client):
     assert resp.json()["status"] == "succeeded"
 
 
-async def test_dashboard_task_detail(api_client):
-    """Dashboard detail page shows task info."""
+async def test_task_detail_api(api_client):
+    """Task detail API shows task info."""
     exec_resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "serving",
+            "caller_service": "serving",
+            "knowledge_domain": "generic",
             "pipeline_stage": "query_rewrite",
             "messages": [{"role": "user", "content": "rewrite"}],
         },
     )
-    task_id = exec_resp.json()["task_id"]
+    task_id = exec_resp.json()["data"]["task_id"]
 
-    detail = await api_client.get(f"/dashboard/tasks/{task_id}")
+    detail = await api_client.get(f"/api/v1/tasks/{task_id}")
     assert detail.status_code == 200
-    assert task_id[:8] in detail.text
-    assert "serving" in detail.text
-
-
-async def test_dashboard_filtering(api_client):
-    """Dashboard supports status/domain/stage filtering."""
-    # Create a task with known params
-    await api_client.post(
-        "/api/v1/execute",
-        json={
-            "caller_domain": "evaluation",
-            "pipeline_stage": "grade",
-            "messages": [{"role": "user", "content": "test"}],
-        },
-    )
-
-    # Filter by domain
-    resp = await api_client.get("/dashboard?domain=evaluation")
-    assert resp.status_code == 200
-    assert "evaluation" in resp.text
-
-    # Filter by non-existent status
-    resp = await api_client.get("/dashboard?status=dead_letter")
-    assert resp.status_code == 200
-    assert "No tasks found" in resp.text
+    data = detail.json()["data"]
+    assert data["task"]["id"] == task_id
+    assert data["task"]["caller_service"] == "serving"
+    assert data["task"]["knowledge_domain"] == "generic"

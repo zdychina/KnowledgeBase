@@ -41,10 +41,10 @@ def _check_cancelled(runtime_db: "MiningRuntimeDB", run_id: str) -> None:
         raise MiningCancelled()
 
 
-from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-from knowledge_mining.mining.infra.pg_schema import ensure_schema
-from knowledge_mining.mining.contracts.models import (
+from knowledge_mining_zym.mining.infra.db import AssetCoreDB, MiningRuntimeDB
+from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
+from knowledge_mining_zym.mining.contracts.models import (
     BatchParams,
     DocumentProfile,
     MiningRunData,
@@ -53,21 +53,18 @@ from knowledge_mining.mining.contracts.models import (
     SegmentRelationData,
     RetrievalUnitData,
 )
-from knowledge_mining.mining.runtime import RuntimeTracker
-from knowledge_mining.mining.ingestion import ingest_directory
-from knowledge_mining.mining.stages.parse import create_parser
-from knowledge_mining.mining.stages.segment import DefaultSegmenter
-from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
-from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-from knowledge_mining.mining.snapshot import select_or_create_snapshot
-from knowledge_mining.mining.stages.publishing import assemble_build, classify_documents, demo_quality_summary, publish_release
-from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier  # noqa: F401 — used for enrich
-from knowledge_mining.mining.infra.domain_pack import DomainProfile, load_domain_pack
-from knowledge_mining.mining.pipeline import (
+from knowledge_mining_zym.mining.runtime import RuntimeTracker
+from knowledge_mining_zym.mining.ingestion import ingest_directory
+from knowledge_mining_zym.mining.stages.parse import create_parser
+from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+from knowledge_mining_zym.mining.snapshot import select_or_create_snapshot
+from knowledge_mining_zym.mining.stages.publishing import assemble_build, classify_documents, demo_quality_summary, publish_release
+from knowledge_mining_zym.mining.infra.domain_pack import DomainProfile, load_domain_pack
+from knowledge_mining_zym.mining.pipeline import (
     DocumentContext, PipelineConfig, MiningPipeline,
     StreamingPipeline,
     parse_stage, segment_stage, enrich_stage,
-    relations_stage, discourse_stage, retrieval_units_stage,
+    discourse_stage, retrieval_units_stage,
 )
 
 
@@ -125,7 +122,7 @@ def run(
     Returns:
         Summary dict with run_id, counts, and status.
     """
-    from knowledge_mining.mining.infra.mining_config import MiningConfig
+    from knowledge_mining_zym.mining.infra.mining_config import MiningConfig
     cfg = MiningConfig()
 
     # Resolve all None params from config (explicit args take precedence)
@@ -182,10 +179,14 @@ def publish(
     run_id: str,
     *,
     db_config: MiningDbConfig | None = None,
-    channel: str = "default",
+    channel: str = "prod",
     released_by: str | None = None,
 ) -> dict[str, Any]:
-    """Publish a completed run's build as an active release."""
+    """Publish a completed run's build as an active release.
+
+    Domain is derived from the build row (every build is tagged with its
+    owning domain at assemble_build time), so the caller does not pass it.
+    """
     asset_db, runtime_db = _create_dbs(db_config)
 
     try:
@@ -198,9 +199,15 @@ def publish(
         if not build_id:
             raise ValueError(f"Run {run_id} has no build_id")
 
+        build = asset_db.get_build(build_id)
+        if build is None:
+            raise ValueError(f"Build {build_id} (referenced by run {run_id}) not found")
+        domain = build["domain"]
+
         release_id = publish_release(
             asset_db,
             build_id=build_id,
+            domain=domain,
             channel=channel,
             released_by=released_by,
             release_notes=f"Published from run {run_id}",
@@ -229,9 +236,9 @@ def _init_llm(
     if not llm_base_url:
         return None
 
-    from knowledge_mining.mining.infra.llm_client import LlmClient
-    from knowledge_mining.mining.infra.llm_templates import build_templates_from_profile
-    from knowledge_mining.mining.stages.retrieval_units import LlmQuestionGenerator
+    from knowledge_mining_zym.mining.infra.llm_client import LlmClient
+    from knowledge_mining_zym.mining.infra.llm_templates import build_templates_from_profile
+    from knowledge_mining_zym.mining.stages.retrieval_units import LlmQuestionGenerator
 
     client = LlmClient(base_url=llm_base_url, bypass_proxy=bypass_proxy)
     if not client.health_check():
@@ -240,7 +247,7 @@ def _init_llm(
 
     # Register templates from profile (idempotent)
     if profile is None:
-        from knowledge_mining.mining.infra.domain_pack import get_default_profile
+        from knowledge_mining_zym.mining.infra.domain_pack import get_default_profile
         profile = get_default_profile()
     templates = build_templates_from_profile(profile)
     for tpl in templates:
@@ -254,10 +261,9 @@ def _init_llm(
 
     # v1.2: Try to create LlmEnricher if available
     try:
-        from knowledge_mining.mining.stages.enrich import LlmEnricher
+        from knowledge_mining_zym.mining.stages.enrich import LlmEnricher
         result["enricher"] = LlmEnricher(
             base_url=llm_base_url,
-            fallback_enricher=RuleBasedEnricher(profile=profile),
             bypass_proxy=bypass_proxy,
             profile=profile,
         )
@@ -266,7 +272,7 @@ def _init_llm(
 
     # v1.2: Create DiscourseRelationBuilder
     try:
-        from knowledge_mining.mining.stages.relations import DiscourseRelationBuilder
+        from knowledge_mining_zym.mining.stages.relations import DiscourseRelationBuilder
         result["discourse_relation_builder"] = DiscourseRelationBuilder(
             base_url=llm_base_url, bypass_proxy=bypass_proxy,
         )
@@ -276,7 +282,7 @@ def _init_llm(
     # v1.2: Create LLMContextualizer (skip if contextual_retrieval is off)
     if profile.retrieval_policy.contextual_retrieval != "off":
         try:
-            from knowledge_mining.mining.stages.retrieval_units import LLMContextualizer
+            from knowledge_mining_zym.mining.stages.retrieval_units import LLMContextualizer
             result["contextualizer"] = LLMContextualizer(
                 base_url=llm_base_url, bypass_proxy=bypass_proxy,
             )
@@ -298,7 +304,7 @@ def _init_embedding(
     All params are resolved by the caller (run()) from MiningConfig — no defaults here.
     """
     if llm_base_url:
-        from knowledge_mining.mining.infra.embedding import LLMServiceEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import LLMServiceEmbeddingGenerator
 
         return LLMServiceEmbeddingGenerator(
             base_url=llm_base_url,
@@ -309,7 +315,7 @@ def _init_embedding(
     if not api_key:
         return None
 
-    from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
+    from knowledge_mining_zym.mining.infra.embedding import ZhipuEmbeddingGenerator
     return ZhipuEmbeddingGenerator(
         api_key=api_key,
         model=model,
@@ -335,7 +341,7 @@ def _run_pipeline(
     tracker = RuntimeTracker(runtime_db)
     llm = llm_services or {}
     if profile is None:
-        from knowledge_mining.mining.infra.domain_pack import get_default_profile
+        from knowledge_mining_zym.mining.infra.domain_pack import get_default_profile
         profile = get_default_profile()
 
     now = _utcnow()
@@ -360,24 +366,15 @@ def _run_pipeline(
         batch_id=batch_id,
         batch_code=f"batch-{run_id[:8]}",
         source_type=params.default_source_type,
+        domain=profile.domain_id,
         description=f"Mining run {run_id}",
     )
     asset_db.commit()
 
-    # Build pipeline config with pluggable operators (profile-driven)
-    entity_extractor = RuleBasedEntityExtractor(profile=profile)
-    role_classifier = DefaultRoleClassifier(profile=profile)
-    enricher = RuleBasedEnricher(
-        entity_extractor=entity_extractor,
-        role_classifier=role_classifier,
-        profile=profile,
-    )
-
     pipeline_config = PipelineConfig(
         parser_factory=create_parser,
         segmenter=DefaultSegmenter(),
-        enricher=llm.get("enricher") or enricher,
-        relation_builder=DefaultRelationBuilder(),
+        enricher=llm.get("enricher"),
         question_generator=llm.get("question_generator"),
         embedding_generator=embedding_generator,
         discourse_relation_builder=llm.get("discourse_relation_builder"),
@@ -470,12 +467,11 @@ def _run_pipeline(
     if work_items:
         config = pipeline_config
         stages = [
-            ("parse",           lambda ctx: parse_stage(ctx, config),           1),
-            ("segment",         lambda ctx: segment_stage(ctx, config),         1),
-            ("enrich",          lambda ctx: enrich_stage(ctx, config),          max_workers),
-            ("relations",       lambda ctx: relations_stage(ctx, config),       1),
-            ("discourse",       lambda ctx: discourse_stage(ctx, config),       min(max_workers, 2)),
-            ("retrieval_units", lambda ctx: retrieval_units_stage(ctx, config), max_workers),
+            ("parse",                 lambda ctx: parse_stage(ctx, config),           1),
+            ("segment",               lambda ctx: segment_stage(ctx, config),         1),
+            ("enrich",                lambda ctx: enrich_stage(ctx, config),          max_workers),
+            ("discourse_relations",   lambda ctx: discourse_stage(ctx, config),       min(max_workers, 2)),
+            ("build_retrieval_units", lambda ctx: retrieval_units_stage(ctx, config), max_workers),
         ]
 
         pipeline = StreamingPipeline(stages, run_id=run_id, tracker=tracker)
@@ -667,12 +663,15 @@ def _run_pipeline(
         # Classify documents: NEW/UPDATE/SKIP against previous active build
         # REMOVE detection disabled — incremental batches only process a subset,
         # parent build snapshots are carried forward by assemble_build instead.
-        snapshot_decisions = classify_documents(asset_db, snapshot_decisions, detect_remove=False)
+        snapshot_decisions = classify_documents(
+            asset_db, snapshot_decisions, domain=profile.domain_id, detect_remove=False,
+        )
 
         # Stage 7: Assemble build (auto-selects full vs incremental)
         evt = tracker.start_stage(run_id, "assemble_build")
         build_id = assemble_build(
             asset_db,
+            domain=profile.domain_id,
             run_id=run_id,
             batch_id=batch_id,
             snapshot_decisions=snapshot_decisions,
@@ -699,6 +698,7 @@ def _run_pipeline(
             release_id = publish_release(
                 asset_db,
                 build_id=build_id,
+                domain=profile.domain_id,
                 released_by=f"run:{run_id}",
             )
             tracker.end_stage(evt, run_id, "publish_release", output_summary=f"release_id={release_id}")

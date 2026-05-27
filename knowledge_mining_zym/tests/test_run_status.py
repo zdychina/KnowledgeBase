@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_mining.mining.contracts.models import MiningRunData
-from knowledge_mining.mining.runtime import RuntimeTracker
+from knowledge_mining_zym.mining.contracts.models import MiningRunData
+from knowledge_mining_zym.mining.runtime import RuntimeTracker
 
 
 @pytest.fixture
@@ -107,7 +107,7 @@ class TestRunStatusMachine:
 
     def test_pipeline_partial_failure_status(self, tmp_dir):
         """Integration: pipeline with partial failures should have correct status."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         input_dir = tmp_dir / "input"
         input_dir.mkdir()

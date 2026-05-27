@@ -48,7 +48,8 @@ async def test_submit_embedding_task(api_client):
     """POST /api/v1/tasks/embed creates an embedding task."""
     resp = await api_client.post("/api/v1/tasks/embed", json={
         "input": ["hello world", "test text"],
-        "caller_domain": "test",
+        "caller_service": "test",
+        "knowledge_domain": "generic",
     })
     assert resp.status_code == 200
     data = resp.json()
@@ -61,6 +62,8 @@ async def test_submit_rerank_task(api_client):
     resp = await api_client.post("/api/v1/tasks/rerank", json={
         "query": "what is 5G",
         "documents": ["5G is a cellular network", "4G is older"],
+        "caller_service": "serving",
+        "knowledge_domain": "cloud_core_network",
     })
     assert resp.status_code == 200
     data = resp.json()
@@ -72,6 +75,8 @@ async def test_task_type_stored_in_db(api_client):
     """Embedding tasks should have task_type='embedding' in the DB."""
     resp = await api_client.post("/api/v1/tasks/embed", json={
         "input": ["test"],
+        "caller_service": "serving",
+        "knowledge_domain": "cloud_core_network",
     })
     task_id = resp.json()["task_id"]
 

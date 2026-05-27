@@ -224,6 +224,10 @@ CREATE INDEX IF NOT EXISTS idx_asset_retrieval_units_search_vector_gin
 CREATE INDEX IF NOT EXISTS idx_asset_retrieval_units_text_trgm_gin
     ON asset_retrieval_units USING GIN (text gin_trgm_ops);
 
+-- Entity refs GIN index for JSONB @> containment queries
+CREATE INDEX IF NOT EXISTS idx_asset_ru_entity_refs_gin
+    ON asset_retrieval_units USING GIN (entity_refs_json);
+
 CREATE TABLE IF NOT EXISTS asset_retrieval_embeddings (
     id                 TEXT PRIMARY KEY,
     retrieval_unit_id  TEXT NOT NULL REFERENCES asset_retrieval_units(id) ON DELETE CASCADE,

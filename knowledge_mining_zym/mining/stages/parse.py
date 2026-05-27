@@ -3,15 +3,20 @@
 Dispatches by file_type:
 - markdown -> MarkdownParser (structural chunking via markdown-it-py)
 - txt -> PlainTextParser (paragraph-based chunking)
+- pdf -> PdfParser (structural extraction via pdfminer.six layout API)
 - others -> PassthroughParser (no segments)
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Protocol, runtime_checkable
 
-from knowledge_mining.mining.contracts.models import ContentBlock, SectionNode
-from knowledge_mining.mining.infra.text_utils import token_count as _token_count
-from knowledge_mining.mining.infra.structure import parse_structure as _parse_md_structure
+from knowledge_mining_zym.mining.contracts.models import ContentBlock, SectionNode
+from knowledge_mining_zym.mining.infra.pdf_parser import parse_pdf_to_section_tree
+from knowledge_mining_zym.mining.infra.structure import parse_structure as _parse_md_structure
+from knowledge_mining_zym.mining.infra.text_utils import token_count as _token_count
+
+logger = logging.getLogger(__name__)
 
 
 class ParserStage:
@@ -29,7 +34,10 @@ class ParserStage:
         parser = create_parser(raw.file_type, **self._kwargs)
         if parser is None:
             return context
-        tree = parser.parse(raw.content, raw.file_name, {})
+        tree = parser.parse(
+            raw.content, raw.file_name,
+            {"file_path": raw.file_path},
+        )
         context["tree"] = tree
         return context
 
@@ -88,6 +96,28 @@ class PlainTextParser:
         return SectionNode(title=file_name, level=0, blocks=tuple(blocks))
 
 
+class PdfParser:
+    """Structural parser for PDF using pdfminer.six layout API.
+
+    Re-opens the original PDF file from `context["file_path"]`; ignores the
+    pre-extracted text in `content`, which is kept by ingestion only for
+    hashing / incremental detection.
+    """
+
+    def parse(
+        self, content: str, file_name: str, context: dict[str, Any],
+    ) -> SectionNode | None:
+        file_path = (context or {}).get("file_path")
+        if not file_path:
+            logger.warning("PdfParser: no file_path in context for %s", file_name)
+            return None
+        try:
+            return parse_pdf_to_section_tree(file_path, doc_title=file_name)
+        except Exception as e:
+            logger.warning("PdfParser failed for %s: %s", file_path, e)
+            return None
+
+
 class PassthroughParser:
     """Parser for non-parsable file types. Returns None."""
 
@@ -106,6 +136,8 @@ def create_parser(file_type: str, **kwargs: Any) -> DocumentParser:
             chunk_size=kwargs.get("chunk_size", 300),
             chunk_overlap=kwargs.get("chunk_overlap", 30),
         )
+    elif file_type == "pdf":
+        return PdfParser()
     else:
         return PassthroughParser()
 

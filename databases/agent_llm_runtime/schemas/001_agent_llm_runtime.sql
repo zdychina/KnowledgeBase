@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS agent_llm_prompt_templates (
     id                   TEXT PRIMARY KEY,
     template_key         TEXT NOT NULL,
     template_version     TEXT NOT NULL,
+    knowledge_domain     TEXT,
     purpose              TEXT NOT NULL,
     system_prompt        TEXT,
     user_prompt_template TEXT NOT NULL,
@@ -10,13 +11,19 @@ CREATE TABLE IF NOT EXISTS agent_llm_prompt_templates (
     output_schema_json   TEXT NOT NULL DEFAULT '{}',
     status               TEXT NOT NULL,
     created_at           TEXT NOT NULL,
-    metadata_json        TEXT NOT NULL DEFAULT '{}',
-    UNIQUE (template_key, template_version)
+    metadata_json        TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_llm_prompt_templates_key_version_domain
+    ON agent_llm_prompt_templates(template_key, template_version, COALESCE(knowledge_domain, ''));
+
+CREATE INDEX IF NOT EXISTS idx_agent_llm_prompt_templates_domain_status
+    ON agent_llm_prompt_templates(knowledge_domain, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS agent_llm_tasks (
     id                 TEXT PRIMARY KEY,
-    caller_domain      TEXT NOT NULL,
+    caller_service     TEXT NOT NULL,
+    knowledge_domain   TEXT,
     pipeline_stage     TEXT NOT NULL,
     ref_type           TEXT,
     ref_id             TEXT,
@@ -101,6 +108,9 @@ CREATE TABLE IF NOT EXISTS agent_llm_events (
 CREATE INDEX IF NOT EXISTS idx_agent_llm_tasks_status_priority
     ON agent_llm_tasks(status, priority, created_at);
 
+CREATE INDEX IF NOT EXISTS idx_agent_llm_tasks_service_domain
+    ON agent_llm_tasks(caller_service, knowledge_domain, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_agent_llm_requests_task
     ON agent_llm_requests(task_id);
 
@@ -112,3 +122,21 @@ CREATE INDEX IF NOT EXISTS idx_agent_llm_results_task
 
 CREATE INDEX IF NOT EXISTS idx_agent_llm_events_task
     ON agent_llm_events(task_id, created_at);
+
+CREATE TABLE IF NOT EXISTS agent_llm_model_calls (
+    id               TEXT PRIMARY KEY,
+    call_type        TEXT NOT NULL,
+    model            TEXT NOT NULL,
+    caller_service   TEXT NOT NULL,
+    knowledge_domain TEXT,
+    pipeline_stage   TEXT NOT NULL,
+    input_count      INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL,
+    latency_ms       INTEGER,
+    token_usage      INTEGER,
+    error_message    TEXT,
+    created_at       TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_llm_model_calls_type
+    ON agent_llm_model_calls(call_type, created_at);

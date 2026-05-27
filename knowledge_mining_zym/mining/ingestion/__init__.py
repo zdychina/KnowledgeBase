@@ -2,6 +2,7 @@
 
 Discovers md/txt/html/htm/pdf/doc/docx files plus compiled-help archives
 (.chm / .hdx) which are auto-extracted and converted to markdown on the fly.
+PDFs are extracted to plain text via pdfminer.six on the fly.
 Produces RawFileData objects with raw_content_hash and normalized_content_hash.
 """
 from __future__ import annotations
@@ -10,9 +11,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from knowledge_mining.mining.contracts.models import BatchParams, RawFileData
-from knowledge_mining.mining.infra.hash_utils import compute_raw_hash, compute_snapshot_hash
-from knowledge_mining.mining.ingestion.preprocessing import (
+from knowledge_mining_zym.mining.contracts.models import BatchParams, RawFileData
+from knowledge_mining_zym.mining.infra.hash_utils import compute_raw_hash, compute_snapshot_hash
+from knowledge_mining_zym.mining.ingestion.pdf_preprocessing import pdf_to_text
+from knowledge_mining_zym.mining.ingestion.preprocessing import (
     SUPPORTED_ARCHIVE_EXTS,
     archive_to_markdown,
 )
@@ -25,6 +27,8 @@ _EXTENSION_MAP: dict[str, str] = {
     ".txt": "txt",
     ".html": "html",
     ".htm": "html",
+    # PDFs — pre-extracted to plain text for normalized hashing; parse stage
+    # re-reads the original file via pdfminer.six layout API (see PdfParser).
     ".pdf": "pdf",
     ".doc": "doc",
     ".docx": "docx",
@@ -35,6 +39,7 @@ _EXTENSION_MAP: dict[str, str] = {
 
 PARSABLE_EXTENSIONS = {".md", ".markdown", ".txt"}
 PREPROCESS_EXTENSIONS = SUPPORTED_ARCHIVE_EXTS  # {".chm", ".hdx"}
+PDF_EXTENSIONS = {".pdf"}
 
 _SKIP_NAMES = {
     "manifest.jsonl", "manifest.json",
@@ -66,6 +71,7 @@ def ingest_directory(
         "parsed_documents": 0,
         "unparsed_documents": 0,
         "preprocessed_archives": 0,
+        "preprocessed_pdfs": 0,
         "skipped_files": 0,
         "failed_files": 0,
     }
@@ -109,6 +115,22 @@ def ingest_directory(
                     content = ""
                     summary["unparsed_documents"] += 1
                     metadata_json["source_format"] = ext.lstrip(".")
+                    metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
+            elif ext in PDF_EXTENSIONS:
+                # .pdf — extract to plain text via pdfminer.six on the fly.
+                try:
+                    content = pdf_to_text(file_path)
+                    summary["parsed_documents"] += 1
+                    summary["preprocessed_pdfs"] += 1
+                    metadata_json["source_format"] = "pdf"
+                except Exception as e:
+                    logger.warning(
+                        "pdf extract failed for %s: %s; registering without content",
+                        file_path, e,
+                    )
+                    content = ""
+                    summary["unparsed_documents"] += 1
+                    metadata_json["source_format"] = "pdf"
                     metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
             elif ext in PARSABLE_EXTENSIONS:
                 content = content_bytes.decode("utf-8", errors="replace")

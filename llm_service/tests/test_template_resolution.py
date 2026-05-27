@@ -34,6 +34,7 @@ async def test_resolve_template_expands_messages(db):
     # Resolve with template_key + input
     resolved = await svc._resolve_template(
         template_key="greeting",
+        knowledge_domain="cloud_core_network",
         input={"name": "Alice", "topic": "Python"},
         messages=None,
         expected_output_type="json_object",
@@ -73,6 +74,7 @@ async def test_resolve_template_fills_output_type_from_template(db):
     # Caller passes None (didn't specify) → template fills "text"
     resolved = await svc._resolve_template(
         template_key="text-tpl",
+        knowledge_domain="cloud_core_network",
         input={"name": "Bob"},
         messages=None,
         expected_output_type=None,
@@ -107,6 +109,7 @@ async def test_resolve_template_caller_messages_take_precedence(db):
     caller_messages = [{"role": "user", "content": "My own message"}]
     resolved = await svc._resolve_template(
         template_key="test",
+        knowledge_domain="cloud_core_network",
         input=None,
         messages=caller_messages,
         expected_output_type="text",
@@ -128,7 +131,7 @@ async def test_execute_metadata_persisted(db):
     svc = LLMService(db=db, provider=provider, config=cfg)
 
     result = await svc.execute(
-        "mining", "test",
+        "mining", "cloud_core_network", "test",
         messages=[{"role": "user", "content": "hi"}],
         metadata={"caller": "test-case", "run": 1},
     )
@@ -176,6 +179,7 @@ async def test_schema_injected_into_system_prompt(db):
 
     resolved = await svc._resolve_template(
         template_key="json-tpl",
+        knowledge_domain="cloud_core_network",
         input={"text": "hello"},
         messages=None,
         expected_output_type=None,
@@ -214,6 +218,7 @@ async def test_schema_injected_no_system_prompt(db):
 
     resolved = await svc._resolve_template(
         template_key="no-sys",
+        knowledge_domain="cloud_core_network",
         input={"thing": "name"},
         messages=None,
         expected_output_type=None,
@@ -251,6 +256,7 @@ async def test_schema_not_injected_for_text_type(db):
 
     resolved = await svc._resolve_template(
         template_key="text-tpl2",
+        knowledge_domain="cloud_core_network",
         input=None,
         messages=None,
         expected_output_type=None,
@@ -284,7 +290,7 @@ async def test_execute_with_text_template_parses_as_text(db):
 
     # Execute without specifying expected_output_type → template fills "text"
     result = await svc.execute(
-        "mining", "summary",
+        "mining", "cloud_core_network", "summary",
         template_key="text-summary",
         input={"text": "Some content"},
     )
@@ -305,7 +311,7 @@ async def test_submit_without_messages_falls_back_to_input_payload(db):
     svc = LLMService(db=db, provider=provider, config=cfg)
 
     task_id = await svc.submit(
-        "mining", "bulk_submit",
+        "mining", "cloud_core_network", "bulk_submit",
         input={"title": "Section A", "content": "payload"},
         expected_output_type="json_object",
     )
@@ -330,7 +336,7 @@ async def test_submit_with_missing_template_still_persists_fallback_message(db):
     svc = LLMService(db=db, provider=provider, config=cfg)
 
     task_id = await svc.submit(
-        "mining", "retrieval_units",
+        "mining", "cloud_core_network", "retrieval_units",
         template_key="missing-template",
         input={"query": "What is APN?"},
         expected_output_type="json_object",
@@ -342,3 +348,77 @@ async def test_submit_with_missing_template_still_persists_fallback_message(db):
     assert json.loads(row["messages_json"]) == [
         {"role": "user", "content": '{"query": "What is APN?"}'},
     ]
+
+
+async def test_resolve_template_prefers_domain_specific_template(db):
+    """Domain-specific template should override a global template with the same key."""
+    from llm_service.config import LLMServiceConfig
+    from llm_service.providers.mock import MockProvider
+    from llm_service.runtime.service import LLMService
+    from llm_service.runtime.template_registry import TemplateRegistry
+
+    cfg = LLMServiceConfig(db_path=":memory:", provider_api_key="test")
+    provider = MockProvider(responses=[{"choices": [{"message": {"content": "ok"}}]}])
+    svc = LLMService(db=db, provider=provider, config=cfg)
+    reg = TemplateRegistry(db)
+
+    await reg.create(
+        template_key="rewrite-query",
+        template_version="1",
+        purpose="global",
+        user_prompt_template="Global rewrite: $query",
+        expected_output_type="text",
+    )
+    await reg.create(
+        template_key="rewrite-query",
+        template_version="2",
+        knowledge_domain="cloud_core_network",
+        purpose="domain",
+        user_prompt_template="Cloud rewrite: $query",
+        expected_output_type="text",
+    )
+
+    resolved = await svc._resolve_template(
+        template_key="rewrite-query",
+        knowledge_domain="cloud_core_network",
+        input={"query": "What is APN?"},
+        messages=None,
+        expected_output_type=None,
+        output_schema=None,
+    )
+
+    assert resolved["messages"] is not None
+    assert resolved["messages"][-1]["content"] == "Cloud rewrite: What is APN?"
+
+
+async def test_resolve_template_falls_back_to_global_template(db):
+    """Global template should be used when the requested domain has no override."""
+    from llm_service.config import LLMServiceConfig
+    from llm_service.providers.mock import MockProvider
+    from llm_service.runtime.service import LLMService
+    from llm_service.runtime.template_registry import TemplateRegistry
+
+    cfg = LLMServiceConfig(db_path=":memory:", provider_api_key="test")
+    provider = MockProvider(responses=[{"choices": [{"message": {"content": "ok"}}]}])
+    svc = LLMService(db=db, provider=provider, config=cfg)
+    reg = TemplateRegistry(db)
+
+    await reg.create(
+        template_key="rewrite-query",
+        template_version="1",
+        purpose="global",
+        user_prompt_template="Global rewrite: $query",
+        expected_output_type="text",
+    )
+
+    resolved = await svc._resolve_template(
+        template_key="rewrite-query",
+        knowledge_domain="cloud_core_network",
+        input={"query": "What is APN?"},
+        messages=None,
+        expected_output_type=None,
+        output_schema=None,
+    )
+
+    assert resolved["messages"] is not None
+    assert resolved["messages"][-1]["content"] == "Global rewrite: What is APN?"

@@ -4,124 +4,6 @@
 domain_id: ip
 display_name: "IP / Datacenter Networking (SDN / CloudFabric)"
 
-# ---------------------------------------------------------------------------
-# Entity configuration
-# ---------------------------------------------------------------------------
-
-entity_types:
-  - command
-  - network_protocol
-  - network_role
-  - network_device
-  - network_feature
-  - interface
-  - parameter
-  - concept
-
-strong_entity_types:
-  - command
-  - network_protocol
-  - network_role
-  - network_device
-  - network_feature
-  - interface
-
-# ---------------------------------------------------------------------------
-# Semantic role mapping: section title keywords -> core semantic_role
-# ---------------------------------------------------------------------------
-
-role_keyword_rules:
-  - keywords: ["参数", "参数说明", "配置参数"]
-    role: parameter
-  - keywords: ["配置示例", "命令示例", "举例", "典型组网", "示例"]
-    role: example
-  - keywords: ["配置步骤", "操作步骤", "搬迁步骤", "部署步骤", "对接步骤", "前置检查", "checklist"]
-    role: procedure_step
-  - keywords: ["故障", "排障", "故障处理", "问题分析", "troubleshoot"]
-    role: troubleshooting_step
-  - keywords: ["注意事项", "限制", "约束", "前提条件", "适用范围", "constraint"]
-    role: constraint
-  - keywords: ["告警", "alarm"]
-    role: alarm
-  - keywords: ["概述", "简介", "原理", "背景", "架构"]
-    role: concept
-
-# ---------------------------------------------------------------------------
-# Heading role classification: heading keywords -> heading role
-# ---------------------------------------------------------------------------
-
-heading_role_keywords:
-  - keywords: ["参数", "参数说明", "配置参数"]
-    role: parameter_definition
-  - keywords: ["配置示例", "命令示例", "举例", "典型组网"]
-    role: example_section
-  - keywords: ["配置步骤", "操作步骤", "搬迁步骤", "部署步骤", "对接步骤"]
-    role: procedure_section
-  - keywords: ["故障", "排障", "问题分析"]
-    role: troubleshooting_section
-  - keywords: ["注意事项", "限制", "约束", "适用范围"]
-    role: constraint_section
-  - keywords: ["概述", "简介", "原理", "背景", "架构", "功能"]
-    role: overview_section
-
-# ---------------------------------------------------------------------------
-# Rule-based extractors (regex)
-# ---------------------------------------------------------------------------
-
-extractor_rules:
-  # 二/三层协议、路由协议、SDN/EVPN 类协议
-  - name: network_protocol
-    pattern: "(?<![A-Za-z0-9_])(VXLAN|EVPN|BGP[- ]EVPN|BGP|OSPFv3|OSPF|IS-IS|EIGRP|RIPng|RIP|VRRP|HSRP|MSTP|RSTP|PVST\\+?|STP|LACP|BFD|LLDP|ARP|NDP|GRE|IPSec|IPsec|MPLS|LDP|SR-MPLS|SRv6|SR|PIM|IGMP|MLD|DHCP|DHCPv6|DNS|NTP|SNMP|RADIUS|TACACS\\+?|SSH|SFTP|FTP|HTTP|HTTPS|gRPC|gNMI|NETCONF|RESTCONF|YANG|sFlow|NetStream|Telemetry|PFCP|GTP-U|GTPv2)(?![A-Za-z0-9_])"
-    entity_type: network_protocol
-
-  # 数据中心高性能/无损网络特性
-  - name: lossless_feature
-    pattern: "(?<![A-Za-z0-9_])(PFC|ECN|AI ECN|ABS PFC|RoCE|RoCEv2|NOF\\+?|iNOF|iNOFv6|DPFR|RPFR|MACSec|DCBX|ETS|QCN|HQoS|WRED|RED)(?![A-Za-z0-9_])"
-    entity_type: network_feature
-
-  # Spine-Leaf 角色
-  - name: network_role
-    pattern: "(?<![A-Za-z0-9_])(Border Leaf|Service Leaf|Server Leaf|DCI Leaf|Spine|TOR|Leaf|RR|Route Reflector|M-LAG|MLAG|VPC peer|vPC peer|Fabric|Underlay|Overlay)(?![A-Za-z0-9_])"
-    entity_type: network_role
-
-  # 华为/友商主流数据中心交换机/防火墙/存储
-  - name: network_device
-    pattern: "(?<![A-Za-z0-9_])(CE\\d{4,5}[A-Z0-9-]*|S\\d{4,5}[A-Z0-9-]*|NE\\d{2,4}[A-Z0-9-]*|Dorado\\s?V?\\d+|USG\\d{4,5}[A-Z0-9-]*|AR\\d{3,4}[A-Z0-9-]*|N9K-[A-Z0-9-]+|Nexus\\s?\\d{4,5}|ASR\\s?\\d{3,4}|Catalyst\\s?\\d{4,5})(?![A-Za-z0-9_])"
-    entity_type: network_device
-
-  # Huawei VRP CLI 命令片段（动词 + 对象）
-  - name: vrp_command
-    pattern: "(?<![A-Za-z0-9_])(display|undo|reset|debugging|interface|vlan|bridge-domain|evpn|bgp|ospf|isis|stp|m-lag|dcb|qos|acl|traffic-policy|nqa|ip|ipv6|route-policy|nvo3|vxlan|l2vpn|sysname|system-view|commit|save|return)(?:\\s+([A-Za-z][A-Za-z0-9_-]{0,40}(?:\\s+[A-Za-z0-9_./:-]{1,40}){0,4}))?(?![A-Za-z0-9_])"
-    entity_type: command
-    groups:
-      - index: 0
-        format: "{group1} {group2}"
-
-  # 接口名（GE/10GE/25GE/40GE/100GE/400GE/Eth-Trunk/Vlanif/LoopBack/Tunnel/Bridge-Domain）
-  - name: interface
-    pattern: "(?<![A-Za-z0-9_])(GE|10GE|25GE|40GE|100GE|400GE|Eth-Trunk|Trunk|Vlanif|Vlan-interface|LoopBack|Loopback|Tunnel|Bridge-Domain|BD|Nve|NVE)\\s?(\\d+(?:/\\d+){0,3})?(?![A-Za-z0-9_])"
-    entity_type: interface
-    groups:
-      - index: 0
-        format: "{group1}{group2}"
-
-  # VLAN/VNI/VPN-instance/VPC ID
-  - name: vlan_vni_id
-    pattern: "(?<![A-Za-z0-9_])(VLAN|VNI|BD|VPN-instance|VPC|VRF)\\s?(?:ID\\s?)?[:：]?\\s?([0-9]{1,8})(?![A-Za-z0-9_])"
-    entity_type: parameter
-    groups:
-      - index: 0
-        format: "{group1} {group2}"
-
-  # IPv4 / IPv6 CIDR
-  - name: ipv4_cidr
-    pattern: "(?<![0-9.])((?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}/[0-9]{1,2})(?![0-9.])"
-    entity_type: parameter
-
-  # 告警 / 事件
-  - name: alarm
-    pattern: "(?<![A-Za-z0-9_])(ALM-[A-Z][A-Z0-9_-]{2,40}|hwIfNetworkPort\\w*|hwBgp[A-Z]\\w*)(?![A-Za-z0-9_-])"
-    entity_type: alarm
 
 # ---------------------------------------------------------------------------
 # Table parameter column names (used by entity extractor for table segments)
@@ -161,9 +43,9 @@ retrieval_policy:
 
 llm_templates:
   - template_key: mining-question-gen
-    template_version: "1"
+    template_version: "3"
     purpose: "从 IP/数据中心网络段落生成假设性检索问题"
-    system_prompt: "你是 IP 数据中心网络（SDN / EVPN+VXLAN / Spine-Leaf / 智能无损）知识库的检索优化助手。你判断段落是否值得生成问题，如果是则生成高质量检索问题。"
+    system_prompt: "你是 IP 数据中心网络（SDN / EVPN+VXLAN / Spine-Leaf / 智能无损 / Huawei CloudFabric）知识库的检索优化助手。你判断段落是否值得生成问题，如果是则生成高质量检索问题。"
     user_prompt_template: >
       分析以下 IP / 数据中心网络技术文档段落：
 
@@ -172,23 +54,29 @@ llm_templates:
 
       首先评估该段落是否包含值得生成问题的实质性知识：
       - 如果是目录、导航列表、纯链接/锚点列表：输出空数组 []
-      - 如果是大量空值或占位符的稀疏表格：输出空数组 []
-      - 如果内容过于简短或模糊（如仅"概述"、"参考"等空标题）：输出空数组 []
+      - 如果是大量空值或占位符（如"-"、"N/A"）的稀疏表格：输出空数组 []
+      - 如果内容过于简短或模糊（如仅"概述"、"参考"、"前言"等空标题）：输出空数组 []
+      - 如果段落只是图片标题（如"图1 xxx组网示意图"）而无文字描述：输出空数组 []
 
-      如果段落确实包含实质性知识（协议原理、组网设计、配置步骤、命令、参数、故障处置等），生成 1-2 个问题：
+      如果段落确实包含实质性知识（协议原理、组网设计、配置步骤、命令示例、参数说明、故障处置、约束限制、新旧网络模型映射等），生成 1-2 个问题：
       - 问题必须能从该段落中找到明确答案
-      - 问题应测试知识理解，而非导航
-      - 优先生成"如何配置 X / X 的作用 / X 与 Y 的区别 / X 故障如何排查"这类工程师常问问题
+      - 问题应测试知识理解，而非导航（避免"在哪里找到X"、"文档有哪些章节"）
+      - 优先生成"如何配置 X / X 的作用 / X 与 Y 的区别 / X 故障如何排查 / X 适用于什么场景"这类工程师常问问题
+      - 对于配置命令片段，可提问"X 命令的作用是什么"或"如何使能 X 功能"
+      - 对于规格/约束表，可提问"X 款型在 Y 场景下是否支持 Z 特性"
       - 避免生成高度相似或近义的问题
 
       输出 JSON 数组，每个元素包含 question 字段。无合适问题时输出空数组 []。
+
+      输出示例（仅供参考格式，请根据实际内容生成）：
+      [{"question": "如何在 Spine 节点上使能 AI ECN？"}, {"question": "PFC 死锁检测的检测周期和恢复周期推荐配置是多少？"}]
     expected_output_type: json_array
     output_schema_json: '{"type":"array","items":{"type":"object","properties":{"question":{"type":"string"}},"required":["question"],"additionalProperties":false}}'
 
   - template_key: mining-segment-understanding
-    template_version: "1"
+    template_version: "3"
     purpose: "从 IP / 数据中心网络段落提取实体、分类语义角色、评估内容质量"
-    system_prompt: "你是 IP 数据中心网络（SDN / EVPN+VXLAN / Spine-Leaf / 智能无损）知识库的内容理解助手。分析技术文档段落，提取关键实体、分类语义角色，并评估内容质量。"
+    system_prompt: "你是 IP 数据中心网络（SDN / EVPN+VXLAN / Spine-Leaf / 智能无损 / Huawei CloudFabric）知识库的内容理解助手。分析技术文档段落，提取关键实体、分类语义角色，并评估内容质量。"
     user_prompt_template: >
       分析以下 IP / 数据中心网络技术文档段落：
 
@@ -201,55 +89,119 @@ llm_templates:
         type 可选值：command / network_protocol / network_role / network_device / network_feature / interface / parameter / concept
 
       实体抽取指引：
-      - command: Huawei VRP / Cisco IOS 等 CLI 命令片段，例如 `dcb pfc global disable`、`display bgp evpn peer`
-      - network_protocol: BGP、OSPF、VRRP、EVPN、VXLAN、PFCP、LACP、BFD、MPLS、SRv6 等通信/路由/隧道协议
-      - network_role: Spine、Border Leaf、Service Leaf、Server Leaf、DCI Leaf、TOR、RR、M-LAG 等组网角色
-      - network_device: 具体型号，如 CE16800、CE6881、Dorado V6、Nexus 9508
-      - network_feature: 数据中心特性，如 AI ECN、ABS PFC、NOF+、iNOF、DPFR、MACSec、PFC 死锁检测
-      - interface: 物理或逻辑接口，如 100GE1/0/1、Vlanif10、Eth-Trunk1、Nve1、Loopback0
-      - parameter: 配置参数 / 字段（VLAN ID、VNI、MTU、ECN 阈值、超时时间等）
-      - concept: 文档显式定义的非上述类型概念（VPC、Underlay、Overlay、Fabric 等）
-      - 仅提取段落中明确出现、有专有名称的实体；不要强行分类
+      - command: Huawei VRP / Cisco IOS 等 CLI 命令片段，例如 `dcb pfc global disable`、`display ai-ecn calculated state`、`display bgp evpn peer`、`display dcb`、`display inof configuration host`
+      - network_protocol: 通信/路由/隧道/可靠性协议，如 BGP、OSPF、IS-IS、eBGP、iBGP、BGP EVPN、VRRP、HSRP、PVST/PVST+、MSTP、VBST、VXLAN、PFC、LACP、BFD、LLDP、NETCONF、SNMP、NTP、SSH、ECN
+      - network_role: 组网角色，如 Spine、Border Leaf、Service Leaf、Server Leaf、DCI Leaf、管理 Leaf、存储 Leaf、TOR、RR、M-LAG
+      - network_device: 具体型号，如 CE16800、CE8850-SAN、CE6860-SAN、CE9860EI、CE6881、CE8865-4C、CE9855-32DQ、Dorado V6、Nexus 9508
+      - network_feature: 数据中心/智能无损/SDN 特性，如 AI ECN、ABS PFC、NOF+、iNOF、IPv6 iNOF、DPFR、RPFR、MACSec、PFC 死锁检测、Deadlock free、微分段、业务链（SFC）、Service Telemetry、Hardzone
+      - interface: 物理或逻辑接口，如 100GE1/0/1、25GE1/0/1、Vlanif10、Eth-Trunk1、Nve1、Loopback0、MEth0/0/0
+      - parameter: 配置参数 / 字段，如 VLAN ID、VNI、MTU、ECN 阈值、PFC xon/xoff 水线、死锁检测周期、BFD min-tx-interval、maximum load-balancing、AS 号、router-id、shared-threshold
+      - concept: 文档显式定义的非上述类型概念，如 VPC、Underlay、Overlay、Fabric、Multi-Pod、Multi-Site、Tenant、VRF、Logical Router、Logical Switch、Logical Port、External Gateway（EXGW）、Bridge Domain、End Point Group（EPG）、Hand-off
+      - 接口（如 100GE1/0/1、Vlanif10、Loopback0）和协议（如 BGP、OSPF、VXLAN）是不同类型：接口是设备上的物理或逻辑端口，协议是通信规范
+      - 仅提取段落中明确出现、有专有名称的实体；不要强行分类；如果无法确定类型，不要提取
 
       - semantic_role: 语义角色（concept / parameter / example / note / procedure_step / troubleshooting_step / constraint / alarm / checklist / unknown）
       - document_type: 文档类型提示（command / feature / procedure / troubleshooting / alarm / constraint / checklist / reference / other）
       - content_assessment: 内容质量评估
-        - is_substantive: 是否包含实质性知识
+        - is_substantive: 是否包含实质性知识（非纯导航、目录、链接列表）
         - is_navigation: 是否是导航/目录内容
         - assessment_reason: 一句话说明判断依据
 
       内容质量评估指引：
       - 锚点列表、目录索引、纯链接 → is_substantive=false, is_navigation=true
-      - 含具体协议描述、配置步骤、参数说明、命令、故障处置 → is_substantive=true
-      - 稀疏表格（大量空值或"-"占位）视为非实质性内容
+      - 含具体协议描述、组网设计、配置命令、参数说明、故障处置、新旧模型映射 → is_substantive=true
+      - 稀疏表格（大量空值、"-"、"N/A" 占位）视为非实质性内容
+      - 仅图片标题或仅章节占位标题视为非实质性内容
+
+      输出示例（仅供参考格式，请根据实际内容生成）：
+      {"entities": [{"type": "network_feature", "name": "AI ECN"}, {"type": "network_role", "name": "Spine"}, {"type": "network_device", "name": "CE16800"}, {"type": "command", "name": "dcb pfc global disable"}], "semantic_role": "procedure_step", "document_type": "command", "content_assessment": {"is_substantive": true, "is_navigation": false, "assessment_reason": "包含具体的 AI ECN 使能命令和配置说明"}}
     expected_output_type: json_object
     output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
 
   - template_key: mining-discourse-relation
-    template_version: "1"
-    purpose: "分析 IP / 数据中心网络段落间的语篇关系（RST 修辞结构理论）"
-    system_prompt: "你是 IP 数据中心网络技术文档的语篇关系分析专家。分析给定段落列表中相邻段落之间的修辞关系。"
+    template_version: "4"
+    purpose: "局部语篇关系分类（阶段 1，受 RST 启发）：识别 IP / 数据中心网络文档中近邻段落对的修辞关系，为后续构树准备"
+    system_prompt: >
+      你是 IP 数据中心网络技术文档的语篇关系分析专家。
+      你只输出 JSON 数组数据本身：不复述 schema、不写解释、不加 markdown 代码块包裹。
+      若提示中出现 JSON Schema 定义，那是给你校验输出形状的，不是你要输出的内容。
     user_prompt_template: >
-      分析以下编号段落之间的语篇关系：
-
+      ## 输入段落
       $segments
 
-      对每对相邻或同节段落，判断其修辞关系。可选关系类型：
-      - ELABORATES / EVIDENCES / CAUSES / RESULTS_IN / BACKGROUNDS / CONDITIONS
-      - SUMMARIZES / JUSTIFIES / ENABLES / CONTRASTS_WITH / PARALLELS / SEQUENCES / UNRELATED
+      ## 任务
+      针对所有段落对 (i, j)，其中 j - i ∈ {1, 2}，判断 i 与 j 之间是否存在下列 10 种修辞关系之一。
+      若距离 1 与距离 2 同时成立，优先距离 1；除非中间段落明显是插入注释，使距离 2 才是真正承接。
 
-      输出 JSON 数组，每个元素包含：
-      - source: 源段落编号（整数）
-      - target: 目标段落编号（整数）
-      - relation: 关系类型（大写）
-      - confidence: 置信度（0.0-1.0）
+      ## 关系类型（含方向）
+      asymmetric = 核心-卫星，需要标注 nucleus 是 source 还是 target；multinuclear = 多核，地位对等。
 
-      只输出有明确关系的段落对，跳过 UNRELATED 的。
+      - ELABORATION (asymmetric, nucleus=source)：target 对 source 详述/展开。标志词：具体来说、其中、包括。
+        例：先讲 AI ECN 概念 → 后文详述自适应门限原理。
+      - SEQUENCE (multinuclear)：时间/步骤顺序。标志词：然后、接下来、步骤N、首先/其次。
+        例：「步骤 1 配置基础信息」→「步骤 2 使能 LLDP」。
+      - CAUSATION (asymmetric, nucleus=result-side)：因果。标志词：因此、所以、导致、由于。注意 nucleus 是"结果"那一方。
+        例：PFC 未使能（cause, satellite）→ RoCE 丢包（result, nucleus）。
+      - EVIDENCE (asymmetric, nucleus=source)：target 给 source 提供证据/回显/数据。标志词：例如、数据显示、回显如下。
+        例：「PFC 协商成功」+「display dcb 回显」。
+      - BACKGROUND (asymmetric, nucleus=target)：source 为 target 铺背景。标志词：背景是、目前、现状、原本。
+        例：先讲 MSTP+VRRP 现状（satellite）→ 再讲搬迁到 SDN 的必要性（nucleus）。
+      - EXEMPLIFICATION (asymmetric, nucleus=source)：target 是 source 的具体例子。标志词：比如、以X为例。
+        例：Border Leaf 角色说明 → 以 CE6881 接入为例。
+      - CONTRAST (multinuclear)：对比/转折。标志词：但是、相比之下、而、不同的是。
+        例：AI ECN 与静态 ECN 对比。
+      - CONCESSION (asymmetric, nucleus=target)：让步，承认 source 但强调 target。标志词：虽然、尽管、即使。
+        例：虽然微分段可隔离（satellite）→ 但约束更多（nucleus）。
+      - CONDITION (asymmetric, nucleus=target)：source 是 target 的前提/触发条件。标志词：如果、当...时、前提是、需先。
+        例：「需先使能 DCB PFC」（satellite）→「再配置 AI ECN」（nucleus）。
+      - PURPOSE (asymmetric, nucleus=source)：target 说明 source 的目的。标志词：为了、目的是、以便、用于。
+        例：「配置 BFD 检测」→「以加速 BGP 故障感知」。
+
+      ## 判定优先级
+      1. 显式标志词出现 → 强优先该关系。
+      2. 无标志词 → 看 target 是否回答了 source 的"是什么/为什么/怎么做/在何时"。
+      3. 多关系冲突时按此顺序裁决：CAUSATION > CONDITION > SEQUENCE > EVIDENCE > ELABORATION > 其他。
+      4. 每个段对最多输出 1 条关系。
+
+      ## 必须跳过（不出现在输出中）
+      - 两段都是纯 URL / 纯锚链接 / 纯导航文本（如"点击此处"、"参考链接"）。
+      - source 是节标题，target 是该节正文（这是结构关系，不算修辞）。
+      - 找不到任何标志词，且语义上彼此独立。
+      - 任一段为空或仅含标点 / 仅含一个 URL。
+      - 置信度 < 0.50。
+
+      ## 置信度刻度
+      - 0.90 – 1.00：标志词显式出现，方向明确（如「因此」「步骤 2」开头）。
+      - 0.70 – 0.89：无标志词但语义结构清晰（如典型"概念→详述"）。
+      - 0.50 – 0.69：可能成立但歧义大。
+      - < 0.50：不输出。
+
+      ## 输出规则
+      - 直接输出 JSON 数组，首字符 `[`，末字符 `]`，无任何包裹/解释/代码块。
+      - 每个元素字段：
+        - `source` (int)：段落编号
+        - `target` (int)：段落编号，必须 target > source
+        - `relation` (str)：上述 10 种之一，全大写
+        - `nuclearity` (str)：`"asymmetric"` 或 `"multinuclear"`
+        - `nucleus` (str | null)：asymmetric 时填 `"source"` 或 `"target"`；multinuclear 时填 null
+        - `confidence` (float)：0.50 – 1.00
+      - **若所有段对都不满足条件，输出 `[]`。不要编造、不要复读 schema 定义、不要写"无明显关系"等说明文字。**
+
+      ## 输出示例
+
+      示例 1（条件 + 步骤序列）：
+      [{"source":0,"target":1,"relation":"CONDITION","nuclearity":"asymmetric","nucleus":"target","confidence":0.92},{"source":1,"target":2,"relation":"SEQUENCE","nuclearity":"multinuclear","nucleus":null,"confidence":0.88}]
+
+      示例 2（跨注释段的证据关系，距离=2）：
+      [{"source":0,"target":2,"relation":"EVIDENCE","nuclearity":"asymmetric","nucleus":"source","confidence":0.75}]
+
+      示例 3（输入全是链接/导航，无任何修辞关系）：
+      []
     expected_output_type: json_array
-    output_schema_json: '{"type":"array","items":{"type":"object","properties":{"source":{"type":"integer"},"target":{"type":"integer"},"relation":{"type":"string"},"confidence":{"type":"number","minimum":0.0,"maximum":1.0}},"required":["source","target","relation","confidence"],"additionalProperties":false}}'
+    output_schema_json: '{"type":"array","items":{"type":"object","properties":{"source":{"type":"integer","minimum":0},"target":{"type":"integer","minimum":0},"relation":{"type":"string","enum":["ELABORATION","SEQUENCE","CAUSATION","EVIDENCE","BACKGROUND","EXEMPLIFICATION","CONTRAST","CONCESSION","CONDITION","PURPOSE"]},"nuclearity":{"type":"string","enum":["asymmetric","multinuclear"]},"nucleus":{"type":["string","null"],"enum":["source","target",null]},"confidence":{"type":"number","minimum":0.5,"maximum":1.0}},"required":["source","target","relation","nuclearity","nucleus","confidence"],"additionalProperties":false}}'
 
   - template_key: mining-contextual-retrieval
-    template_version: "1"
+    template_version: "2"
     purpose: "为 IP / 数据中心网络段落生成上下文描述，增强检索效果"
     system_prompt: "你是 IP 数据中心网络技术文档的检索上下文定位助手。"
     user_prompt_template: >
@@ -259,9 +211,12 @@ llm_templates:
       段落内容：
       $segment
 
-      请生成一句 20-40 字的中文上下文标签，说明该段落在文档中的位置和主题（例如所属章节、面向的组网场景）。
-      不要复述段落内容，只补充从段落文本中无法直接看出的上下文信息。
+      请生成一句 20-40 字的中文上下文标签，说明该段落在文档中的位置和主题（例如所属章节、所属角色 Spine/Leaf、面向的组网场景如集中式存储/AI 训练/SDN 搬迁、所属协议或特性）。
+      不要复述段落内容，只补充从段落文本中无法直接看出的上下文信息（如所属章节、设备角色、组网场景、新旧网络映射等）。
       输出 JSON 对象，包含 context 字段。
+
+      输出示例（仅供参考格式，请根据实际内容生成）：
+      {"context": "该段落位于集中式存储三级组网章节，描述 Spine 节点 AI ECN 配置步骤"}
     expected_output_type: json_object
     output_schema_json: '{"type":"object","properties":{"context":{"type":"string"}},"required":["context"],"additionalProperties":false}'
 

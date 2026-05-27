@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-from knowledge_mining.mining.infra.pg_schema import ensure_schema
+from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
 
 
 @pytest.fixture(scope="session")
@@ -44,7 +44,7 @@ def _truncate_all(conn):
 @pytest.fixture
 def asset_db(db_config):
     """Provide an AssetCoreDB connected to PG, with cleanup after test."""
-    from knowledge_mining.mining.infra.db import AssetCoreDB
+    from knowledge_mining_zym.mining.infra.db import AssetCoreDB
     import psycopg
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
@@ -83,7 +83,7 @@ def _cleanup_db(db_config):
 @pytest.fixture
 def runtime_db(db_config):
     """Provide a MiningRuntimeDB connected to PG, with cleanup after test."""
-    from knowledge_mining.mining.infra.db import MiningRuntimeDB
+    from knowledge_mining_zym.mining.infra.db import MiningRuntimeDB
     import psycopg
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool

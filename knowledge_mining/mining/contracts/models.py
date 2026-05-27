@@ -72,7 +72,7 @@ VALID_RELATION_TYPES = frozenset({
     "elaborates",
     "condition",
     "contrast",
-    # RST discourse relations (EVO-17)
+    # RST discourse relations (EVO-17, legacy verb forms — kept for back-compat)
     "evidences",
     "causes",
     "results_in",
@@ -84,6 +84,20 @@ VALID_RELATION_TYPES = frozenset({
     "contrasts_with",
     "parallels",
     "sequences",
+    "exemplifies",
+    "concedes",
+    "purposes",
+    # RST discourse relations (current noun forms, aligned with domain.yaml prompts)
+    "elaboration",
+    "sequence",
+    "causation",
+    "evidence",
+    "background",
+    "exemplification",
+    "contrast",
+    "concession",
+    "condition",
+    "purpose",
     "unrelated",
     "other",
 })
@@ -139,10 +153,15 @@ VALID_STAGE_NAMES = frozenset({
     "parse",
     "segment",
     "enrich",
-    "build_relations",
+    "discourse",
     "discourse_relations",
+    "retrieval_units",
     "build_retrieval_units",
+    "embedding",
     "select_snapshot",
+    "commit_segments",
+    "build_relations",
+    "db_write",
     "assemble_build",
     "validate_build",
     "publish_release",
@@ -319,6 +338,8 @@ class MiningRunData:
     id: str
     source_batch_id: str | None = None
     input_path: str = ""
+    domain: str | None = None
+    channel: str | None = None
     status: str = "queued"
     build_id: str | None = None
     total_documents: int = 0

@@ -1,5 +1,6 @@
 package com.coremasterkb.serving.application;
 
+import com.coremasterkb.serving.config.ServingProperties;
 import com.coremasterkb.serving.domain.*;
 import com.coremasterkb.serving.domainpack.DomainContext;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
@@ -36,6 +37,9 @@ class SearchServiceTest {
     private DomainPoolManager domainPoolManager;
     private EmbeddingClient embeddingClient;
     private com.coremasterkb.serving.repository.AssetRepository assetRepo;
+    private MultiQueryExpander multiQueryExpander;
+    private SemanticCacheService semanticCache;
+    private SessionStore sessionStore;
     private SearchService searchService;
 
     @BeforeEach
@@ -50,17 +54,31 @@ class SearchServiceTest {
         domainPoolManager = mock(DomainPoolManager.class);
         embeddingClient = mock(EmbeddingClient.class);
         assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
+        multiQueryExpander = mock(MultiQueryExpander.class);
+        semanticCache = mock(SemanticCacheService.class);
+        sessionStore = mock(SessionStore.class);
 
         when(domainRegistry.getDefaultChannel(anyString())).thenReturn("prod");
         when(domainRegistry.findEntry(anyString())).thenReturn(java.util.Optional.empty());
         when(domainPoolManager.getDataSource(anyString())).thenReturn(mock(javax.sql.DataSource.class));
         when(assetRepo.resolveActiveScope(anyString(), anyString()))
                 .thenReturn(new ActiveScope("rel1", "b1", List.of("snap1"), Map.of()));
+        // Multi-query expander returns just the original query by default (no LLM in unit tests)
+        when(multiQueryExpander.expand(anyString()))
+                .thenAnswer(inv -> List.of(inv.getArgument(0, String.class)));
+        // Semantic cache misses by default
+        when(semanticCache.lookup(anyString(), any())).thenReturn(null);
+        // Session store returns empty history by default
+        when(sessionStore.getPriorQueries(anyString())).thenReturn(List.of());
+
+        ServingProperties properties = new ServingProperties(
+                null, null, "cloud_core_network", null, null, null);
 
         searchService = new SearchService(
                 quEngine, router, orchestrator, rerankPipeline,
                 assembler, domainPackReader, domainRegistry, domainPoolManager,
-                embeddingClient, assetRepo);
+                embeddingClient, assetRepo, multiQueryExpander, semanticCache, sessionStore,
+                properties);
     }
 
     @Nested
@@ -90,7 +108,7 @@ class SearchServiceTest {
             when(assembler.assemble(anyString(), any(), any(), any(), any())).thenReturn(expectedPack);
 
             var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence");
+                    "cloud_core_network", null, "evidence", null);
 
             var result = searchService.search(request);
 
@@ -123,7 +141,7 @@ class SearchServiceTest {
                     .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()));
 
             var request = new SearchRequest("test", Map.of(), List.of(), true,
-                    "cloud_core_network", null, "evidence");
+                    "cloud_core_network", null, "evidence", null);
             var result = searchService.search(request);
 
             assertThat(result.debug()).containsKey("understanding");
@@ -150,7 +168,7 @@ class SearchServiceTest {
                     .thenThrow(new IllegalArgumentException("no_active_release"));
 
             var request = new SearchRequest("test", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence");
+                    "cloud_core_network", null, "evidence", null);
 
             assertThatThrownBy(() -> searchService.search(request))
                     .isInstanceOf(IllegalArgumentException.class);

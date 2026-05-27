@@ -2,12 +2,6 @@
 
 All Protocol definitions live here. Stages import from this module;
 infra/ layers use models from contracts.models.
-
-Consolidated from:
-- pipeline.py: Segmenter, RelationBuilder
-- extractors.py: EntityExtractor, RoleClassifier
-- enrich/__init__.py: Enricher
-- retrieval_units/__init__.py: QuestionGenerator, Contextualizer
 """
 from __future__ import annotations
 
@@ -16,9 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 from knowledge_mining.mining.contracts.models import (
     DocumentProfile,
     RawSegmentData,
-    RetrievalUnitData,
     SectionNode,
-    SegmentRelationData,
 )
 
 
@@ -55,19 +47,6 @@ class Segmenter(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# Relation Protocols
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class RelationBuilder(Protocol):
-    """Protocol for building segment relations."""
-
-    def build(
-        self, segments: list[RawSegmentData], **kwargs: Any,
-    ) -> tuple[list[SegmentRelationData], dict[str, str]]: ...
-
-
-# ---------------------------------------------------------------------------
 # Enrich Protocols
 # ---------------------------------------------------------------------------
 
@@ -77,30 +56,6 @@ class Enricher(Protocol):
 
     def enrich(self, segments: list[RawSegmentData], **kwargs: Any) -> list[RawSegmentData]: ...
     def enrich_batch(self, segments: list[RawSegmentData], **kwargs: Any) -> list[RawSegmentData]: ...
-
-
-# ---------------------------------------------------------------------------
-# Extractor Protocols
-# ---------------------------------------------------------------------------
-
-@runtime_checkable
-class EntityExtractor(Protocol):
-    """Protocol for extracting entities from text."""
-
-    def extract(self, text: str, context: dict[str, Any]) -> list[dict[str, str]]: ...
-
-
-@runtime_checkable
-class RoleClassifier(Protocol):
-    """Protocol for classifying semantic roles."""
-
-    def classify(
-        self,
-        text: str,
-        section_title: str | None,
-        block_type: str,
-        context: dict[str, Any],
-    ) -> str: ...
 
 
 # ---------------------------------------------------------------------------

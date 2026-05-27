@@ -21,7 +21,8 @@ class LLMClient:
         task_ids = []
         for section in sections:
             tid = await client.submit(
-                caller_domain="mining",
+                caller_service="mining",
+                knowledge_domain="cloud_core_network",
                 pipeline_stage="retrieval_units",
                 template_key="mining-question-gen",
                 input={"section_title": section.title, "content": section.text},
@@ -47,7 +48,8 @@ class LLMClient:
 
         # Query rewrite - needs immediate result
         result = await client.execute(
-            caller_domain="serving",
+            caller_service="serving",
+            knowledge_domain="generic",
             pipeline_stage="normalizer",
             template_key="serving-query-rewrite",
             input={"query": user_query},
@@ -57,7 +59,8 @@ class LLMClient:
 
         # Intent/entity extraction
         result = await client.execute(
-            caller_domain="serving",
+            caller_service="serving",
+            knowledge_domain="generic",
             pipeline_stage="planner",
             template_key="serving-intent-extract",
             input={"query": user_query},
@@ -66,7 +69,8 @@ class LLMClient:
     ### Caller-provided messages (no template)
 
         result = await client.execute(
-            caller_domain="serving",
+            caller_service="serving",
+            knowledge_domain="generic",
             pipeline_stage="rerank",
             messages=[
                 {"role": "system", "content": "Rerank by relevance."},
@@ -100,9 +104,11 @@ class LLMClient:
 
     def _build_submit_payload(
         self,
-        caller_domain: str,
+        caller_service: str | None,
         pipeline_stage: str,
         *,
+        knowledge_domain: str | None = None,
+        caller_domain: str | None = None,
         template_key: str | None = None,
         input: dict | None = None,
         messages: list[dict] | None = None,
@@ -114,12 +120,17 @@ class LLMClient:
         max_attempts: int = 3,
         priority: int = 100,
     ) -> dict[str, Any]:
+        actual_caller_service = caller_service or caller_domain
         payload: dict[str, Any] = {
-            "caller_domain": caller_domain,
+            "caller_service": actual_caller_service,
             "pipeline_stage": pipeline_stage,
             "max_attempts": max_attempts,
             "priority": priority,
         }
+        if knowledge_domain is not None:
+            payload["knowledge_domain"] = knowledge_domain
+        if caller_domain is not None:
+            payload["caller_domain"] = caller_domain
         for k, v in [
             ("template_key", template_key),
             ("input", input),
@@ -136,29 +147,31 @@ class LLMClient:
 
     async def submit(
         self,
-        caller_domain: str,
+        caller_service: str | None,
         pipeline_stage: str,
         **kwargs,
     ) -> str:
         """Submit async task. Returns task_id for later polling."""
-        payload = self._build_submit_payload(caller_domain, pipeline_stage, **kwargs)
+        payload = self._build_submit_payload(caller_service, pipeline_stage, **kwargs)
         c = self._get_client()
         resp = await c.post("/api/v1/tasks", json=payload)
         resp.raise_for_status()
-        return resp.json()["task_id"]
+        body = resp.json()
+        return body.get("task_id") or body["data"]["task_id"]
 
     async def execute(
         self,
-        caller_domain: str,
+        caller_service: str | None,
         pipeline_stage: str,
         **kwargs,
     ) -> dict:
         """Sync execute: submit and block until result."""
-        payload = self._build_submit_payload(caller_domain, pipeline_stage, **kwargs)
+        payload = self._build_submit_payload(caller_service, pipeline_stage, **kwargs)
         c = self._get_client()
         resp = await c.post("/api/v1/execute", json=payload)
         resp.raise_for_status()
-        return resp.json()
+        body = resp.json()
+        return body.get("data") or body
 
     async def embed(
         self,
@@ -166,12 +179,24 @@ class LLMClient:
         *,
         model: str | None = None,
         dimensions: int | None = None,
+        caller_service: str | None = None,
+        knowledge_domain: str | None = None,
+        pipeline_stage: str = "embedding",
+        caller_domain: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {"input": input}
         if model is not None:
             payload["model"] = model
         if dimensions is not None:
             payload["dimensions"] = dimensions
+        if caller_service is not None:
+            payload["caller_service"] = caller_service
+        elif caller_domain is not None:
+            payload["caller_service"] = caller_domain
+            payload["caller_domain"] = caller_domain
+        if knowledge_domain is not None:
+            payload["knowledge_domain"] = knowledge_domain
+        payload["pipeline_stage"] = pipeline_stage
         c = self._get_client()
         resp = await c.post("/api/v1/models/embeddings", json=payload)
         resp.raise_for_status()
@@ -184,6 +209,10 @@ class LLMClient:
         documents: list[str],
         model: str | None = None,
         top_n: int | None = None,
+        caller_service: str | None = None,
+        knowledge_domain: str | None = None,
+        pipeline_stage: str = "rerank",
+        caller_domain: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {
             "query": query,
@@ -193,6 +222,14 @@ class LLMClient:
             payload["model"] = model
         if top_n is not None:
             payload["top_n"] = top_n
+        if caller_service is not None:
+            payload["caller_service"] = caller_service
+        elif caller_domain is not None:
+            payload["caller_service"] = caller_domain
+            payload["caller_domain"] = caller_domain
+        if knowledge_domain is not None:
+            payload["knowledge_domain"] = knowledge_domain
+        payload["pipeline_stage"] = pipeline_stage
         c = self._get_client()
         resp = await c.post("/api/v1/models/rerank", json=payload)
         resp.raise_for_status()

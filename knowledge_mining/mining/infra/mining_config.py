@@ -7,6 +7,7 @@ the actual API key, base URL for embedding are handled by llm_service.
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
@@ -22,7 +23,8 @@ class MiningConfig(BaseSettings):
         EMBEDDING_MODEL:        model name sent to llm_service embedding endpoint
         EMBEDDING_DIMENSIONS:   embedding vector dimensions
         MINING_LLM_BYPASS_PROXY: bypass system proxy for LLM calls
-        DOMAIN_PACK:            default domain pack ID
+        DOMAIN:                 default domain ID
+        DOMAIN_PACK:            (Deprecated) use DOMAIN instead
         MAX_WORKERS:            max concurrent workers for streaming pipeline
     """
 
@@ -35,7 +37,8 @@ class MiningConfig(BaseSettings):
     embedding_dimensions: int | None = None
 
     # Pipeline defaults
-    domain_pack: str = "cloud_core_network"
+    domain: str = "cloud_core_network"
+    domain_pack: str = ""
     max_workers: int = 4
 
     model_config = {
@@ -44,3 +47,14 @@ class MiningConfig(BaseSettings):
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        # Backward compat: if DOMAIN_PACK is set but DOMAIN is not, use DOMAIN_PACK
+        if self.domain_pack and self.domain == "cloud_core_network":
+            warnings.warn(
+                "DOMAIN_PACK env var is deprecated; use DOMAIN instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self.domain = self.domain_pack

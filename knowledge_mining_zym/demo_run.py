@@ -100,9 +100,9 @@ def recreate_all_tables(cfg) -> None:
 
 
 def main() -> None:
-    from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-    from knowledge_mining.mining.infra.mining_config import MiningConfig
-    from knowledge_mining.mining.jobs.run import run
+    from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining_zym.mining.infra.mining_config import MiningConfig
+    from knowledge_mining_zym.mining.jobs.run import run
 
     db_cfg = MiningDbConfig()
     mining_cfg = MiningConfig()

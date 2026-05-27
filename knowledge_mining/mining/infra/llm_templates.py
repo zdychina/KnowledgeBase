@@ -14,15 +14,26 @@ if TYPE_CHECKING:
     from knowledge_mining.mining.infra.domain_pack import DomainProfile
 
 
-def build_templates_from_profile(profile: DomainProfile) -> list[dict[str, Any]]:
+def build_templates_from_profile(
+    profile: DomainProfile,
+    *,
+    domain_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Build LLM template list from a DomainProfile.
 
     JSON Schema entity type enum is injected dynamically from profile.entity_types.
+    If domain_id is provided, it is injected as knowledge_domain for domain-scoped
+    template resolution in llm_service.
     """
+    knowledge_domain = domain_id or profile.domain_id
     templates: list[dict[str, Any]] = []
 
     for tpl in profile.llm_templates:
         tpl_copy = dict(tpl)
+
+        # Inject knowledge_domain for llm_service domain-scoped template resolution
+        if knowledge_domain and "knowledge_domain" not in tpl_copy:
+            tpl_copy["knowledge_domain"] = knowledge_domain
 
         # Dynamically inject entity type enum into segment-understanding schema
         if tpl_copy.get("template_key") == "mining-segment-understanding":

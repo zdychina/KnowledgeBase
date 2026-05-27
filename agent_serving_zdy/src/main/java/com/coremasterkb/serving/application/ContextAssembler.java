@@ -30,6 +30,10 @@ public class ContextAssembler {
     private static final Logger log = LoggerFactory.getLogger(ContextAssembler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    // Context compression budget: 3000 tokens × ~4 chars/token
+    private static final int MAX_TOTAL_TOKENS = 3000;
+    private static final int MAX_TOTAL_CHARS = MAX_TOTAL_TOKENS * 4;
+
     // Issue type constants (match Python)
     private static final String ISSUE_NO_RESULT = "no_result";
     private static final String ISSUE_LOW_CONFIDENCE = "low_confidence";
@@ -206,6 +210,9 @@ public class ContextAssembler {
         if (allItems.size() > maxItems) {
             allItems = allItems.subList(0, maxItems);
         }
+
+        // Phase 3: context compression — keep total text under MAX_TOTAL_CHARS (≈3000 tokens)
+        allItems = compressItems(new ArrayList<>(allItems));
 
         // Filter relations: only keep edges where both endpoints exist in final items
         Set<String> itemIds = new HashSet<>();
@@ -501,6 +508,57 @@ public class ContextAssembler {
             groups.add(new EvidenceGroup(entry.getKey(), entry.getValue(), groupRelIds));
         }
         return groups;
+    }
+
+    // =========================================================================
+    // Context compression
+    // =========================================================================
+
+    /**
+     * Truncates item text to keep total chars ≤ MAX_TOTAL_CHARS (≈ 3000 tokens).
+     * Seed items receive 60% of the budget; context/support items share the remaining 40%.
+     * Returns the list unchanged when total is already within budget.
+     */
+    private static List<ContextItem> compressItems(List<ContextItem> items) {
+        int totalChars = items.stream()
+                .mapToInt(i -> i.text() != null ? i.text().length() : 0)
+                .sum();
+        if (totalChars <= MAX_TOTAL_CHARS) {
+            return items;
+        }
+
+        List<ContextItem> seeds = new ArrayList<>();
+        List<ContextItem> others = new ArrayList<>();
+        for (ContextItem item : items) {
+            if (ROLE_SEED.equals(item.role())) seeds.add(item);
+            else others.add(item);
+        }
+
+        int seedBudget = (int) (MAX_TOTAL_CHARS * 0.6);
+        int otherBudget = MAX_TOTAL_CHARS - seedBudget;
+
+        List<ContextItem> compressed = new ArrayList<>(items.size());
+        if (!seeds.isEmpty()) {
+            int perSeed = Math.max(200, seedBudget / seeds.size());
+            for (ContextItem item : seeds) compressed.add(truncateText(item, perSeed));
+        }
+        if (!others.isEmpty()) {
+            int perOther = Math.max(100, otherBudget / others.size());
+            for (ContextItem item : others) compressed.add(truncateText(item, perOther));
+        }
+        return compressed;
+    }
+
+    private static ContextItem truncateText(ContextItem item, int maxChars) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), text.substring(0, maxChars) + "…",
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
     }
 
     // =========================================================================

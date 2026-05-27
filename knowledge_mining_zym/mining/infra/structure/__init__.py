@@ -14,7 +14,7 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
-from knowledge_mining.mining.contracts.models import ContentBlock, SectionNode
+from knowledge_mining_zym.mining.contracts.models import ContentBlock, SectionNode
 
 
 def parse_structure(content: str) -> SectionNode:

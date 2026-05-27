@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _ASSET_DDL = _REPO_ROOT / "databases" / "asset_core" / "schemas" / "002_asset_core_postgresql.sql"
+_ASSET_DDL_V3 = _REPO_ROOT / "databases" / "asset_core" / "schemas" / "003_asset_core_migrations.sql"
 _RUNTIME_DDL = _REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "002_mining_runtime_postgresql.sql"
+_RUNTIME_DDL_V3 = _REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "003_mining_runtime_domain.sql"
 
 
 def ensure_database(cfg: MiningDbConfig) -> None:
@@ -42,7 +44,7 @@ def ensure_schema(cfg: MiningDbConfig) -> None:
 
     conn = psycopg.connect(cfg.conninfo, autocommit=True)
     try:
-        for ddl_path in (_ASSET_DDL, _RUNTIME_DDL):
+        for ddl_path in (_ASSET_DDL, _ASSET_DDL_V3, _RUNTIME_DDL, _RUNTIME_DDL_V3):
             ddl = ddl_path.read_text(encoding="utf-8")
             # Execute statement-by-statement for idempotency
             _execute_ddl(conn, ddl)
@@ -62,8 +64,8 @@ def _execute_ddl(conn, ddl: str) -> None:
     # Split respecting $$ quoting
     stmts = _split_ddl(ddl)
     for stmt in stmts:
-        stmt = stmt.strip()
-        if not stmt or stmt.startswith("--"):
+        stmt = _strip_leading_comments(stmt)
+        if not stmt:
             continue
         try:
             with conn.cursor() as cur:
@@ -74,6 +76,23 @@ def _execute_ddl(conn, ddl: str) -> None:
             psycopg.errors.DuplicateFunction,
         ):
             pass  # Already exists — idempotent
+        except Exception as exc:
+            logger.error("DDL execution failed: %s | Statement: %s", exc, stmt[:200])
+            raise
+
+
+def _strip_leading_comments(stmt: str) -> str:
+    """Remove leading single-line comments (-- ...) from a SQL statement."""
+    lines = stmt.split("\n")
+    start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("--") or not stripped:
+            start = i + 1
+        else:
+            break
+    result = "\n".join(lines[start:]).strip()
+    return result
 
 
 def _split_ddl(ddl: str) -> list[str]:

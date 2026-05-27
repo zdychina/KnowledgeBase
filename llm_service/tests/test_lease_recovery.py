@@ -81,6 +81,7 @@ async def test_template_api_crud(api_client):
         json={
             "template_key": "test-summary",
             "template_version": "1",
+            "knowledge_domain": "cloud_core_network",
             "purpose": "Summarize text",
             "system_prompt": "You are a summarizer.",
             "user_prompt_template": "Summarize: $text",
@@ -91,15 +92,16 @@ async def test_template_api_crud(api_client):
     tpl = resp.json()
     tpl_id = tpl["id"]
     assert tpl["template_key"] == "test-summary"
+    assert tpl["knowledge_domain"] == "cloud_core_network"
 
     # List
-    resp = await api_client.get("/api/v1/templates")
+    resp = await api_client.get("/api/v1/templates", params={"domain": "cloud_core_network"})
     assert resp.status_code == 200
     templates = resp.json()
     assert any(t["template_key"] == "test-summary" for t in templates)
 
     # Get by key
-    resp = await api_client.get("/api/v1/templates/test-summary")
+    resp = await api_client.get("/api/v1/templates/test-summary", params={"domain": "cloud_core_network"})
     assert resp.status_code == 200
     assert resp.json()["purpose"] == "Summarize text"
 
@@ -117,8 +119,30 @@ async def test_template_api_crud(api_client):
     assert resp.json()["status"] == "archived"
 
     # Get by key should return 404 (archived)
-    resp = await api_client.get("/api/v1/templates/test-summary")
+    resp = await api_client.get("/api/v1/templates/test-summary", params={"domain": "cloud_core_network"})
     assert resp.status_code == 404
+
+
+async def test_template_api_resolves_global_fallback(api_client):
+    """Domain lookup should fall back to a global template when no override exists."""
+    resp = await api_client.post(
+        "/api/v1/templates",
+        json={
+            "template_key": "fallback-summary",
+            "template_version": "1",
+            "purpose": "Global fallback",
+            "system_prompt": "You are a summarizer.",
+            "user_prompt_template": "Summarize: $text",
+            "expected_output_type": "json_object",
+        },
+    )
+    assert resp.status_code == 200
+
+    resp = await api_client.get("/api/v1/templates/fallback-summary", params={"domain": "cloud_core_network"})
+    assert resp.status_code == 200
+    tpl = resp.json()
+    assert tpl["template_key"] == "fallback-summary"
+    assert tpl["knowledge_domain"] is None
 
 
 # ---- Startup validation ----

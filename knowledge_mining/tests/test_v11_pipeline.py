@@ -137,21 +137,21 @@ class TestAssetCoreDB:
         assert s["raw_content_hash"] == "raw2"
 
     def test_build_and_release(self, asset_db):
-        asset_db.insert_build("b1", "B-001", "building", "full")
+        asset_db.insert_build("b1", "B-001", "building", "full", domain="default")
         asset_db.update_build_status("b1", "validated")
-        asset_db.insert_release("r1", "R-001", "b1")
+        asset_db.insert_release("r1", "R-001", "b1", domain="default")
         asset_db.activate_release("r1")
-        ar = asset_db.get_active_release()
+        ar = asset_db.get_active_release("default", "prod")
         assert ar["status"] == "active"
 
     def test_release_chain(self, asset_db):
-        asset_db.insert_build("b1", "B-001", "validated", "full")
-        asset_db.insert_build("b2", "B-002", "validated", "full")
-        asset_db.insert_release("r1", "R-001", "b1")
+        asset_db.insert_build("b1", "B-001", "validated", "full", domain="default")
+        asset_db.insert_build("b2", "B-002", "validated", "full", domain="default")
+        asset_db.insert_release("r1", "R-001", "b1", domain="default")
         asset_db.activate_release("r1")
-        asset_db.insert_release("r2", "R-002", "b2", previous_release_id="r1")
+        asset_db.insert_release("r2", "R-002", "b2", previous_release_id="r1", domain="default")
         asset_db.activate_release("r2")
-        ar = asset_db.get_active_release()
+        ar = asset_db.get_active_release("default", "prod")
         assert ar["release_code"] == "R-002"
         assert ar["previous_release_id"] == "r1"
 
@@ -284,113 +284,21 @@ class TestSegmentation:
             assert seg.normalized_hash, f"Missing normalized_hash"
 
 
-class TestExtractors:
-    def test_command_extraction(self):
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
-        ext = RuleBasedEntityExtractor()
-        refs = ext.extract('ADD APN command for SMF network element', {})
-        types = {r["type"] for r in refs}
-        assert "command" in types
-        assert "network_element" in types
-
-    def test_interface_extraction(self):
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
-        ext = RuleBasedEntityExtractor()
-        refs = ext.extract('配置N4接口，使用PFCP协议建立连接。Sxb接口也需要配置。', {})
-        names = {r["name"] for r in refs if r["type"] == "interface"}
-        assert "N4" in names
-        assert "Sxb" in names
-
-    def test_alarm_extraction(self):
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
-        ext = RuleBasedEntityExtractor()
-        refs = ext.extract('告警ALM-PFCP-PEER-DOWN需要处理，还有ALM-POOL-THRESHOLD。', {})
-        names = {r["name"] for r in refs if r["type"] == "alarm"}
-        assert "ALM-PFCP-PEER-DOWN" in names
-        assert "ALM-POOL-THRESHOLD" in names
-
-    def test_role_classifier(self):
-        from knowledge_mining.mining.infra.extractors import DefaultRoleClassifier
-        cls = DefaultRoleClassifier()
-        assert cls.classify("", "参数说明", "paragraph", {}) == "parameter"
-        assert cls.classify("", "使用实例", "paragraph", {}) == "example"
+# REMOVED: TestExtractors - rule-based components deleted (RuleBasedEntityExtractor, DefaultRoleClassifier)
 
 
 # ===================================================================
 # T8-T12: Pipeline Modules
 # ===================================================================
 
-class TestEnrich:
-    def test_enrich_adds_metadata(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.enrich import enrich_segments
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        enriched = enrich_segments(
-            segments,
-            entity_extractor=RuleBasedEntityExtractor(),
-            role_classifier=DefaultRoleClassifier(),
-        )
-        assert len(enriched) == len(segments)
-        headings = [s for s in enriched if s.block_type == "heading"]
-        for h in headings:
-            assert "heading_role" in h.metadata_json
-        non_headings = [s for s in enriched if s.block_type != "heading"]
-        roles = {s.semantic_role for s in non_headings}
-        assert len(roles - {"unknown"}) > 0
+# REMOVED: TestEnrich - all tests depended on removed rule-based components
 
 
-class TestRelations:
-    def test_build_relations(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.relations import build_relations
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        relations, seg_ids = build_relations(segments)
-        assert len(relations) > 0
-        types = {r.relation_type for r in relations}
-        assert "previous" in types
-        assert "section_header_of" in types
-
-    def test_section_header_of_only_from_heading(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.relations import build_relations
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        relations, seg_ids = build_relations(segments)
-        header_rels = [r for r in relations if r.relation_type == "section_header_of"]
-        heading_keys = {_make_key(s) for s in segments if s.block_type == "heading"}
-        for rel in header_rels:
-            assert rel.source_segment_key in heading_keys
+# REMOVED: TestRelations - all tests depended on removed build_relations function
 
 
 class TestRetrievalUnits:
-    def test_build_units(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.enrich import enrich_segments
-        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        segments = enrich_segments(
-            segments,
-            entity_extractor=RuleBasedEntityExtractor(),
-            role_classifier=DefaultRoleClassifier(),
-        )
-        units = build_retrieval_units(segments)
-        types = {u.unit_type for u in units}
-        assert "raw_text" in types
-        # v1.3: entity_card only for strong types (command/protocol/network_element/parameter)
-        # May or may not have entity_card depending on extracted entities
-        assert sum(1 for u in units if u.unit_type == "raw_text") == len(segments)
-        # v1.3 density check: should be 2-3x (raw_text + optional entity_card + table_row)
-        density = len(units) / len(segments)
-        assert density <= 3.0, f"Density too high: {density:.1f}x ({len(units)} units / {len(segments)} segments)"
+    # REMOVED: test_build_units - rule-based components deleted (RuleBasedEntityExtractor, DefaultRoleClassifier)
 
     def test_source_refs_with_segment_id(self):
         """source_refs_json should include raw_segment_ids when source_seg_id provided."""
@@ -450,14 +358,14 @@ class TestPublishing:
         )
         asset_db.commit()
 
-        build_id = assemble_build(asset_db, run_id="r1", snapshot_decisions=[
+        build_id = assemble_build(asset_db, run_id="r1", domain="default", snapshot_decisions=[
             {"document_id": "d1", "document_snapshot_id": "s1", "reason": "add", "selection_status": "active"},
         ])
         build = asset_db.get_build(build_id)
         assert build["status"] == "validated"
 
-        release_id = publish_release(asset_db, build_id)
-        release = asset_db.get_active_release()
+        release_id = publish_release(asset_db, build_id, domain="default")
+        release = asset_db.get_active_release("default", "prod")
         assert release["id"] == release_id
 
 
@@ -502,7 +410,7 @@ class TestEndToEndPipeline:
         result = run(str(input_dir))
         assert result["release_id"] is not None
         db = _make_db(AssetCoreDB)
-        ar = db.get_active_release()
+        ar = db.get_active_release("cloud_core_network", "prod")
         assert ar is not None
         db.close()
 
@@ -531,5 +439,3 @@ def _collect_blocks(node: SectionNode) -> list[ContentBlock]:
     return blocks
 
 
-def _make_key(seg: RawSegmentData) -> str:
-    return f"{seg.document_key}#{seg.segment_index}"

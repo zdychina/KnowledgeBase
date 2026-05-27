@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_mining.mining.infra.db import MiningRuntimeDB
+from knowledge_mining_zym.mining.infra.db import MiningRuntimeDB
 
 
 def _make_db(cls):
     """Create a PG-backed database adapter for testing."""
-    from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-    from knowledge_mining.mining.infra.pg_schema import ensure_schema
+    from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
 
@@ -62,7 +62,7 @@ def input_dir(tmp_dir, md_content):
 class TestStageEvents:
     def test_doc_level_stages_have_events(self, input_dir, tmp_dir):
         """Each document should have events for segment, build_relations, build_retrieval_units."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         result = run(str(input_dir))
 
@@ -85,7 +85,7 @@ class TestStageEvents:
 
     def test_stage_events_have_completed_status(self, input_dir, tmp_dir):
         """Stage end events should have 'completed' status."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         result = run(str(input_dir))
 
@@ -103,7 +103,7 @@ class TestStageEvents:
 
     def test_stage_events_have_output_summary(self, input_dir, tmp_dir):
         """Completed stage events should have output_summary with counts."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         result = run(str(input_dir))
 
@@ -122,7 +122,7 @@ class TestStageEvents:
 
     def test_global_stage_events_no_doc_id(self, input_dir, tmp_dir):
         """Global stages (assemble_build, validate_build) should have no run_document_id."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         result = run(str(input_dir))
 
@@ -139,7 +139,7 @@ class TestStageEvents:
 
     def test_skip_documents_no_stage_events(self, input_dir, tmp_dir):
         """Skipped documents should not generate stage events."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
 
         # First run
         result1 = run(str(input_dir))

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import pytest
 
-from knowledge_mining.mining.contracts.models import (
+from knowledge_mining_zym.mining.contracts.models import (
     ContentBlock,
     DocumentProfile,
     RawSegmentData,
@@ -23,7 +23,7 @@ class TestNestedListParsing:
 
     def test_nested_list_items_preserved(self):
         """Nested list sub-items should appear in items_nested."""
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
 
         md = """## Steps
 
@@ -57,7 +57,7 @@ class TestNestedListParsing:
 
     def test_nested_list_hierarchical_text(self):
         """ContentBlock.text should contain indented hierarchical text."""
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
 
         md = """## Steps
 
@@ -80,7 +80,7 @@ class TestNestedListParsing:
 
     def test_backward_compat_flat_items(self):
         """items field should still work with only depth-1 items."""
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
 
         md = """- Apple
 - Banana
@@ -101,7 +101,7 @@ class TestGeneratedQuestionDifferentiation:
     """Bug 2: generated_question title/text/search_text should differ."""
 
     def test_question_unit_fields_differ(self):
-        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_generated_question_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -133,7 +133,7 @@ class TestGeneratedQuestionDifferentiation:
         assert unit.title != unit.search_text
 
     def test_question_unit_second_index(self):
-        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_generated_question_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -151,7 +151,7 @@ class TestQuestionGenerationFilter:
     """Bug 3: heading-only and very short segments should not generate questions."""
 
     def test_heading_segments_filtered(self):
-        from knowledge_mining.mining.stages.retrieval_units import _is_questionworthy
+        from knowledge_mining_zym.mining.stages.retrieval_units import _is_questionworthy
 
         heading_seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -162,7 +162,7 @@ class TestQuestionGenerationFilter:
         assert _is_questionworthy(heading_seg) is False
 
     def test_short_segments_filtered(self):
-        from knowledge_mining.mining.stages.retrieval_units import _is_questionworthy
+        from knowledge_mining_zym.mining.stages.retrieval_units import _is_questionworthy
 
         short_seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -173,7 +173,7 @@ class TestQuestionGenerationFilter:
         assert _is_questionworthy(short_seg) is False
 
     def test_low_token_segments_filtered(self):
-        from knowledge_mining.mining.stages.retrieval_units import _is_questionworthy
+        from knowledge_mining_zym.mining.stages.retrieval_units import _is_questionworthy
 
         low_token_seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -185,7 +185,7 @@ class TestQuestionGenerationFilter:
         assert _is_questionworthy(low_token_seg) is False
 
     def test_normal_segments_pass(self):
-        from knowledge_mining.mining.stages.retrieval_units import _is_questionworthy
+        from knowledge_mining_zym.mining.stages.retrieval_units import _is_questionworthy
 
         good_seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -209,7 +209,7 @@ class TestQuestionGenerationFilter:
 
     def test_filter_in_build_retrieval_units(self):
         """Verify heading segments are not sent to question generator."""
-        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
+        from knowledge_mining_zym.mining.stages.retrieval_units import build_retrieval_units
 
         segments = [
             RawSegmentData(
@@ -258,7 +258,7 @@ class TestContextualTextImprovements:
 
     def test_section_context_in_search_text(self):
         """Section titles not in raw_text should appear in search_text."""
-        from knowledge_mining.mining.stages.retrieval_units import _make_raw_text_unit
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -279,7 +279,7 @@ class TestContextualTextImprovements:
 
     def test_heading_section_context_in_search_text(self):
         """Headings still get raw_text units with section context in search_text."""
-        from knowledge_mining.mining.stages.retrieval_units import _make_raw_text_unit
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -298,7 +298,7 @@ class TestTableRowUnits:
     """Bug 1 supplement: table segments should produce per-row retrieval units."""
 
     def test_table_row_units_generated(self):
-        from knowledge_mining.mining.stages.retrieval_units import _make_table_row_units
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_table_row_units
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -330,8 +330,8 @@ class TestTableRowUnits:
         assert "低延迟" in u1.text
 
     def test_table_row_units_in_build(self):
-        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.infra.domain_pack import RetrievalPolicy, DomainProfile
+        from knowledge_mining_zym.mining.stages.retrieval_units import build_retrieval_units
+        from knowledge_mining_zym.mining.infra.domain_pack import RetrievalPolicy, DomainProfile
 
         # Use a profile with table_row enabled
         policy = RetrievalPolicy(table_row="structured_tables")
@@ -359,7 +359,7 @@ class TestTableRowUnits:
         assert len(table_rows) == 1
 
     def test_non_table_produces_no_row_units(self):
-        from knowledge_mining.mining.stages.retrieval_units import _make_table_row_units
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_table_row_units
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -378,14 +378,14 @@ class TestDocumentContext:
     """DocumentContext should be immutable and support with_updates."""
 
     def test_immutable(self):
-        from knowledge_mining.mining.pipeline import DocumentContext
+        from knowledge_mining_zym.mining.pipeline import DocumentContext
 
         ctx = DocumentContext()
         with pytest.raises(AttributeError):
             ctx.segments = ()  # type: ignore
 
     def test_with_updates(self):
-        from knowledge_mining.mining.pipeline import DocumentContext
+        from knowledge_mining_zym.mining.pipeline import DocumentContext
 
         ctx = DocumentContext()
         seg = RawSegmentData(document_key="doc:/test.md", segment_index=0)
@@ -398,14 +398,14 @@ class TestPipelineConfig:
     """PipelineConfig should accept pluggable operators."""
 
     def test_default_config(self):
-        from knowledge_mining.mining.pipeline import PipelineConfig
+        from knowledge_mining_zym.mining.pipeline import PipelineConfig
 
         config = PipelineConfig()
         assert config.segmenter is None
         assert config.enricher is None
 
     def test_custom_segmenter(self):
-        from knowledge_mining.mining.pipeline import PipelineConfig
+        from knowledge_mining_zym.mining.pipeline import PipelineConfig
 
         class CustomSegmenter:
             def segment(self, tree, profile, **kwargs):
@@ -419,8 +419,8 @@ class TestDefaultSegmenter:
     """DefaultSegmenter should wrap segment_document."""
 
     def test_delegates_to_segment_document(self):
-        from knowledge_mining.mining.stages.segment import DefaultSegmenter
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
 
         md = "# Title\n\nParagraph content here.\n"
         tree = parse_structure(md)
@@ -432,36 +432,16 @@ class TestDefaultSegmenter:
         assert all(isinstance(s, RawSegmentData) for s in segments)
 
 
-class TestDefaultRelationBuilder:
-    """DefaultRelationBuilder should wrap build_relations."""
-
-    def test_delegates_to_build_relations(self):
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-
-        segments = [
-            RawSegmentData(document_key="doc:/test.md", segment_index=0, block_type="heading"),
-            RawSegmentData(document_key="doc:/test.md", segment_index=1, block_type="paragraph"),
-        ]
-
-        builder = DefaultRelationBuilder()
-        relations, seg_ids = builder.build(segments)
-        assert len(relations) > 0
-        assert len(seg_ids) == 2
-
-
 class TestMiningPipeline:
     """MiningPipeline should orchestrate per-document processing."""
 
     def test_process_document_full_flow(self):
-        from knowledge_mining.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
-        from knowledge_mining.mining.stages.parse import create_parser
-        from knowledge_mining.mining.stages.segment import DefaultSegmenter
-        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        from knowledge_mining.mining.contracts.models import RawFileData
+        from knowledge_mining_zym.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
+        from knowledge_mining_zym.mining.stages.parse import create_parser
+        from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+        from knowledge_mining_zym.mining.contracts.models import RawFileData
 
-        content = "# Test Doc\n\nParagraph about ADD APN command.\n\n## Section\n\nMore content.\n"
+        content = "# Test Doc\n\nParagraph about content.\n\n## Section\n\nMore content.\n"
         raw_file = RawFileData(
             file_path="/test/test.md",
             relative_path="test.md",
@@ -476,11 +456,6 @@ class TestMiningPipeline:
         config = PipelineConfig(
             parser_factory=create_parser,
             segmenter=DefaultSegmenter(),
-            enricher=RuleBasedEnricher(
-                entity_extractor=RuleBasedEntityExtractor(),
-                role_classifier=DefaultRoleClassifier(),
-            ),
-            relation_builder=DefaultRelationBuilder(),
         )
         pipeline = MiningPipeline(config)
 
@@ -489,18 +464,14 @@ class TestMiningPipeline:
 
         assert result.tree is not None
         assert len(result.segments) > 0
-        assert len(result.relations) > 0
+        assert result.seg_ids  # seg_ids always assigned after segment stage
         assert len(result.retrieval_units) > 0
-        assert result.seg_ids  # should have segment ID mappings
 
     def test_process_document_with_stage_callback(self):
-        from knowledge_mining.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
-        from knowledge_mining.mining.stages.parse import create_parser
-        from knowledge_mining.mining.stages.segment import DefaultSegmenter
-        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        from knowledge_mining.mining.contracts.models import RawFileData
+        from knowledge_mining_zym.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
+        from knowledge_mining_zym.mining.stages.parse import create_parser
+        from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+        from knowledge_mining_zym.mining.contracts.models import RawFileData
 
         content = "# Title\n\nParagraph.\n"
         raw_file = RawFileData(
@@ -519,8 +490,6 @@ class TestMiningPipeline:
         config = PipelineConfig(
             parser_factory=create_parser,
             segmenter=DefaultSegmenter(),
-            enricher=RuleBasedEnricher(),
-            relation_builder=DefaultRelationBuilder(),
         )
         pipeline = MiningPipeline(config)
         ctx = DocumentContext(raw_file=raw_file, profile=profile)
@@ -533,15 +502,14 @@ class TestMiningPipeline:
         assert "parse" in stages_called
         assert "segment" in stages_called
         assert "enrich" in stages_called
-        assert "build_relations" in stages_called
         assert "build_retrieval_units" in stages_called
 
     def test_custom_operator_swap(self):
         """Verify pipeline works when swapping DefaultSegmenter with custom."""
-        from knowledge_mining.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
-        from knowledge_mining.mining.stages.parse import create_parser
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-        from knowledge_mining.mining.contracts.models import RawFileData
+        from knowledge_mining_zym.mining.pipeline import DocumentContext, PipelineConfig, MiningPipeline
+        from knowledge_mining_zym.mining.stages.parse import create_parser
+        from knowledge_mining_zym.mining.stages.relations import DefaultRelationBuilder
+        from knowledge_mining_zym.mining.contracts.models import RawFileData
 
         content = "# Title\n\nText.\n"
         raw_file = RawFileData(
@@ -569,7 +537,6 @@ class TestMiningPipeline:
             parser_factory=create_parser,
             segmenter=SingleSegSegmenter(),
             enricher=None,
-            relation_builder=DefaultRelationBuilder(),
         )
         pipeline = MiningPipeline(config)
         ctx = DocumentContext(raw_file=raw_file, profile=profile)
@@ -583,13 +550,13 @@ class TestLlmTemplates:
     """Verify new template is registered."""
 
     def test_segment_understanding_template_exists(self):
-        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
+        from knowledge_mining_zym.mining.infra.llm_templates import TEMPLATES
 
         keys = [t["template_key"] for t in TEMPLATES]
         assert "mining-segment-understanding" in keys
 
     def test_segment_understanding_template_structure(self):
-        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
+        from knowledge_mining_zym.mining.infra.llm_templates import TEMPLATES
 
         tpl = next(t for t in TEMPLATES if t["template_key"] == "mining-segment-understanding")
         assert tpl["expected_output_type"] == "json_object"
@@ -616,7 +583,7 @@ class TestZhipuEmbeddingGenerator:
     """ZhipuEmbeddingGenerator should call Zhipu API and return embeddings."""
 
     def test_embed_single_text(self):
-        from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import ZhipuEmbeddingGenerator
         from unittest.mock import patch, MagicMock
 
         gen = ZhipuEmbeddingGenerator(api_key="test-key", dimensions=1024)
@@ -639,13 +606,13 @@ class TestZhipuEmbeddingGenerator:
             assert result[0] == [0.1, 0.2, 0.3]
 
     def test_embed_empty_input(self):
-        from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import ZhipuEmbeddingGenerator
 
         gen = ZhipuEmbeddingGenerator(api_key="test-key")
         assert gen.embed([]) == []
 
     def test_embed_api_failure_returns_empty(self):
-        from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import ZhipuEmbeddingGenerator
         from unittest.mock import patch, MagicMock
 
         gen = ZhipuEmbeddingGenerator(api_key="test-key")
@@ -661,7 +628,7 @@ class TestZhipuEmbeddingGenerator:
             assert result == []
 
     def test_embed_batch(self):
-        from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import ZhipuEmbeddingGenerator
         from unittest.mock import patch, MagicMock
 
         gen = ZhipuEmbeddingGenerator(api_key="test-key")
@@ -686,14 +653,14 @@ class TestZhipuEmbeddingGenerator:
             assert len(result) == 2
 
     def test_noop_embedding_generator(self):
-        from knowledge_mining.mining.infra.embedding import NoOpEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import NoOpEmbeddingGenerator
 
         gen = NoOpEmbeddingGenerator()
         assert gen.embed(["test"]) == []
         assert gen.embed_batch(["test"]) == []
 
     def test_properties(self):
-        from knowledge_mining.mining.infra.embedding import ZhipuEmbeddingGenerator
+        from knowledge_mining_zym.mining.infra.embedding import ZhipuEmbeddingGenerator
 
         gen = ZhipuEmbeddingGenerator(api_key="test-key", model="embedding-3", dimensions=1024)
         assert gen.model_name == "embedding-3"
@@ -708,7 +675,7 @@ class TestDiscourseRelationBuilder:
     """DiscourseRelationBuilder should analyze segment discourse relations via LLM."""
 
     def test_parse_llm_results(self):
-        from knowledge_mining.mining.stages.relations import DiscourseRelationBuilder
+        from knowledge_mining_zym.mining.stages.relations import DiscourseRelationBuilder
 
         builder = DiscourseRelationBuilder.__new__(DiscourseRelationBuilder)
         builder._client = None
@@ -722,8 +689,8 @@ class TestDiscourseRelationBuilder:
         ]
 
         llm_output = [
-            {"source": 0, "target": 1, "relation": "ELABORATES", "confidence": 0.9},
-            {"source": 1, "target": 2, "relation": "RESULTS_IN", "confidence": 0.7},
+            {"source": 0, "target": 1, "relation": "ELABORATION", "confidence": 0.9},
+            {"source": 1, "target": 2, "relation": "CAUSATION", "confidence": 0.7},
         ]
 
         relations = builder._parse_llm_results(llm_output, segments)
@@ -732,11 +699,13 @@ class TestDiscourseRelationBuilder:
         assert relations[0].relation_type == "elaborates"
         assert relations[0].weight == 0.9
         assert relations[0].metadata_json["source"] == "discourse_llm"
+        assert relations[0].metadata_json["rst_relation"] == "elaboration"
 
-        assert relations[1].relation_type == "results_in"
+        assert relations[1].relation_type == "causes"
+        assert relations[1].metadata_json["rst_relation"] == "causation"
 
     def test_unrelated_filtered_out(self):
-        from knowledge_mining.mining.stages.relations import DiscourseRelationBuilder
+        from knowledge_mining_zym.mining.stages.relations import DiscourseRelationBuilder
 
         builder = DiscourseRelationBuilder.__new__(DiscourseRelationBuilder)
         builder._client = None
@@ -748,7 +717,7 @@ class TestDiscourseRelationBuilder:
 
         llm_output = [
             {"source": 0, "target": 1, "relation": "UNRELATED", "confidence": 0.3},
-            {"source": 0, "target": 1, "relation": "ELABORATES", "confidence": 0.8},
+            {"source": 0, "target": 1, "relation": "ELABORATION", "confidence": 0.8},
         ]
 
         relations = builder._parse_llm_results(llm_output, segments)
@@ -756,7 +725,7 @@ class TestDiscourseRelationBuilder:
         assert relations[0].relation_type == "elaborates"
 
     def test_out_of_range_index_skipped(self):
-        from knowledge_mining.mining.stages.relations import DiscourseRelationBuilder
+        from knowledge_mining_zym.mining.stages.relations import DiscourseRelationBuilder
 
         builder = DiscourseRelationBuilder.__new__(DiscourseRelationBuilder)
         builder._client = None
@@ -764,14 +733,14 @@ class TestDiscourseRelationBuilder:
         segments = [RawSegmentData(document_key="doc:/test.md", segment_index=0, raw_text="A")]
 
         llm_output = [
-            {"source": 0, "target": 5, "relation": "ELABORATES", "confidence": 0.9},
+            {"source": 0, "target": 5, "relation": "ELABORATION", "confidence": 0.9},
         ]
 
         relations = builder._parse_llm_results(llm_output, segments)
         assert len(relations) == 0
 
     def test_build_with_too_few_segments(self):
-        from knowledge_mining.mining.stages.relations import DiscourseRelationBuilder
+        from knowledge_mining_zym.mining.stages.relations import DiscourseRelationBuilder
 
         builder = DiscourseRelationBuilder.__new__(DiscourseRelationBuilder)
         builder._client = None
@@ -790,16 +759,9 @@ class TestDiscourseRelationBuilder:
 class TestContextualizer:
     """Contextualizer should generate context descriptions for segments."""
 
-    def test_noop_contextualizer(self):
-        from knowledge_mining.mining.stages.retrieval_units import NoOpContextualizer
-
-        ctxer = NoOpContextualizer()
-        segments = [RawSegmentData(document_key="doc:/test.md", segment_index=0, raw_text="test")]
-        assert ctxer.contextualize(segments, "doc text") == {}
-
     def test_raw_text_unit_with_llm_context(self):
         """v1.3: LLM context is folded into raw_text.search_text and metadata."""
-        from knowledge_mining.mining.stages.retrieval_units import _make_raw_text_unit
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_raw_text_unit
 
         seg = RawSegmentData(
             document_key="doc:/test.md",
@@ -824,8 +786,8 @@ class TestContextualizer:
 
     def test_contextualizer_in_build_retrieval_units(self):
         """v1.3: contextualizer enriches raw_text.search_text, no separate unit."""
-        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.infra.domain_pack import RetrievalPolicy, DomainProfile
+        from knowledge_mining_zym.mining.stages.retrieval_units import build_retrieval_units
+        from knowledge_mining_zym.mining.infra.domain_pack import RetrievalPolicy, DomainProfile
 
         # Use a profile with contextual_retrieval enabled
         policy = RetrievalPolicy(contextual_retrieval="on")
@@ -875,8 +837,8 @@ class TestValidateBuild:
     """validate_build should check active snapshots, segments, and parent build."""
 
     def test_validate_build_no_active_snapshots(self):
-        from knowledge_mining.mining.stages.publishing import validate_build
-        from knowledge_mining.mining.infra.db import AssetCoreDB
+        from knowledge_mining_zym.mining.stages.publishing import validate_build
+        from knowledge_mining_zym.mining.infra.db import AssetCoreDB
         from unittest.mock import MagicMock
 
         db = MagicMock(spec=AssetCoreDB)
@@ -887,8 +849,8 @@ class TestValidateBuild:
             validate_build(db, "build-1")
 
     def test_validate_build_empty_snapshot(self):
-        from knowledge_mining.mining.stages.publishing import validate_build
-        from knowledge_mining.mining.infra.db import AssetCoreDB
+        from knowledge_mining_zym.mining.stages.publishing import validate_build
+        from knowledge_mining_zym.mining.infra.db import AssetCoreDB
         from unittest.mock import MagicMock
 
         db = MagicMock(spec=AssetCoreDB)
@@ -902,8 +864,8 @@ class TestValidateBuild:
             validate_build(db, "build-1")
 
     def test_validate_build_incremental_missing_parent(self):
-        from knowledge_mining.mining.stages.publishing import validate_build
-        from knowledge_mining.mining.infra.db import AssetCoreDB
+        from knowledge_mining_zym.mining.stages.publishing import validate_build
+        from knowledge_mining_zym.mining.infra.db import AssetCoreDB
         from unittest.mock import MagicMock
 
         db = MagicMock(spec=AssetCoreDB)
@@ -927,8 +889,8 @@ class TestValidateBuild:
             validate_build(db, "build-1")
 
     def test_validate_build_passes(self):
-        from knowledge_mining.mining.stages.publishing import validate_build
-        from knowledge_mining.mining.infra.db import AssetCoreDB
+        from knowledge_mining_zym.mining.stages.publishing import validate_build
+        from knowledge_mining_zym.mining.infra.db import AssetCoreDB
         from unittest.mock import MagicMock
 
         db = MagicMock(spec=AssetCoreDB)
@@ -946,8 +908,8 @@ class TestRemoveSemantics:
     """classify_documents should detect REMOVE for deleted files."""
 
     def test_removed_document_detected(self):
-        from knowledge_mining.mining.stages.publishing import classify_documents
-        from knowledge_mining.mining.infra.db import AssetCoreDB
+        from knowledge_mining_zym.mining.stages.publishing import classify_documents
+        from knowledge_mining_zym.mining.infra.db import AssetCoreDB
         from unittest.mock import MagicMock
 
         db = MagicMock(spec=AssetCoreDB)
@@ -962,7 +924,7 @@ class TestRemoveSemantics:
             {"document_id": "doc-1", "document_snapshot_id": "snap-1-new"},
         ]
 
-        result = classify_documents(db, decisions)
+        result = classify_documents(db, decisions, domain="test_domain")
         remove_decisions = [d for d in result if d.get("action") == "REMOVE"]
         assert len(remove_decisions) == 1
         assert remove_decisions[0]["document_id"] == "doc-2"
@@ -977,7 +939,7 @@ class TestRunCounting:
     """run() should track new_count and updated_count separately."""
 
     def test_pipeline_config_accepts_new_operators(self):
-        from knowledge_mining.mining.pipeline import PipelineConfig
+        from knowledge_mining_zym.mining.pipeline import PipelineConfig
 
         config = PipelineConfig(
             embedding_generator=None,
@@ -997,7 +959,7 @@ class TestHtmlTableExtraction:
     """html_table blocks should have columns/rows structure extracted."""
 
     def test_html_table_structure(self):
-        from knowledge_mining.mining.infra.structure import _parse_html_table
+        from knowledge_mining_zym.mining.infra.structure import _parse_html_table
 
         html = """<table>
         <thead><tr><th>参数</th><th>值</th><th>说明</th></tr></thead>
@@ -1017,7 +979,7 @@ class TestHtmlTableExtraction:
         assert structure["col_count"] == 3
 
     def test_html_table_no_header(self):
-        from knowledge_mining.mining.infra.structure import _parse_html_table
+        from knowledge_mining_zym.mining.infra.structure import _parse_html_table
 
         html = """<table>
         <tr><td>A</td><td>B</td></tr>
@@ -1029,7 +991,7 @@ class TestHtmlTableExtraction:
         assert structure["row_count"] == 2
 
     def test_html_table_in_structure_parser(self):
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
 
         md = """# Test
 
@@ -1058,25 +1020,25 @@ class TestRstRelationTypes:
     """VALID_RELATION_TYPES should include RST discourse labels."""
 
     def test_rst_labels_present(self):
-        from knowledge_mining.mining.contracts.models import VALID_RELATION_TYPES
+        from knowledge_mining_zym.mining.contracts.models import VALID_RELATION_TYPES
 
         rst_labels = {
-            "evidences", "causes", "results_in", "backgrounds",
-            "conditions", "summarizes", "justifies", "enables",
-            "contrasts_with", "parallels", "sequences", "unrelated",
+            "elaboration", "sequence", "causation", "evidence", "background",
+            "exemplification", "contrast", "concession", "condition", "purpose",
+            "unrelated",
         }
         for label in rst_labels:
             assert label in VALID_RELATION_TYPES, f"{label} missing from VALID_RELATION_TYPES"
 
     def test_structural_labels_still_present(self):
-        from knowledge_mining.mining.contracts.models import VALID_RELATION_TYPES
+        from knowledge_mining_zym.mining.contracts.models import VALID_RELATION_TYPES
 
         structural = {"previous", "next", "same_section", "same_parent_section", "section_header_of"}
         for label in structural:
             assert label in VALID_RELATION_TYPES
 
     def test_discourse_relations_stage_name(self):
-        from knowledge_mining.mining.contracts.models import VALID_STAGE_NAMES
+        from knowledge_mining_zym.mining.contracts.models import VALID_STAGE_NAMES
 
         assert "discourse_relations" in VALID_STAGE_NAMES
 
@@ -1089,9 +1051,9 @@ class TestDBEmbeddingWrite:
     """AssetCoreDB should support embedding insertion."""
 
     def test_insert_retrieval_embedding(self):
-        from knowledge_mining.mining.infra.db import AssetCoreDB
-        from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-        from knowledge_mining.mining.infra.pg_schema import ensure_schema
+        from knowledge_mining_zym.mining.infra.db import AssetCoreDB
+        from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+        from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
         from psycopg.rows import dict_row
         from psycopg_pool import ConnectionPool
 
@@ -1104,7 +1066,7 @@ class TestDBEmbeddingWrite:
         db = AssetCoreDB(pool)
         try:
             # Create prerequisite data: batch -> document -> snapshot -> link -> segment -> retrieval unit
-            db.upsert_source_batch("batch-1", "B-TEST", "folder_scan")
+            db.upsert_source_batch("batch-1", "B-TEST", "folder_scan", domain="test_domain")
             doc_id = db.upsert_document("doc-1", "doc:/test.md", "test.md")
             db.upsert_snapshot("snap-1", "nh1", "rh1", "text/markdown", title="Test")
             db.insert_snapshot_link("link-1", doc_id, "snap-1", "batch-1", "test.md", "file:///test.md")
@@ -1143,18 +1105,15 @@ class TestStreamingPipeline:
 
     def test_single_doc_through_all_stages(self):
         """Single document flows through all stages to completion."""
-        from knowledge_mining.mining.pipeline import (
+        from knowledge_mining_zym.mining.pipeline import (
             DocumentContext, StreamingPipeline,
             parse_stage, segment_stage, enrich_stage,
-            relations_stage, retrieval_units_stage,
+            retrieval_units_stage,
             PipelineConfig,
         )
-        from knowledge_mining.mining.stages.parse import create_parser
-        from knowledge_mining.mining.stages.segment import DefaultSegmenter
-        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        from knowledge_mining.mining.contracts.models import RawFileData, DocumentProfile
+        from knowledge_mining_zym.mining.stages.parse import create_parser
+        from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+        from knowledge_mining_zym.mining.contracts.models import RawFileData, DocumentProfile
 
         raw = RawFileData(
             file_path="test.md",
@@ -1171,19 +1130,13 @@ class TestStreamingPipeline:
         config = PipelineConfig(
             parser_factory=create_parser,
             segmenter=DefaultSegmenter(),
-            enricher=RuleBasedEnricher(
-                entity_extractor=RuleBasedEntityExtractor(),
-                role_classifier=DefaultRoleClassifier(),
-            ),
-            relation_builder=DefaultRelationBuilder(),
         )
 
         stages = [
-            ("parse",           lambda c: parse_stage(c, config),           1),
-            ("segment",         lambda c: segment_stage(c, config),         1),
-            ("enrich",          lambda c: enrich_stage(c, config),          2),
-            ("relations",       lambda c: relations_stage(c, config),       1),
-            ("retrieval_units", lambda c: retrieval_units_stage(c, config), 2),
+            ("parse",                 lambda c: parse_stage(c, config),           1),
+            ("segment",               lambda c: segment_stage(c, config),         1),
+            ("enrich",                lambda c: enrich_stage(c, config),          2),
+            ("build_retrieval_units", lambda c: retrieval_units_stage(c, config), 2),
         ]
 
         pipeline = StreamingPipeline(stages)
@@ -1194,19 +1147,19 @@ class TestStreamingPipeline:
         assert result.error is None
         assert result.tree is not None
         assert len(result.segments) > 0
-        assert len(result.relations) > 0
         assert len(result.retrieval_units) > 0
 
     def test_multi_doc_concurrent(self):
         """Multiple documents are processed concurrently across stages."""
         import time
-        from knowledge_mining.mining.pipeline import StreamingPipeline, DocumentContext, PipelineConfig
-        from knowledge_mining.mining.stages.parse import create_parser
-        from knowledge_mining.mining.stages.segment import DefaultSegmenter
-        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        from knowledge_mining.mining.contracts.models import RawFileData, DocumentProfile
+        from knowledge_mining_zym.mining.pipeline import (
+            StreamingPipeline, DocumentContext, PipelineConfig,
+            parse_stage, segment_stage, enrich_stage,
+            retrieval_units_stage,
+        )
+        from knowledge_mining_zym.mining.stages.parse import create_parser
+        from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+        from knowledge_mining_zym.mining.contracts.models import RawFileData, DocumentProfile
 
         docs = []
         for i in range(3):
@@ -1225,23 +1178,13 @@ class TestStreamingPipeline:
         config = PipelineConfig(
             parser_factory=create_parser,
             segmenter=DefaultSegmenter(),
-            enricher=RuleBasedEnricher(
-                entity_extractor=RuleBasedEntityExtractor(),
-                role_classifier=DefaultRoleClassifier(),
-            ),
-            relation_builder=DefaultRelationBuilder(),
         )
 
-        from knowledge_mining.mining.pipeline import (
-            parse_stage, segment_stage, enrich_stage,
-            relations_stage, retrieval_units_stage,
-        )
         stages = [
-            ("parse",           lambda c: parse_stage(c, config),           1),
-            ("segment",         lambda c: segment_stage(c, config),         1),
-            ("enrich",          lambda c: enrich_stage(c, config),          2),
-            ("relations",       lambda c: relations_stage(c, config),       1),
-            ("retrieval_units", lambda c: retrieval_units_stage(c, config), 2),
+            ("parse",                 lambda c: parse_stage(c, config),           1),
+            ("segment",               lambda c: segment_stage(c, config),         1),
+            ("enrich",                lambda c: enrich_stage(c, config),          2),
+            ("build_retrieval_units", lambda c: retrieval_units_stage(c, config), 2),
         ]
 
         pipeline = StreamingPipeline(stages)
@@ -1255,17 +1198,14 @@ class TestStreamingPipeline:
 
     def test_single_failure_does_not_block_others(self):
         """One document failing should not prevent others from completing."""
-        from knowledge_mining.mining.pipeline import (
+        from knowledge_mining_zym.mining.pipeline import (
             DocumentContext, StreamingPipeline, PipelineConfig,
             parse_stage, segment_stage, enrich_stage,
-            relations_stage, retrieval_units_stage,
+            retrieval_units_stage,
         )
-        from knowledge_mining.mining.stages.parse import create_parser
-        from knowledge_mining.mining.stages.segment import DefaultSegmenter
-        from knowledge_mining.mining.stages.enrich import RuleBasedEnricher
-        from knowledge_mining.mining.stages.relations import DefaultRelationBuilder
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        from knowledge_mining.mining.contracts.models import RawFileData, DocumentProfile
+        from knowledge_mining_zym.mining.stages.parse import create_parser
+        from knowledge_mining_zym.mining.stages.segment import DefaultSegmenter
+        from knowledge_mining_zym.mining.contracts.models import RawFileData, DocumentProfile
 
         # Good doc
         good_raw = RawFileData(
@@ -1288,19 +1228,13 @@ class TestStreamingPipeline:
         config = PipelineConfig(
             parser_factory=create_parser,
             segmenter=DefaultSegmenter(),
-            enricher=RuleBasedEnricher(
-                entity_extractor=RuleBasedEntityExtractor(),
-                role_classifier=DefaultRoleClassifier(),
-            ),
-            relation_builder=DefaultRelationBuilder(),
         )
 
         stages = [
-            ("parse",           lambda c: parse_stage(c, config),           1),
-            ("segment",         lambda c: segment_stage(c, config),         1),
-            ("enrich",          lambda c: enrich_stage(c, config),          2),
-            ("relations",       lambda c: relations_stage(c, config),       1),
-            ("retrieval_units", lambda c: retrieval_units_stage(c, config), 2),
+            ("parse",                 lambda c: parse_stage(c, config),           1),
+            ("segment",               lambda c: segment_stage(c, config),         1),
+            ("enrich",                lambda c: enrich_stage(c, config),          2),
+            ("build_retrieval_units", lambda c: retrieval_units_stage(c, config), 2),
         ]
 
         pipeline = StreamingPipeline(stages)
@@ -1314,7 +1248,7 @@ class TestStreamingPipeline:
 
     def test_stage_exception_caught_as_error(self):
         """Exception in a stage is caught and stored in ctx.error."""
-        from knowledge_mining.mining.pipeline import DocumentContext, StreamingPipeline
+        from knowledge_mining_zym.mining.pipeline import DocumentContext, StreamingPipeline
 
         def boom(ctx):
             raise RuntimeError("intentional test error")
@@ -1330,7 +1264,7 @@ class TestStreamingPipeline:
 
     def test_error_field_in_with_updates(self):
         """error field is preserved through with_updates."""
-        from knowledge_mining.mining.pipeline import DocumentContext
+        from knowledge_mining_zym.mining.pipeline import DocumentContext
 
         ctx = DocumentContext(error="something broke")
         assert ctx.error == "something broke"

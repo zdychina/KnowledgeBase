@@ -22,6 +22,22 @@ public class GraphExpander {
 
     private static final Logger log = LoggerFactory.getLogger(GraphExpander.class);
 
+    // Lower number = higher priority. Relations not listed default to priority 11.
+    // entity_relation (Phase 2 Mining) > discourse (Phase 2 Mining) > structural (Phase 1)
+    private static final Map<String, Integer> RELATION_PRIORITY = Map.ofEntries(
+            Map.entry("entity_relation",     0),
+            Map.entry("elaborates",          1),
+            Map.entry("conditions",          2),
+            Map.entry("backgrounds",         3),
+            Map.entry("enables",             4),
+            Map.entry("results_in",          5),
+            Map.entry("sequences",           6),
+            Map.entry("contrasts_with",      7),
+            Map.entry("section_header_of",   8),
+            Map.entry("same_section",        9),
+            Map.entry("same_parent_section", 10)
+    );
+
     private final AssetRawSegmentRelationMapper relationMapper;
     private final AssetRawSegmentMapper segmentMapper;
 
@@ -70,8 +86,14 @@ public class GraphExpander {
             List<NeighborRow> neighbors = relationMapper.selectNeighbors(
                     new ArrayList<>(frontier), relationTypes, snapshotIds);
 
+            // Sort by relation priority so high-value relations fill the budget first
+            List<NeighborRow> sortedNeighbors = neighbors.stream()
+                    .sorted(Comparator.comparingInt(r ->
+                            RELATION_PRIORITY.getOrDefault(r.getRelationType(), 11)))
+                    .toList();
+
             Set<String> nextFrontier = new LinkedHashSet<>();
-            for (NeighborRow row : neighbors) {
+            for (NeighborRow row : sortedNeighbors) {
                 String neighborId = row.getNeighborId();
                 if (neighborId != null && !visited.contains(neighborId)) {
                     visited.add(neighborId);

@@ -11,28 +11,39 @@ from llm_service.models import (
 
 def test_task_submit_request_defaults():
     req = TaskSubmitRequest(
-        caller_domain="mining",
+        caller_service="mining",
+        knowledge_domain="cloud_core_network",
         pipeline_stage="summary_generation",
     )
-    assert req.caller_domain == "mining"
+    assert req.caller_service == "mining"
+    assert req.knowledge_domain == "cloud_core_network"
     assert req.max_attempts == 3
     assert req.priority == 100
     assert req.params is None
     assert req.idempotency_key is None
 
 
-def test_task_submit_request_validation_rejects_bad_domain():
+def test_task_submit_request_validation_rejects_bad_service():
     with pytest.raises(ValueError):
         TaskSubmitRequest(
-            caller_domain="",
+            caller_service="",
             pipeline_stage="test",
         )
 
     with pytest.raises(ValueError):
         TaskSubmitRequest(
-            caller_domain="x" * 65,
+            caller_service="x" * 65,
             pipeline_stage="test",
         )
+
+
+def test_task_submit_request_accepts_legacy_caller_domain():
+    req = TaskSubmitRequest(
+        caller_domain="mining",
+        pipeline_stage="test",
+    )
+    assert req.caller_service == "mining"
+    assert req.knowledge_domain is None
 
 
 def test_execute_response_with_result():
@@ -69,8 +80,14 @@ def test_execute_response_with_error():
 
 
 def test_embedding_request_normalizes_scalar_input():
-    req = EmbeddingRequest(input="alpha")
+    req = EmbeddingRequest(
+        input="alpha",
+        caller_service="serving",
+        knowledge_domain="generic",
+    )
     assert req.input == ["alpha"]
+    assert req.caller_service == "serving"
+    assert req.knowledge_domain == "generic"
 
 
 def test_rerank_request_rejects_empty_documents():

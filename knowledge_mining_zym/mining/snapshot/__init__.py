@@ -10,8 +10,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from knowledge_mining.mining.infra.db import AssetCoreDB
-from knowledge_mining.mining.contracts.models import RawFileData, DocumentProfile
+from knowledge_mining_zym.mining.infra.db import AssetCoreDB
+from knowledge_mining_zym.mining.contracts.models import RawFileData, DocumentProfile
 
 
 def select_or_create_snapshot(
@@ -26,7 +26,7 @@ def select_or_create_snapshot(
     Returns (document_id, snapshot_id, link_id).
     If snapshot already exists (same normalized_content_hash), reuses it.
     """
-    from knowledge_mining.mining.ingestion import get_mime_type
+    from knowledge_mining_zym.mining.ingestion import get_mime_type
 
     mime_type = get_mime_type(doc.file_type)
 

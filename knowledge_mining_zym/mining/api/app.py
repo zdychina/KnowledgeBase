@@ -15,13 +15,13 @@ from fastapi import FastAPI
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-from knowledge_mining.mining.infra.pg_schema import ensure_schema
-from knowledge_mining.mining.api.routes.health import router as health_router
-from knowledge_mining.mining.api.routes.runs import router as runs_router
-from knowledge_mining.mining.api.routes.knowledge import router as knowledge_router
-from knowledge_mining.mining.api.routes.config import router as config_router
-from knowledge_mining.mining.api.routes.builds import router as builds_router
+from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
+from knowledge_mining_zym.mining.api.routes.health import router as health_router
+from knowledge_mining_zym.mining.api.routes.runs import router as runs_router
+from knowledge_mining_zym.mining.api.routes.knowledge import router as knowledge_router
+from knowledge_mining_zym.mining.api.routes.config import router as config_router
+from knowledge_mining_zym.mining.api.routes.builds import router as builds_router
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("MINING_API_PORT", "8901"))
     uvicorn.run(
-        "knowledge_mining.mining.api.app:app",
+        "knowledge_mining_zym.mining.api.app:app",
         host="0.0.0.0",
         port=port,
         reload=False,

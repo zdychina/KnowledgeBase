@@ -72,8 +72,8 @@ async def list_stages(request: Request) -> dict:
     stages = {
         "parse": {"1": "ParserStage"},
         "segment": {"1": "DefaultSegmenter"},
-        "enrich": {"1": "RuleBasedEnricher", "2": "LlmEnricher"},
-        "relations": {"1": "DefaultRelationBuilder"},
+        "enrich": {"2": "LlmEnricher"},
+        "discourse_relations": {"1": "DiscourseRelationBuilder"},
         "retrieval_units": {"1": "RetrievalUnitBuilder"},
     }
     return {"stages": stages}

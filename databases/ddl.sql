@@ -1,5 +1,0 @@
-CREATE USER zdy WITH PASSWORD 'zdy1234';
-CREATE DATABASE cloud_core_network_db OWNER zdy;
-CREATE DATABASE generic_db OWNER zdy;
-GRANT ALL PRIVILEGES ON DATABASE cloud_core_network_db TO zdy;
-GRANT ALL PRIVILEGES ON DATABASE generic_db TO zdy;

@@ -62,8 +62,8 @@ def _execute_ddl(conn, ddl: str) -> None:
     # Split respecting $$ quoting
     stmts = _split_ddl(ddl)
     for stmt in stmts:
-        stmt = stmt.strip()
-        if not stmt or stmt.startswith("--"):
+        stmt = _strip_leading_comments(stmt)
+        if not stmt:
             continue
         try:
             with conn.cursor() as cur:
@@ -74,6 +74,30 @@ def _execute_ddl(conn, ddl: str) -> None:
             psycopg.errors.DuplicateFunction,
         ):
             pass  # Already exists — idempotent
+        except Exception as e:
+            preview = stmt[:300].replace("\n", " ")
+            logger.error("DDL failed: %s | stmt: %s", e, preview)
+            raise
+
+
+def _strip_leading_comments(stmt: str) -> str:
+    """Strip leading whitespace and ``--`` line comments from a statement.
+
+    Without this, a statement like ``-- header\\nCREATE TABLE ...;`` would
+    be mistaken for a pure comment because it starts with ``--``, and the
+    real SQL would be silently skipped.
+    """
+    lines = stmt.splitlines()
+    out: list[str] = []
+    started = False
+    for line in lines:
+        if not started:
+            s = line.strip()
+            if not s or s.startswith("--"):
+                continue
+            started = True
+        out.append(line)
+    return "\n".join(out).strip()
 
 
 def _split_ddl(ddl: str) -> list[str]:

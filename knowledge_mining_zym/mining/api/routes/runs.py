@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
     db_config: MiningDbConfig = request.app.state.db_config
 
     # Load defaults from MiningConfig (env vars)
-    from knowledge_mining.mining.infra.mining_config import MiningConfig
+    from knowledge_mining_zym.mining.infra.mining_config import MiningConfig
     cfg = MiningConfig()
     embedding_api_key = body.embedding_api_key
     llm_base_url = body.llm_base_url or cfg.llm_service_url
@@ -64,7 +64,7 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
 
     def _run_in_thread():
         try:
-            from knowledge_mining.mining.jobs.run import run as mining_run
+            from knowledge_mining_zym.mining.jobs.run import run as mining_run
             mining_run(
                 body.input_path,
                 db_config=db_config,
@@ -229,7 +229,7 @@ async def publish_run(run_id: str, request: Request) -> dict:
     db_config: MiningDbConfig = request.app.state.db_config
 
     try:
-        from knowledge_mining.mining.jobs.run import publish
+        from knowledge_mining_zym.mining.jobs.run import publish
         result = publish(run_id, db_config=db_config)
         return result
     except ValueError as e:

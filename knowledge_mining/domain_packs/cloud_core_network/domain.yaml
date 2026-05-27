@@ -23,69 +23,24 @@ strong_entity_types:
   - network_element
   - parameter
   - protocol
-  - interface
-  - alarm
-  - feature
 
 # ---------------------------------------------------------------------------
 # Semantic role mapping: section title keywords -> core semantic_role
 # ---------------------------------------------------------------------------
 
-role_keyword_rules:
-  - keywords: ["参数", "参数说明", "参数标识"]
-    role: parameter
-  - keywords: ["使用实例", "命令格式", "示例", "配置示例"]
-    role: example
-  - keywords: ["操作步骤", "流程", "检查项", "前置检查", "checklist"]
-    role: procedure_step
-  - keywords: ["排障", "故障", "troubleshoot"]
-    role: troubleshooting_step
-  - keywords: ["注意事项", "限制", "约束", "constraint"]
-    role: constraint
-  - keywords: ["概述", "简介"]
-    role: concept
+role_keyword_rules: []
 
 # ---------------------------------------------------------------------------
 # Heading role classification: heading keywords -> heading role
 # ---------------------------------------------------------------------------
 
-heading_role_keywords:
-  - keywords: ["参数", "参数说明", "参数标识"]
-    role: parameter_definition
-  - keywords: ["使用实例", "示例", "配置示例"]
-    role: example_section
-  - keywords: ["操作步骤", "流程", "检查项"]
-    role: procedure_section
-  - keywords: ["排障", "故障"]
-    role: troubleshooting_section
-  - keywords: ["注意事项", "限制", "约束"]
-    role: constraint_section
-  - keywords: ["概述", "简介", "功能"]
-    role: overview_section
+heading_role_keywords: []
 
 # ---------------------------------------------------------------------------
 # Rule-based extractors (regex)
 # ---------------------------------------------------------------------------
 
-extractor_rules:
-  - name: network_function
-    pattern: "\\b(SMF|UPF|AMF|PCF|UDM|UDR|AUSF|NRF|NSSF|BSF|CHF|SMSF|LMF|GMLC|NEF|SCF)\\b"
-    entity_type: network_element
-
-  - name: command
-    pattern: "\\b(ADD|SHOW|MOD|DEL|DSP|LST|REG|DEREG|SET|GET|CFG|ACT|DEACT|CLR|PRT)\\s+([A-Z][A-Z0-9_]{1,20})"
-    entity_type: command
-    groups:
-      - index: 0
-        format: "{group1} {group2}"
-
-  - name: interface
-    pattern: "(?<![A-Za-z0-9_])(N[1-9]\\d?|N1[0-9]\\d?|N2[0-8]|Sx[abc]|S1[ -](?:MME|U)|S6a|S11|Gx)(?![A-Za-z0-9_])"
-    entity_type: interface
-
-  - name: alarm
-    pattern: "(?<![A-Za-z0-9_])(ALM-[A-Z][A-Z0-9_-]{2,40})(?![A-Za-z0-9_-])"
-    entity_type: alarm
+extractor_rules: []
 
 # ---------------------------------------------------------------------------
 # Table parameter column names (used by entity extractor for table segments)

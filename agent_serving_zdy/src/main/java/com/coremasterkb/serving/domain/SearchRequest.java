@@ -13,6 +13,7 @@ import java.util.Map;
  * @param domain    knowledge domain (e.g. "cloud_core_network")
  * @param channel   release channel (e.g. "prod", "staging"); null means use registry default
  * @param mode      retrieval mode; defaults to "evidence"
+ * @param sessionId optional session identifier for multi-turn context accumulation; null means stateless
  */
 public record SearchRequest(
         String query,
@@ -21,12 +22,14 @@ public record SearchRequest(
         boolean debug,
         String domain,
         String channel,
-        String mode
+        String mode,
+        String sessionId
 ) {
     public SearchRequest {
         if (query == null || query.isBlank()) throw new IllegalArgumentException("query_required");
         if (scope == null) scope = Map.of();
         if (entities == null) entities = List.of();
         if (mode == null) mode = "evidence";
+        // sessionId: null is valid (stateless search)
     }
 }

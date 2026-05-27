@@ -10,6 +10,8 @@ Public method signatures are identical to the SQLite version.
 from __future__ import annotations
 
 import json
+import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +25,8 @@ from ..contracts.models import (
     MiningRunDocumentData,
     StageEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -58,6 +62,23 @@ def _json_loads(raw: str | None) -> Any:
 # ---------------------------------------------------------------------------
 # Base helper — PostgreSQL with ConnectionPool
 # ---------------------------------------------------------------------------
+
+def _retry_on_op_error(max_retries: int = 3, delay: float = 0.5):
+    """Decorator: retry on psycopg OperationalError (transient connection issues)."""
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return fn(*args, **kwargs)
+                except psycopg.OperationalError:
+                    if attempt < max_retries - 1:
+                        logger.warning("OperationalError in %s, retry %d/%d", fn.__name__, attempt + 1, max_retries)
+                        time.sleep(delay * (attempt + 1))
+                    else:
+                        raise
+        return wrapper
+    return decorator
+
 
 class _DB:
     """PostgreSQL database adapter using ConnectionPool."""
@@ -97,17 +118,20 @@ class _DB:
 
     # -- helpers --
 
+    @_retry_on_op_error()
     def _execute(self, sql: str, params: tuple = ()) -> None:
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
 
+    @_retry_on_op_error()
     def _fetchone(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
         with self._pool.connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, params)
                 return cur.fetchone()
 
+    @_retry_on_op_error()
     def _fetchall(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         with self._pool.connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -132,23 +156,29 @@ class AssetCoreDB(_DB):
         batch_id: str,
         batch_code: str,
         source_type: str,
+        domain: str = "default",
         description: str | None = None,
         created_by: str | None = None,
         metadata_json: dict | None = None,
     ) -> str:
         now = _utcnow()
         self._execute(
-            """INSERT INTO asset_source_batches (id, batch_code, source_type, description, created_by, created_at, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT(id) DO UPDATE SET batch_code=excluded.batch_code, source_type=excluded.source_type""",
-            (batch_id, batch_code, source_type, description, created_by, now, _json_dumps(metadata_json)),
+            """INSERT INTO asset_source_batches (id, batch_code, source_type, domain, description, created_by, created_at, metadata_json)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT(id) DO UPDATE SET batch_code=excluded.batch_code, source_type=excluded.source_type, domain=excluded.domain""",
+            (batch_id, batch_code, source_type, domain, description, created_by, now, _json_dumps(metadata_json)),
         )
         return batch_id
 
     def get_source_batch(self, batch_id: str) -> dict[str, Any] | None:
         return self._fetchone("SELECT * FROM asset_source_batches WHERE id = %s", (batch_id,))
 
-    def find_batch_by_code(self, batch_code: str) -> dict[str, Any] | None:
+    def find_batch_by_code(self, batch_code: str, domain: str | None = None) -> dict[str, Any] | None:
+        if domain:
+            return self._fetchone(
+                "SELECT * FROM asset_source_batches WHERE batch_code = %s AND domain = %s",
+                (batch_code, domain),
+            )
         return self._fetchone("SELECT * FROM asset_source_batches WHERE batch_code = %s", (batch_code,))
 
     # -- documents --
@@ -459,6 +489,7 @@ class AssetCoreDB(_DB):
         build_code: str,
         status: str = "building",
         build_mode: str = "full",
+        domain: str | None = None,
         source_batch_id: str | None = None,
         parent_build_id: str | None = None,
         mining_run_id: str | None = None,
@@ -468,11 +499,11 @@ class AssetCoreDB(_DB):
         now = _utcnow()
         self._execute(
             """INSERT INTO asset_builds
-                   (id, build_code, status, build_mode, source_batch_id, parent_build_id,
+                   (id, build_code, status, build_mode, domain, source_batch_id, parent_build_id,
                     mining_run_id, summary_json, validation_json, created_at, finished_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL)""",
             (
-                build_id, build_code, status, build_mode, source_batch_id, parent_build_id,
+                build_id, build_code, status, build_mode, domain, source_batch_id, parent_build_id,
                 mining_run_id, _json_dumps(summary_json), _json_dumps(validation_json), now,
             ),
         )
@@ -498,9 +529,10 @@ class AssetCoreDB(_DB):
     def get_build(self, build_id: str) -> dict[str, Any] | None:
         return self._fetchone("SELECT * FROM asset_builds WHERE id = %s", (build_id,))
 
-    def get_active_build(self) -> dict[str, Any] | None:
+    def get_active_build(self, domain: str) -> dict[str, Any] | None:
         return self._fetchone(
-            "SELECT * FROM asset_builds WHERE status IN ('validated', 'published') ORDER BY created_at DESC LIMIT 1"
+            "SELECT * FROM asset_builds WHERE domain = %s AND status IN ('validated', 'published') ORDER BY created_at DESC LIMIT 1",
+            (domain,),
         )
 
     # -- build document snapshots --
@@ -539,7 +571,8 @@ class AssetCoreDB(_DB):
         release_id: str,
         release_code: str,
         build_id: str,
-        channel: str = "default",
+        domain: str = "default",
+        channel: str = "prod",
         status: str = "staging",
         previous_release_id: str | None = None,
         released_by: str | None = None,
@@ -548,11 +581,11 @@ class AssetCoreDB(_DB):
     ) -> str:
         self._execute(
             """INSERT INTO asset_publish_releases
-                   (id, release_code, build_id, channel, status, previous_release_id,
+                   (id, release_code, build_id, domain, channel, status, previous_release_id,
                     released_by, release_notes, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
-                release_id, release_code, build_id, channel, status, previous_release_id,
+                release_id, release_code, build_id, domain, channel, status, previous_release_id,
                 released_by, release_notes, _json_dumps(metadata_json),
             ),
         )
@@ -560,23 +593,28 @@ class AssetCoreDB(_DB):
 
     def activate_release(self, release_id: str) -> None:
         now = _utcnow()
-        release = self._fetchone("SELECT channel FROM asset_publish_releases WHERE id = %s", (release_id,))
+        release = self._fetchone(
+            "SELECT domain, channel FROM asset_publish_releases WHERE id = %s", (release_id,)
+        )
         if release is None:
             raise ValueError(f"Release {release_id} not found")
+        domain = release["domain"]
         channel = release["channel"]
+        # Retire previous active release scoped to this domain+channel
         self._execute(
-            "UPDATE asset_publish_releases SET status = 'retired', deactivated_at = %s WHERE channel = %s AND status = 'active'",
-            (now, channel),
+            "UPDATE asset_publish_releases SET status = 'retired', deactivated_at = %s "
+            "WHERE domain = %s AND channel = %s AND status = 'active'",
+            (now, domain, channel),
         )
         self._execute(
             "UPDATE asset_publish_releases SET status = 'active', activated_at = %s WHERE id = %s",
             (now, release_id),
         )
 
-    def get_active_release(self, channel: str = "default") -> dict[str, Any] | None:
+    def get_active_release(self, domain: str, channel: str = "prod") -> dict[str, Any] | None:
         return self._fetchone(
-            "SELECT * FROM asset_publish_releases WHERE channel = %s AND status = 'active'",
-            (channel,),
+            "SELECT * FROM asset_publish_releases WHERE domain = %s AND channel = %s AND status = 'active'",
+            (domain, channel),
         )
 
     def get_release(self, release_id: str) -> dict[str, Any] | None:
@@ -595,13 +633,14 @@ class MiningRuntimeDB(_DB):
     def insert_run(self, data: MiningRunData) -> str:
         self._execute(
             """INSERT INTO mining_runs
-                   (id, source_batch_id, input_path, status, build_id,
+                   (id, source_batch_id, input_path, domain, channel, status, build_id,
                     total_documents, new_count, updated_count, skipped_count,
                     failed_count, committed_count, started_at, finished_at,
                     error_summary, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
-                data.id, data.source_batch_id, data.input_path, data.status, data.build_id,
+                data.id, data.source_batch_id, data.input_path, data.domain, data.channel,
+                data.status, data.build_id,
                 data.total_documents, data.new_count, data.updated_count, data.skipped_count,
                 data.failed_count, data.committed_count, data.started_at or _utcnow(),
                 data.finished_at, data.error_summary, _json_dumps(data.metadata_json),

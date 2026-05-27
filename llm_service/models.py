@@ -5,13 +5,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic import field_validator
+from pydantic import model_validator
 
 
 # --- Request models ---
 
 
 class TaskSubmitRequest(BaseModel):
-    caller_domain: str = Field(..., min_length=1, max_length=64)
+    caller_service: str | None = Field(default=None, min_length=1, max_length=64)
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
+    caller_domain: str | None = Field(default=None, min_length=1, max_length=64)
     pipeline_stage: str = Field(..., pattern=r"^[a-z][a-z0-9_]{1,63}$")
     template_key: str | None = None
     input: dict[str, Any] | None = None
@@ -26,16 +29,44 @@ class TaskSubmitRequest(BaseModel):
     max_attempts: int = Field(default=3, ge=1, le=10)
     priority: int = Field(default=100, ge=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_caller_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if not value.get("caller_service") and value.get("caller_domain"):
+            value = dict(value)
+            value["caller_service"] = value["caller_domain"]
+        return value
+
+    @model_validator(mode="after")
+    def _validate_caller_service_present(self) -> "TaskSubmitRequest":
+        if not self.caller_service:
+            raise ValueError("caller_service is required")
+        return self
+
 
 class EmbeddingTaskRequest(BaseModel):
     input: list[str] | str
     model: str | None = None
     dimensions: int | None = Field(default=None, ge=1)
-    caller_domain: str = Field(default="model", min_length=1, max_length=64)
+    caller_service: str | None = Field(default="model", min_length=1, max_length=64)
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
+    caller_domain: str | None = Field(default=None, min_length=1, max_length=64)
     pipeline_stage: str = Field(default="embedding", pattern=r"^[a-z][a-z0-9_]{1,63}$")
     idempotency_key: str | None = None
     max_attempts: int = Field(default=2, ge=1, le=5)
     priority: int = Field(default=100, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_caller_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if not value.get("caller_service") and value.get("caller_domain"):
+            value = dict(value)
+            value["caller_service"] = value["caller_domain"]
+        return value
 
     @field_validator("input", mode="before")
     @classmethod
@@ -50,11 +81,23 @@ class RerankTaskRequest(BaseModel):
     documents: list[str]
     model: str | None = None
     top_n: int | None = Field(default=None, ge=1)
-    caller_domain: str = Field(default="model", min_length=1, max_length=64)
+    caller_service: str | None = Field(default="model", min_length=1, max_length=64)
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
+    caller_domain: str | None = Field(default=None, min_length=1, max_length=64)
     pipeline_stage: str = Field(default="rerank", pattern=r"^[a-z][a-z0-9_]{1,63}$")
     idempotency_key: str | None = None
     max_attempts: int = Field(default=2, ge=1, le=5)
     priority: int = Field(default=100, ge=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_caller_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if not value.get("caller_service") and value.get("caller_domain"):
+            value = dict(value)
+            value["caller_service"] = value["caller_domain"]
+        return value
 
     @field_validator("documents")
     @classmethod
@@ -68,6 +111,20 @@ class EmbeddingRequest(BaseModel):
     input: list[str] | str = Field(..., max_length=100)
     model: str | None = None
     dimensions: int | None = Field(default=None, ge=1)
+    caller_service: str | None = Field(default="model", min_length=1, max_length=64)
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
+    caller_domain: str | None = Field(default=None, min_length=1, max_length=64)
+    pipeline_stage: str = Field(default="embedding", pattern=r"^[a-z][a-z0-9_]{1,63}$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_caller_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if not value.get("caller_service") and value.get("caller_domain"):
+            value = dict(value)
+            value["caller_service"] = value["caller_domain"]
+        return value
 
     @field_validator("input", mode="before")
     @classmethod
@@ -102,6 +159,20 @@ class RerankRequest(BaseModel):
     documents: list[str] = Field(..., max_length=200)
     model: str | None = None
     top_n: int | None = Field(default=None, ge=1)
+    caller_service: str | None = Field(default="model", min_length=1, max_length=64)
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
+    caller_domain: str | None = Field(default=None, min_length=1, max_length=64)
+    pipeline_stage: str = Field(default="rerank", pattern=r"^[a-z][a-z0-9_]{1,63}$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_caller_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if not value.get("caller_service") and value.get("caller_domain"):
+            value = dict(value)
+            value["caller_service"] = value["caller_domain"]
+        return value
 
     @field_validator("documents")
     @classmethod
@@ -163,7 +234,8 @@ class ExecuteResponse:
 @dataclass
 class TaskDetail:
     task_id: str
-    caller_domain: str
+    caller_service: str
+    knowledge_domain: str | None
     pipeline_stage: str
     status: str
     metadata: dict[str, Any] | None

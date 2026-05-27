@@ -9,6 +9,12 @@ A DomainProfile bundles all domain-specific knowledge:
 
 Loading a different domain pack swaps ALL domain knowledge without
 changing any core mining code.
+
+The domain registry (domain_registry.yaml) is the single source of truth:
+- It maps domain_id → scenario_pack name + database URL env var
+- domain.yaml files live under scenario_packs/<pack_name>/domain.yaml
+- domain.yaml uses a partitioned structure: ontology / mining / serving
+- Mining reads ontology + mining partitions only
 """
 from __future__ import annotations
 
@@ -22,8 +28,15 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Base directory for domain packs (sibling of mining/)
-_PACKS_ROOT = Path(__file__).resolve().parent.parent.parent / "domain_packs"
+# Repository root (knowledge_mining/mining/infra/ -> CoreMasterKB/)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+# Single source of truth paths
+_REGISTRY_PATH = _REPO_ROOT / "domain_registry.yaml"
+_SCENARIO_PACKS_ROOT = _REPO_ROOT / "scenario_packs"
+
+# Legacy path (deprecated, kept for backward compat fallback)
+_LEGACY_PACKS_ROOT = Path(__file__).resolve().parent.parent.parent / "domain_packs"
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +64,10 @@ class ExtractorRule:
 
 @dataclass(frozen=True)
 class RetrievalPolicy:
-    """Retrieval unit generation policy."""
+    """Retrieval unit generation policy.
+
+    Also carries discourse/relation thresholds so they are configurable per-domain.
+    """
     raw_text: str = "primary"
     generated_question: str = "auxiliary"
     entity_card: str = "strong_entities_only"
@@ -59,6 +75,15 @@ class RetrievalPolicy:
     max_questions_per_segment: int = 2
     max_entity_cards_per_segment: int = 3
     contextual_retrieval: str = "on"
+
+    # Discourse / relation thresholds
+    min_confidence: float = 0.5
+    max_distance: int = 5
+    discourse_window_size: int = 15
+
+    # Question-worthiness thresholds
+    min_questionworthy_tokens: int = 50
+    not_questionworthy_roles: frozenset[str] = frozenset({"navigation", "toc", "metadata"})
 
 
 @dataclass(frozen=True)
@@ -97,11 +122,52 @@ class DomainProfile:
     # LLM templates (list of dicts, replaces hardcoded llm_templates.py)
     llm_templates: tuple[dict[str, Any], ...]
 
+    # Domain-specific semantic roles (replaces hardcoded VALID_SEMANTIC_ROLES)
+    semantic_roles: frozenset[str]
+
     # Retrieval policy
     retrieval_policy: RetrievalPolicy
 
     # Eval questions
     eval_questions: tuple[EvalQuestion, ...]
+
+
+# ---------------------------------------------------------------------------
+# Registry loader
+# ---------------------------------------------------------------------------
+
+def load_domain_registry() -> dict[str, Any]:
+    """Load domain_registry.yaml and return the full dict."""
+    if not _REGISTRY_PATH.exists():
+        raise FileNotFoundError(
+            f"Domain registry not found: {_REGISTRY_PATH}"
+        )
+    with open(_REGISTRY_PATH, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    return data
+
+
+def resolve_domain(domain_id: str) -> dict[str, Any]:
+    """Resolve a domain_id from the registry.
+
+    Returns:
+        Dict with keys: enabled, database_url_env, scenario_pack, default_channel.
+
+    Raises:
+        KeyError: If domain_id is not in the registry.
+        ValueError: If domain is disabled.
+    """
+    registry = load_domain_registry()
+    domains = registry.get("domains", {})
+    if domain_id not in domains:
+        raise KeyError(
+            f"Domain '{domain_id}' not found in registry. "
+            f"Available: {list(domains.keys())}"
+        )
+    entry = domains[domain_id]
+    if not entry.get("enabled", False):
+        raise ValueError(f"Domain '{domain_id}' is disabled in registry.")
+    return entry
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +201,7 @@ def _parse_role_keyword_rules(
 
 
 def _parse_retrieval_policy(raw: dict[str, Any]) -> RetrievalPolicy:
+    nqr_raw = raw.get("not_questionworthy_roles", ["navigation", "toc", "metadata"])
     return RetrievalPolicy(
         raw_text=raw.get("raw_text", "primary"),
         generated_question=raw.get("generated_question", "auxiliary"),
@@ -143,6 +210,11 @@ def _parse_retrieval_policy(raw: dict[str, Any]) -> RetrievalPolicy:
         max_questions_per_segment=raw.get("max_questions_per_segment", 2),
         max_entity_cards_per_segment=raw.get("max_entity_cards_per_segment", 3),
         contextual_retrieval=raw.get("contextual_retrieval", "on"),
+        min_confidence=raw.get("min_confidence", 0.5),
+        max_distance=raw.get("max_distance", 5),
+        discourse_window_size=raw.get("discourse_window_size", 15),
+        min_questionworthy_tokens=raw.get("min_questionworthy_tokens", 50),
+        not_questionworthy_roles=frozenset(nqr_raw),
     )
 
 
@@ -160,29 +232,55 @@ def _parse_eval_questions(raw: list[dict[str, Any]]) -> tuple[EvalQuestion, ...]
     )
 
 
-def _parse_domain_yaml(data: dict[str, Any]) -> DomainProfile:
-    """Parse a domain.yaml dict into a DomainProfile."""
+def _parse_domain_yaml(data: dict[str, Any], domain_id: str) -> DomainProfile:
+    """Parse a domain.yaml dict into a DomainProfile.
+
+    Supports both the new partitioned structure (ontology/mining/serving)
+    and the legacy flat structure for backward compatibility.
+    """
+    # Detect partitioned vs flat structure
+    ontology = data.get("ontology", {})
+    mining = data.get("mining", {})
+
+    if ontology or mining:
+        # New partitioned structure
+        entity_types = ontology.get("entity_types", data.get("entity_types", []))
+        strong_entity_types = ontology.get("strong_entity_types", data.get("strong_entity_types", []))
+        display_name = data.get("display_name", domain_id)
+
+        role_keyword_rules = mining.get("role_keyword_rules", data.get("role_keyword_rules", []))
+        heading_role_keywords = mining.get("heading_role_keywords", data.get("heading_role_keywords", []))
+        extractor_rules = mining.get("extractor_rules", data.get("extractor_rules", []))
+        llm_templates = mining.get("llm_templates", data.get("llm_templates", []))
+        retrieval_policy = mining.get("retrieval_policy", data.get("retrieval_policy", {}))
+        eval_questions = mining.get("eval_questions", data.get("eval_questions", []))
+        semantic_roles = mining.get("semantic_roles", [])
+    else:
+        # Legacy flat structure
+        entity_types = data.get("entity_types", [])
+        strong_entity_types = data.get("strong_entity_types", [])
+        display_name = data.get("display_name", domain_id)
+
+        role_keyword_rules = data.get("role_keyword_rules", [])
+        heading_role_keywords = data.get("heading_role_keywords", [])
+        extractor_rules = data.get("extractor_rules", [])
+        llm_templates = data.get("llm_templates", [])
+        retrieval_policy = data.get("retrieval_policy", {})
+        eval_questions = data.get("eval_questions", [])
+        semantic_roles = data.get("semantic_roles", [])
+
     return DomainProfile(
-        domain_id=data["domain_id"],
-        display_name=data["display_name"],
-        entity_types=frozenset(data.get("entity_types", [])),
-        strong_entity_types=frozenset(data.get("strong_entity_types", [])),
-        role_keyword_rules=_parse_role_keyword_rules(
-            data.get("role_keyword_rules", []),
-        ),
-        heading_role_keywords=_parse_role_keyword_rules(
-            data.get("heading_role_keywords", []),
-        ),
-        extractor_rules=_parse_extractor_rules(
-            data.get("extractor_rules", []),
-        ),
-        llm_templates=tuple(data.get("llm_templates", [])),
-        retrieval_policy=_parse_retrieval_policy(
-            data.get("retrieval_policy", {}),
-        ),
-        eval_questions=_parse_eval_questions(
-            data.get("eval_questions", []),
-        ),
+        domain_id=domain_id,
+        display_name=display_name,
+        entity_types=frozenset(entity_types),
+        strong_entity_types=frozenset(strong_entity_types),
+        role_keyword_rules=_parse_role_keyword_rules(role_keyword_rules),
+        heading_role_keywords=_parse_role_keyword_rules(heading_role_keywords),
+        extractor_rules=_parse_extractor_rules(extractor_rules),
+        llm_templates=tuple(llm_templates),
+        semantic_roles=frozenset(semantic_roles),
+        retrieval_policy=_parse_retrieval_policy(retrieval_policy),
+        eval_questions=_parse_eval_questions(eval_questions),
     )
 
 
@@ -190,33 +288,72 @@ def _parse_domain_yaml(data: dict[str, Any]) -> DomainProfile:
 # Loader
 # ---------------------------------------------------------------------------
 
+def _resolve_scenario_pack(domain_id: str) -> str:
+    """Resolve domain_id to scenario_pack name via registry.
+
+    Falls back to domain_id itself if registry is unavailable.
+    """
+    try:
+        entry = resolve_domain(domain_id)
+        return entry["scenario_pack"]
+    except (FileNotFoundError, KeyError, ValueError):
+        # Fallback: assume scenario_pack == domain_id
+        return domain_id
+
+
 def load_domain_pack(domain_id: str, *, packs_root: Path | None = None) -> DomainProfile:
-    """Load a DomainProfile from a YAML directory.
+    """Load a DomainProfile from the unified scenario_packs directory.
+
+    Resolution order:
+    1. If packs_root is provided (for testing), use it directly
+    2. Otherwise, resolve via domain_registry.yaml → scenario_packs/<pack>/domain.yaml
+    3. Fallback: try legacy domain_packs/<domain_id>/domain.yaml
 
     Args:
-        domain_id: Domain pack directory name (e.g. "cloud_core_network").
+        domain_id: Domain identifier (e.g. "cloud_core_network").
         packs_root: Override root directory (for testing).
 
     Returns:
         Parsed DomainProfile.
 
     Raises:
-        FileNotFoundError: If domain pack directory or domain.yaml not found.
+        FileNotFoundError: If domain pack not found.
     """
-    root = packs_root or _PACKS_ROOT
-    yaml_path = root / domain_id / "domain.yaml"
+    if packs_root is not None:
+        # Explicit packs_root (testing or legacy usage)
+        yaml_path = packs_root / domain_id / "domain.yaml"
+        if not yaml_path.exists():
+            raise FileNotFoundError(
+                f"Domain pack not found: {yaml_path} "
+                f"(domain_id={domain_id!r}, packs_root={packs_root})"
+            )
+    else:
+        # New path: resolve via registry → scenario_packs
+        scenario_pack = _resolve_scenario_pack(domain_id)
+        yaml_path = _SCENARIO_PACKS_ROOT / scenario_pack / "domain.yaml"
 
-    if not yaml_path.exists():
-        raise FileNotFoundError(
-            f"Domain pack not found: {yaml_path} "
-            f"(domain_id={domain_id!r}, packs_root={root})"
-        )
+        if not yaml_path.exists():
+            # Fallback to legacy path
+            yaml_path = _LEGACY_PACKS_ROOT / domain_id / "domain.yaml"
+            if not yaml_path.exists():
+                raise FileNotFoundError(
+                    f"Domain pack not found for '{domain_id}'. "
+                    f"Searched: {_SCENARIO_PACKS_ROOT / scenario_pack / 'domain.yaml'}, "
+                    f"{_LEGACY_PACKS_ROOT / domain_id / 'domain.yaml'}"
+                )
+            warnings.warn(
+                f"Loading domain pack from legacy path: {yaml_path}. "
+                f"Please migrate to scenario_packs/.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     with open(yaml_path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
-    profile = _parse_domain_yaml(data)
-    logger.info("Loaded domain pack: %s (%s)", profile.display_name, profile.domain_id)
+    # domain_id is passed in, not read from file
+    profile = _parse_domain_yaml(data, domain_id)
+    logger.info("Loaded domain pack: %s (%s) from %s", profile.display_name, profile.domain_id, yaml_path)
     return profile
 
 

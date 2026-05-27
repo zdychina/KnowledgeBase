@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1/templates")
@@ -23,6 +23,7 @@ def _map_template_row(row) -> dict:
         "id": row["id"],
         "template_key": row["template_key"],
         "template_version": row["template_version"],
+        "knowledge_domain": row["knowledge_domain"],
         "purpose": row["purpose"],
         "system_prompt": row["system_prompt"],
         "user_prompt_template": row["user_prompt_template"],
@@ -36,6 +37,7 @@ def _map_template_row(row) -> dict:
 class TemplateCreateRequest(BaseModel):
     template_key: str
     template_version: str = "1"
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
     purpose: str
     system_prompt: str | None = None
     user_prompt_template: str
@@ -46,6 +48,7 @@ class TemplateCreateRequest(BaseModel):
 
 class TemplateUpdateRequest(BaseModel):
     template_version: str | None = None
+    knowledge_domain: str | None = Field(default=None, min_length=1, max_length=128)
     purpose: str | None = None
     system_prompt: str | None = None
     user_prompt_template: str | None = None
@@ -60,6 +63,7 @@ async def create_template(body: TemplateCreateRequest, request: Request):
     tpl_id = await svc._templates.create(
         template_key=body.template_key,
         template_version=body.template_version,
+        knowledge_domain=body.knowledge_domain,
         purpose=body.purpose,
         system_prompt=body.system_prompt,
         user_prompt_template=body.user_prompt_template,
@@ -72,15 +76,22 @@ async def create_template(body: TemplateCreateRequest, request: Request):
 
 
 @router.get("")
-async def list_templates(request: Request):
+async def list_templates(
+    request: Request,
+    domain: str | None = Query(default=None, description="Filter to domain templates plus global fallback"),
+):
     svc = request.app.state.llm_service
-    return [_map_template_row(r) for r in await svc._templates.list_all()]
+    return [_map_template_row(r) for r in await svc._templates.list_all(domain)]
 
 
 @router.get("/{template_key}")
-async def get_template(template_key: str, request: Request):
+async def get_template(
+    template_key: str,
+    request: Request,
+    domain: str | None = Query(default=None, description="Resolve domain-specific template with global fallback"),
+):
     svc = request.app.state.llm_service
-    tpl = await svc._templates.get_by_key(template_key)
+    tpl = await svc._templates.get_by_key(template_key, domain)
     if not tpl:
         raise HTTPException(status_code=404, detail="template not found")
     return _map_template_row(tpl)

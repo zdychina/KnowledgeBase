@@ -1,10 +1,12 @@
 """Segmentation module: split SectionNode tree into L0 RawSegmentData.
 
-v1.1 key points:
-- Headings become independent segments (block_type='heading') for section_header_of relations
+v1.2 key points:
+- Heading text is propagated via section_title on content segments (no independent heading segments)
+- Structural relations are built in relations stage from section_path hierarchy
 - structure_json preserves table columns/rows from ContentBlock.structure
 - source_offsets_json includes parser, block_index, line_start, line_end
 - Entity extraction and role classification are NOT done here — deferred to enrich stage
+- Post-processing merges small segments (<100 tokens) with adjacent intro+list/table pairs (Unstructured CompositeElement)
 """
 from __future__ import annotations
 
@@ -37,6 +39,21 @@ _SCHEMA_BLOCK_TYPES = {
     "html_table", "raw_html", "unknown",
 }
 
+# Merge thresholds — module-level named constants for discoverability
+_MERGE_MAX_TOKENS = 512
+_TABLE_MIN_INDEPENDENT_TOKENS = 300
+
+# Block type priority for merged segments (higher = dominant)
+_BLOCK_TYPE_PRIORITY: dict[str, int] = {
+    "table": 4, "html_table": 4,
+    "list": 3,
+    "code": 2,
+    "blockquote": 1,
+    "paragraph": 1,
+    "raw_html": 1,
+    "unknown": 0,
+}
+
 
 def segment_document(
     doc_root: SectionNode,
@@ -54,6 +71,7 @@ def segment_document(
     """
     segments: list[RawSegmentData] = []
     _walk_sections(doc_root, profile.document_key, [], segments, parser_name)
+    segments = _merge_small_segments(segments, min_tokens=100)
     return [
         RawSegmentData(
             document_key=s.document_key,
@@ -91,19 +109,9 @@ def _walk_sections(
     current_group: list[ContentBlock] = []
     block_index = 0
 
-    # Emit section title as an independent heading segment
-    if node.title and node.level and node.level > 0:
-        heading_block = ContentBlock(
-            block_type="heading", text=node.title, level=node.level,
-        )
-        segments.append(
-            _make_heading_segment(document_key, current_path, heading_block, block_index, parser_name)
-        )
-        block_index += 1
-
     for block in node.blocks:
         if block.block_type == "heading":
-            # v1.1: heading as independent segment
+            # Flush current group before starting new section
             if current_group:
                 segments.append(
                     _make_segment(
@@ -113,10 +121,8 @@ def _walk_sections(
                 )
                 block_index += 1
                 current_group = []
-            segments.append(
-                _make_heading_segment(document_key, current_path, block, block_index, parser_name)
-            )
-            block_index += 1
+            # Heading text is NOT emitted as a separate segment;
+            # it will appear as section_title on subsequent content segments.
         elif block.block_type in ("table", "html_table", "code", "list", "blockquote"):
             if current_group:
                 segments.append(
@@ -149,38 +155,89 @@ def _walk_sections(
         _walk_sections(child, document_key, current_path, segments, parser_name)
 
 
-def _make_heading_segment(
-    document_key: str,
-    section_path: list[dict[str, Any]],
-    block: ContentBlock,
-    block_index: int,
-    parser_name: str,
-) -> RawSegmentData:
-    """Create an independent heading segment for section_header_of relations."""
-    raw = block.text
-    offsets: dict[str, Any] = {"parser": parser_name, "block_index": block_index}
-    if block.line_start is not None:
-        offsets["line_start"] = block.line_start
-    if block.line_end is not None:
-        offsets["line_end"] = block.line_end
+def _merge_small_segments(
+    segments: list[RawSegmentData],
+    min_tokens: int = 100,
+) -> list[RawSegmentData]:
+    """Merge small segments into adjacent segments (Unstructured.io CompositeElement pattern).
 
-    return RawSegmentData(
-        document_key=document_key,
-        segment_index=0,
-        block_type="heading",
-        semantic_role="unknown",
-        section_path=section_path,
-        section_title=raw,
-        raw_text=raw,
-        normalized_text=raw.lower().strip(),
-        content_hash=content_hash(raw),
-        normalized_hash=normalized_hash(raw),
-        token_count=token_count(raw),
-        structure_json={},
-        source_offsets_json=offsets,
-        entity_refs_json=[],
-        metadata_json={"heading_level": block.level},
-    )
+    Rules:
+    1. Segments < min_tokens are candidates for merging
+    2. A short paragraph can merge with the following list/table in the same section
+       (intro paragraph + content list/table → single composite segment)
+    3. A short segment can also merge into the previous segment in the same section
+    4. Merged result must not exceed 512 tokens
+    5. Block type priority: table > list > paragraph
+    6. Tables > 300 tokens stay independent
+    """
+    if not segments:
+        return segments
+
+    merged: list[RawSegmentData] = [segments[0]]
+
+    for seg in segments[1:]:
+        prev = merged[-1]
+        same_section = seg.section_path == prev.section_path
+
+        if not same_section:
+            merged.append(seg)
+            continue
+
+        # Guard against None token_count — treat as 0 (very short, mergeable)
+        prev_tc = prev.token_count if prev.token_count is not None else 0
+        seg_tc = seg.token_count if seg.token_count is not None else 0
+
+        # Try merge: short prev-paragraph + current list/table (intro→content pattern)
+        intro_merge = (
+            prev.block_type == "paragraph"
+            and prev_tc < min_tokens
+            and seg.block_type in ("list", "table", "html_table")
+            and (prev_tc + seg_tc) <= _MERGE_MAX_TOKENS
+            and not (seg.block_type in ("table", "html_table") and seg_tc > _TABLE_MIN_INDEPENDENT_TOKENS)
+        )
+
+        # Try merge: short current segment into previous (paragraph/list only, never merge tables/code backward)
+        backward_merge = (
+            seg_tc < min_tokens
+            and seg.block_type not in ("table", "html_table", "code")
+            and (prev_tc + seg_tc) <= _MERGE_MAX_TOKENS
+            and prev.block_type not in ("table", "html_table", "code")
+        )
+
+        if intro_merge or backward_merge:
+            new_text = prev.raw_text + "\n\n" + seg.raw_text
+            # Block type priority: table > list > paragraph
+            new_block_type = _pick_block_type(prev.block_type, seg.block_type)
+            # Structure: merge both
+            new_structure = {**(prev.structure_json or {}), **(seg.structure_json or {})}
+            merged[-1] = RawSegmentData(
+                document_key=prev.document_key,
+                segment_index=0,  # re-indexed later
+                block_type=new_block_type,
+                semantic_role=prev.semantic_role,
+                section_path=prev.section_path,
+                section_title=prev.section_title,
+                raw_text=new_text,
+                normalized_text=new_text.lower().strip(),
+                content_hash=content_hash(new_text),
+                normalized_hash=normalized_hash(new_text),
+                token_count=token_count(new_text),
+                structure_json=new_structure,
+                source_offsets_json=prev.source_offsets_json,
+                entity_refs_json=prev.entity_refs_json,
+                metadata_json=prev.metadata_json,
+            )
+        else:
+            merged.append(seg)
+
+    return merged
+
+
+def _pick_block_type(a: str, b: str) -> str:
+    """Pick dominant block type using _BLOCK_TYPE_PRIORITY."""
+    pa = _BLOCK_TYPE_PRIORITY.get(a, 0)
+    pb = _BLOCK_TYPE_PRIORITY.get(b, 0)
+    return a if pa >= pb else b
 
 
 def _make_segment(

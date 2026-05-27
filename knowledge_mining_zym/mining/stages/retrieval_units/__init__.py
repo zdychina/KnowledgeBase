@@ -18,10 +18,10 @@ import re
 import uuid
 from typing import Any
 
-from knowledge_mining.mining.contracts.models import RawSegmentData, RetrievalUnitData
-from knowledge_mining.mining.contracts.protocols import QuestionGenerator, Contextualizer
-from knowledge_mining.mining.infra.text_utils import tokenize_for_search
-from knowledge_mining.mining.infra.domain_pack import DomainProfile, get_default_profile
+from knowledge_mining_zym.mining.contracts.models import RawSegmentData, RetrievalUnitData
+from knowledge_mining_zym.mining.contracts.protocols import QuestionGenerator, Contextualizer
+from knowledge_mining_zym.mining.infra.text_utils import tokenize_for_search
+from knowledge_mining_zym.mining.infra.domain_pack import DomainProfile, get_default_profile
 
 logger = logging.getLogger(__name__)
 
@@ -39,16 +39,6 @@ _QUESTIONWORTHY_ROLES = frozenset({
 # Question Generators
 # ---------------------------------------------------------------------------
 
-class NoOpQuestionGenerator:
-    """Default: no questions generated (LLM not connected)."""
-
-    def generate(self, segment: RawSegmentData) -> list[str]:
-        return []
-
-    def generate_batch(self, segments: list[RawSegmentData]) -> dict[str, list[str]]:
-        return {}
-
-
 class LlmQuestionGenerator:
     """LLM-backed question generation via llm_service HTTP API.
 
@@ -57,7 +47,7 @@ class LlmQuestionGenerator:
     """
 
     def __init__(self, base_url: str = "http://localhost:8900", timeout: int = 120, bypass_proxy: bool = False, profile: DomainProfile | None = None) -> None:
-        from knowledge_mining.mining.infra.llm_client import LlmClient
+        from knowledge_mining_zym.mining.infra.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._timeout = timeout
         self._last_task_ids: dict[str, str] = {}
@@ -136,13 +126,6 @@ class LlmQuestionGenerator:
 # Contextualizers
 # ---------------------------------------------------------------------------
 
-class NoOpContextualizer:
-    """Fallback: returns empty context descriptions."""
-
-    def contextualize(self, segments: list[RawSegmentData], document_text: str) -> dict[str, str]:
-        return {}
-
-
 class LLMContextualizer:
     """Anthropic-style contextual retrieval via LLM.
 
@@ -151,7 +134,7 @@ class LLMContextualizer:
     """
 
     def __init__(self, base_url: str = "http://localhost:8900", timeout: int = 120, bypass_proxy: bool = False) -> None:
-        from knowledge_mining.mining.infra.llm_client import LlmClient
+        from knowledge_mining_zym.mining.infra.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._timeout = timeout
         self._last_task_ids: dict[str, str] = {}
@@ -249,8 +232,8 @@ def build_retrieval_units(
     max_questions = profile.retrieval_policy.max_questions_per_segment
     max_entity_cards = profile.retrieval_policy.max_entity_cards_per_segment
 
-    qgen = question_generator or NoOpQuestionGenerator()
-    ctxer = contextualizer or NoOpContextualizer()
+    qgen = question_generator
+    ctxer = contextualizer
     units: list[RetrievalUnitData] = []
     seen_entity_cards: set[str] = set()
 
@@ -260,7 +243,6 @@ def build_retrieval_units(
     if qgen is not None:
         questionworthy = [s for s in segments if _is_questionworthy(s)]
         raw_question_map = qgen.generate_batch(questionworthy)
-        # v1.5: prune invalid questions from LLM output
         for seg_key, questions in raw_question_map.items():
             pruned = _prune_invalid_questions(questions)
             if pruned:
@@ -271,7 +253,7 @@ def build_retrieval_units(
     # Phase 1b: Batch-generate contextual descriptions (for search_text enrichment)
     context_map: dict[str, str] = {}
     ctxer_task_ids: dict[str, str] = {}
-    if profile.retrieval_policy.contextual_retrieval != "off":
+    if ctxer is not None and profile.retrieval_policy.contextual_retrieval != "off":
         document_text = "\n".join(s.raw_text for s in segments)
         try:
             context_map = ctxer.contextualize(

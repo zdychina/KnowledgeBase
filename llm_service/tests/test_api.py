@@ -13,7 +13,8 @@ async def test_submit_task(api_client):
     resp = await api_client.post(
         "/api/v1/tasks",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "test",
             "messages": [{"role": "user", "content": "hello"}],
         },
@@ -28,7 +29,8 @@ async def test_execute_task(api_client):
     resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "test",
             "messages": [{"role": "user", "content": '{"answer": 42}'}],
         },
@@ -42,7 +44,7 @@ async def test_execute_task(api_client):
 async def test_get_task(api_client):
     submit = await api_client.post(
         "/api/v1/tasks",
-        json={"caller_domain": "mining", "pipeline_stage": "test"},
+        json={"caller_service": "mining", "knowledge_domain": "cloud_core_network", "pipeline_stage": "test"},
     )
     task_id = submit.json()["task_id"]
     resp = await api_client.get(f"/api/v1/tasks/{task_id}")
@@ -53,7 +55,7 @@ async def test_get_task(api_client):
 async def test_cancel_task(api_client):
     submit = await api_client.post(
         "/api/v1/tasks",
-        json={"caller_domain": "mining", "pipeline_stage": "test"},
+        json={"caller_service": "mining", "knowledge_domain": "cloud_core_network", "pipeline_stage": "test"},
     )
     task_id = submit.json()["task_id"]
     resp = await api_client.post(f"/api/v1/tasks/{task_id}/cancel")
@@ -65,7 +67,8 @@ async def test_get_result_after_execute(api_client):
     exec_resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "serving",
+            "caller_service": "serving",
+            "knowledge_domain": "generic",
             "pipeline_stage": "search",
             "messages": [{"role": "user", "content": '{"name": "test"}'}],
         },
@@ -81,7 +84,8 @@ async def test_get_attempts_after_execute(api_client):
     exec_resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "test",
             "messages": [{"role": "user", "content": '{"ok": true}'}],
         },
@@ -98,7 +102,8 @@ async def test_get_events_after_execute(api_client):
     exec_resp = await api_client.post(
         "/api/v1/execute",
         json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
+            "knowledge_domain": "cloud_core_network",
             "pipeline_stage": "test",
             "messages": [{"role": "user", "content": '{"x": 1}'}],
         },
@@ -112,7 +117,8 @@ async def test_get_events_after_execute(api_client):
 
 async def test_idempotent_submit(api_client):
     payload = {
-        "caller_domain": "mining",
+        "caller_service": "mining",
+        "knowledge_domain": "cloud_core_network",
         "pipeline_stage": "test",
         "messages": [{"role": "user", "content": "hi"}],
         "idempotency_key": "unique-123",
@@ -127,6 +133,9 @@ async def test_embeddings_endpoint(api_client):
         "/api/v1/models/embeddings",
         json={
             "input": ["alpha", "beta"],
+            "caller_service": "serving",
+            "knowledge_domain": "cloud_core_network",
+            "pipeline_stage": "embedding",
         },
     )
     assert resp.status_code == 200
@@ -143,6 +152,9 @@ async def test_rerank_endpoint(api_client):
             "query": "how to configure amf",
             "documents": ["doc-a", "doc-b", "doc-c"],
             "top_n": 2,
+            "caller_service": "serving",
+            "knowledge_domain": "cloud_core_network",
+            "pipeline_stage": "rerank",
         },
     )
     assert resp.status_code == 200

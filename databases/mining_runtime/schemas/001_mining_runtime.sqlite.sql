@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS mining_run_stage_events (
             'parse',
             'segment',
             'enrich',
+            'commit_segments',
             'build_relations',
             'build_retrieval_units',
             'select_snapshot',

@@ -11,7 +11,7 @@ import json
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from knowledge_mining.mining.infra.domain_pack import DomainProfile
+    from knowledge_mining_zym.mining.infra.domain_pack import DomainProfile
 
 
 def build_templates_from_profile(profile: DomainProfile) -> list[dict[str, Any]]:
@@ -47,7 +47,7 @@ def build_templates_from_profile(profile: DomainProfile) -> list[dict[str, Any]]
 
 # Backward compatibility: default templates loaded from cloud_core_network pack
 def _load_default_templates() -> list[dict[str, Any]]:
-    from knowledge_mining.mining.infra.domain_pack import get_default_profile
+    from knowledge_mining_zym.mining.infra.domain_pack import get_default_profile
     return build_templates_from_profile(get_default_profile())
 
 

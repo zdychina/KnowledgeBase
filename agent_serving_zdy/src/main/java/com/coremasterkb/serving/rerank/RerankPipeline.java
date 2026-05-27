@@ -24,6 +24,9 @@ public class RerankPipeline {
     private static final double MIN_RERANK_SCORE = 0.01;
     private static final int DEFAULT_MAX_ITEMS = 10;
 
+    private static final Set<String> LOW_VALUE_UNIT_TYPES = Set.of("heading", "toc", "link");
+    private static final double LOW_VALUE_SCORE_FACTOR = 0.5;
+
     private final Reranker modelReranker;
     private final Reranker llmReranker;
     private final Reranker scoreReranker;
@@ -120,10 +123,16 @@ public class RerankPipeline {
 
         // === Unified post-processing ===
 
-        // 1. Annotate rerank scores into score_chain
+        // 1. Dedup: keep highest-scoring candidate per source_segment_id
+        result = deduplicateBySegment(result);
+
+        // 2. Downweight low-value unit types (heading / toc / link)
+        result = downweightLowValueTypes(result);
+
+        // 3. Annotate rerank scores into score_chain
         result = annotateRerankScores(result);
 
-        // 2. Minimum score threshold filter
+        // 4. Minimum score threshold filter
         int beforeFilter = result.size();
         result = result.stream()
                 .filter(c -> c.score() >= MIN_RERANK_SCORE)
@@ -136,13 +145,50 @@ public class RerankPipeline {
                     String.format("%.4f", minScore), String.format("%.4f", maxScore));
         }
 
-        // 3. Truncate to max_items
+        // 5. Truncate to max_items
         int maxItems = resolveMaxItems(routePlan);
         if (result.size() > maxItems) {
             result = result.subList(0, maxItems);
         }
 
         return new RerankResult(result, traces);
+    }
+
+    private List<RetrievalCandidate> deduplicateBySegment(List<RetrievalCandidate> candidates) {
+        Map<String, RetrievalCandidate> bestBySegment = new LinkedHashMap<>();
+        List<RetrievalCandidate> noSegment = new ArrayList<>();
+
+        for (RetrievalCandidate c : candidates) {
+            Object segId = c.metadata().get("source_segment_id");
+            if (segId != null) {
+                bestBySegment.merge(segId.toString(), c,
+                        (existing, incoming) -> incoming.score() > existing.score() ? incoming : existing);
+            } else {
+                noSegment.add(c);
+            }
+        }
+
+        int before = candidates.size();
+        List<RetrievalCandidate> merged = new ArrayList<>(bestBySegment.values());
+        merged.addAll(noSegment);
+        merged.sort(Comparator.comparingDouble(RetrievalCandidate::score).reversed());
+        if (merged.size() < before) {
+            log.debug("Segment dedup: {} -> {}", before, merged.size());
+        }
+        return merged;
+    }
+
+    private List<RetrievalCandidate> downweightLowValueTypes(List<RetrievalCandidate> candidates) {
+        return candidates.stream()
+                .map(c -> {
+                    Object unitType = c.metadata().get("unit_type");
+                    if (unitType != null && LOW_VALUE_UNIT_TYPES.contains(unitType.toString())) {
+                        return c.withScore(c.score() * LOW_VALUE_SCORE_FACTOR);
+                    }
+                    return c;
+                })
+                .sorted(Comparator.comparingDouble(RetrievalCandidate::score).reversed())
+                .collect(Collectors.toList());
     }
 
     private List<RetrievalCandidate> annotateRerankScores(List<RetrievalCandidate> candidates) {

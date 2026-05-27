@@ -21,33 +21,17 @@ from typing import Any
 from knowledge_mining.mining.contracts.models import RawSegmentData, RetrievalUnitData
 from knowledge_mining.mining.contracts.protocols import QuestionGenerator, Contextualizer
 from knowledge_mining.mining.infra.text_utils import tokenize_for_search
-from knowledge_mining.mining.infra.domain_pack import DomainProfile, get_default_profile
+from knowledge_mining.mining.infra.domain_pack import DomainProfile, RetrievalPolicy, get_default_profile
 
 logger = logging.getLogger(__name__)
 
-# Default values — overridden by DomainProfile.retrieval_policy
-_DEFAULT_MAX_QUESTIONS_PER_SEGMENT = 2
-
-# Semantic roles eligible for question generation (demo gate)
-_QUESTIONWORTHY_ROLES = frozenset({
-    "concept", "parameter", "procedure_step", "troubleshooting_step",
-    "example", "note",
-})
+# Default retrieval policy — used when no profile is provided
+_DEFAULT_POLICY = RetrievalPolicy()
 
 
 # ---------------------------------------------------------------------------
 # Question Generators
 # ---------------------------------------------------------------------------
-
-class NoOpQuestionGenerator:
-    """Default: no questions generated (LLM not connected)."""
-
-    def generate(self, segment: RawSegmentData) -> list[str]:
-        return []
-
-    def generate_batch(self, segments: list[RawSegmentData]) -> dict[str, list[str]]:
-        return {}
-
 
 class LlmQuestionGenerator:
     """LLM-backed question generation via llm_service HTTP API.
@@ -56,12 +40,13 @@ class LlmQuestionGenerator:
     Results are capped at MAX_QUESTIONS_PER_SEGMENT.
     """
 
-    def __init__(self, base_url: str = "http://localhost:8900", timeout: int = 120, bypass_proxy: bool = False, profile: DomainProfile | None = None) -> None:
+    def __init__(self, base_url: str = "http://localhost:8900", timeout: int = 120, bypass_proxy: bool = False, profile: DomainProfile | None = None, knowledge_domain: str | None = None) -> None:
         from knowledge_mining.mining.infra.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._timeout = timeout
         self._last_task_ids: dict[str, str] = {}
         self._profile = profile
+        self._knowledge_domain = knowledge_domain or (profile.domain_id if profile else None)
 
     def generate(self, segment: RawSegmentData) -> list[str]:
         """Single segment submit+poll (fallback)."""
@@ -73,7 +58,7 @@ class LlmQuestionGenerator:
                     "title": segment.section_title or "",
                     "content": segment.raw_text,
                 },
-                caller_domain="mining",
+                knowledge_domain=self._knowledge_domain,
                 pipeline_stage="retrieval_units",
                 expected_output_type="json_array",
             )
@@ -108,7 +93,7 @@ class LlmQuestionGenerator:
                     "title": seg.section_title or "",
                     "content": seg.raw_text,
                 },
-                caller_domain="mining",
+                knowledge_domain=self._knowledge_domain,
                 pipeline_stage="retrieval_units",
                 expected_output_type="json_array",
             )
@@ -136,13 +121,6 @@ class LlmQuestionGenerator:
 # Contextualizers
 # ---------------------------------------------------------------------------
 
-class NoOpContextualizer:
-    """Fallback: returns empty context descriptions."""
-
-    def contextualize(self, segments: list[RawSegmentData], document_text: str) -> dict[str, str]:
-        return {}
-
-
 class LLMContextualizer:
     """Anthropic-style contextual retrieval via LLM.
 
@@ -150,11 +128,12 @@ class LLMContextualizer:
     In v1.3, the context is folded into raw_text.search_text, NOT a separate unit.
     """
 
-    def __init__(self, base_url: str = "http://localhost:8900", timeout: int = 120, bypass_proxy: bool = False) -> None:
+    def __init__(self, base_url: str = "http://localhost:8900", timeout: int = 120, bypass_proxy: bool = False, knowledge_domain: str | None = None) -> None:
         from knowledge_mining.mining.infra.llm_client import LlmClient
         self._client = LlmClient(base_url=base_url, bypass_proxy=bypass_proxy)
         self._timeout = timeout
         self._last_task_ids: dict[str, str] = {}
+        self._knowledge_domain = knowledge_domain
 
     @property
     def last_task_ids(self) -> dict[str, str]:
@@ -188,7 +167,7 @@ class LLMContextualizer:
                     "document": doc_preview,
                     "segment": seg.raw_text[:500],
                 },
-                caller_domain="mining",
+                knowledge_domain=self._knowledge_domain,
                 pipeline_stage="contextual_retrieval",
                 expected_output_type="json_object",
             )
@@ -246,11 +225,12 @@ def build_retrieval_units(
         profile = get_default_profile()
 
     strong_types = profile.strong_entity_types
-    max_questions = profile.retrieval_policy.max_questions_per_segment
-    max_entity_cards = profile.retrieval_policy.max_entity_cards_per_segment
+    policy = profile.retrieval_policy
+    max_questions = policy.max_questions_per_segment
+    max_entity_cards = policy.max_entity_cards_per_segment
 
-    qgen = question_generator or NoOpQuestionGenerator()
-    ctxer = contextualizer or NoOpContextualizer()
+    qgen = question_generator
+    ctxer = contextualizer
     units: list[RetrievalUnitData] = []
     seen_entity_cards: set[str] = set()
 
@@ -258,7 +238,7 @@ def build_retrieval_units(
     question_map: dict[str, list[str]] = {}
     qgen_task_ids: dict[str, str] = {}
     if qgen is not None:
-        questionworthy = [s for s in segments if _is_questionworthy(s)]
+        questionworthy = [s for s in segments if _is_questionworthy(s, policy)]
         raw_question_map = qgen.generate_batch(questionworthy)
         # v1.5: prune invalid questions from LLM output
         for seg_key, questions in raw_question_map.items():
@@ -271,7 +251,7 @@ def build_retrieval_units(
     # Phase 1b: Batch-generate contextual descriptions (for search_text enrichment)
     context_map: dict[str, str] = {}
     ctxer_task_ids: dict[str, str] = {}
-    if profile.retrieval_policy.contextual_retrieval != "off":
+    if ctxer is not None and profile.retrieval_policy.contextual_retrieval != "off":
         document_text = "\n".join(s.raw_text for s in segments)
         try:
             context_map = ctxer.contextualize(
@@ -563,17 +543,17 @@ def _build_source_refs(seg: RawSegmentData, source_seg_id: str | None = None) ->
     return refs
 
 
-def _is_questionworthy(seg: RawSegmentData) -> bool:
-    """Minimal universal gate — not configurable, not domain-specific.
+def _is_questionworthy(seg: RawSegmentData, policy: RetrievalPolicy = _DEFAULT_POLICY) -> bool:
+    """Minimal universal gate — configurable via RetrievalPolicy.
 
-    Only skips segments that are universally not worth sending to LLM.
+    Only skips segments that are not worth sending to LLM.
     All content quality decisions are made BY the LLM, not by rules.
     """
     # Universal: headings are structural, not content
     if seg.block_type == "heading":
         return False
-    # Universal: too short to contain meaningful information
-    if seg.token_count is not None and seg.token_count < 10:
+    # Configurable: too short to contain meaningful information
+    if seg.token_count is not None and seg.token_count < policy.min_questionworthy_tokens:
         return False
     if len(seg.raw_text.strip()) < 15:
         return False
@@ -581,8 +561,8 @@ def _is_questionworthy(seg: RawSegmentData) -> bool:
     assessment = seg.metadata_json.get("content_assessment", {})
     if assessment and not assessment.get("is_substantive", True):
         return False
-    # Demo gate: only generate questions for certain semantic roles
-    if seg.semantic_role and seg.semantic_role not in _QUESTIONWORTHY_ROLES:
+    # Configurable: exclude non-questionworthy roles; "unknown" passes through
+    if seg.semantic_role in policy.not_questionworthy_roles:
         return False
     return True
 

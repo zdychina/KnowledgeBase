@@ -71,7 +71,7 @@ def run_data_quality_eval(
         asset_db_path: Path to asset_core.sqlite.
         golden_segment_hash: Golden regression segment hash.
     """
-    from knowledge_mining.mining.infra.db import AssetCoreDB
+    from knowledge_mining_zym.mining.infra.db import AssetCoreDB
 
     db = AssetCoreDB(asset_db_path)
     db.open()
@@ -284,8 +284,8 @@ def run_eval(
     k: int = 5,
 ) -> EvalReport:
     """Run retrieval evaluation against a domain pack's eval_questions."""
-    from knowledge_mining.mining.infra.db import AssetCoreDB
-    from knowledge_mining.mining.infra.text_utils import tokenize_for_search
+    from knowledge_mining_zym.mining.infra.db import AssetCoreDB
+    from knowledge_mining_zym.mining.infra.text_utils import tokenize_for_search
 
     questions = profile.eval_questions
     if not questions:
@@ -331,7 +331,7 @@ def _evaluate_question(
     k: int = 5,
 ) -> EvalResult:
     """Evaluate a single question against retrieval units."""
-    from knowledge_mining.mining.infra.text_utils import tokenize_for_search
+    from knowledge_mining_zym.mining.infra.text_utils import tokenize_for_search
 
     search_tokens = tokenize_for_search(question.question)
     if not search_tokens:

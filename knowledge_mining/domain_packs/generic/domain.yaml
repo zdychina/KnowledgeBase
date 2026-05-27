@@ -10,33 +10,9 @@ entity_types:
 
 strong_entity_types: []
 
-role_keyword_rules:
-  - keywords: ["parameter", "parameters", "参数"]
-    role: parameter
-  - keywords: ["example", "examples", "示例"]
-    role: example
-  - keywords: ["step", "steps", "procedure", "流程"]
-    role: procedure_step
-  - keywords: ["troubleshoot", "troubleshooting", "故障"]
-    role: troubleshooting_step
-  - keywords: ["constraint", "limitation", "限制"]
-    role: constraint
-  - keywords: ["overview", "introduction", "概述"]
-    role: concept
+role_keyword_rules: []
 
-heading_role_keywords:
-  - keywords: ["parameter", "parameters"]
-    role: parameter_definition
-  - keywords: ["example", "examples"]
-    role: example_section
-  - keywords: ["step", "steps", "procedure"]
-    role: procedure_section
-  - keywords: ["troubleshoot", "troubleshooting"]
-    role: troubleshooting_section
-  - keywords: ["constraint", "limitation"]
-    role: constraint_section
-  - keywords: ["overview", "introduction"]
-    role: overview_section
+heading_role_keywords: []
 
 extractor_rules: []
 

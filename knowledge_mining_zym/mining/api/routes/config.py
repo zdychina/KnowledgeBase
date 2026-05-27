@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from knowledge_mining.mining.infra.mining_config import MiningConfig
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+from knowledge_mining_zym.mining.infra.mining_config import MiningConfig
+from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -49,7 +49,7 @@ async def list_domain_packs(request: Request) -> dict:
 async def get_domain_pack(name: str, request: Request) -> dict:
     """Get domain pack details."""
     try:
-        from knowledge_mining.mining.infra.domain_pack import load_domain_pack
+        from knowledge_mining_zym.mining.infra.domain_pack import load_domain_pack
         profile = load_domain_pack(name)
         return {
             "name": name,
@@ -72,8 +72,8 @@ async def list_stages(request: Request) -> dict:
     stages = {
         "parse": {"1": "ParserStage"},
         "segment": {"1": "DefaultSegmenter"},
-        "enrich": {"1": "RuleBasedEnricher", "2": "LlmEnricher"},
-        "relations": {"1": "DefaultRelationBuilder"},
+        "enrich": {"2": "LlmEnricher"},
+        "discourse_relations": {"1": "DiscourseRelationBuilder"},
         "retrieval_units": {"1": "RetrievalUnitBuilder"},
     }
     return {"stages": stages}

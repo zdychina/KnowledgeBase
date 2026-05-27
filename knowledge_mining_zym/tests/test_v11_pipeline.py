@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from knowledge_mining.mining.contracts.models import (
+from knowledge_mining_zym.mining.contracts.models import (
     BatchParams,
     ContentBlock,
     DocumentProfile,
@@ -26,15 +26,15 @@ from knowledge_mining.mining.contracts.models import (
     VALID_SOURCE_TYPES,
     VALID_UNIT_TYPES,
 )
-from knowledge_mining.mining.infra.hash_utils import (
+from knowledge_mining_zym.mining.infra.hash_utils import (
     compute_raw_hash,
     compute_snapshot_hash,
     content_hash,
     normalize_for_snapshot,
     normalized_hash,
 )
-from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
-from knowledge_mining.mining.infra.text_utils import token_count, normalize_text, jaccard_similarity
+from knowledge_mining_zym.mining.infra.db import AssetCoreDB, MiningRuntimeDB
+from knowledge_mining_zym.mining.infra.text_utils import token_count, normalize_text, jaccard_similarity
 
 
 # ===================================================================
@@ -118,10 +118,11 @@ class TestModels:
 
 class TestAssetCoreDB:
     def test_source_batch_crud(self, asset_db):
-        asset_db.upsert_source_batch("b1", "BATCH-001", "folder_scan", "test")
+        asset_db.upsert_source_batch("b1", "BATCH-001", "folder_scan", domain="test_domain", description="test")
         b = asset_db.get_source_batch("b1")
         assert b["batch_code"] == "BATCH-001"
         assert b["source_type"] == "folder_scan"
+        assert b["domain"] == "test_domain"
 
     def test_document_upsert_idempotent(self, asset_db):
         asset_db.upsert_document("d1", "doc:/a.md", "a.md", "command")
@@ -137,21 +138,21 @@ class TestAssetCoreDB:
         assert s["raw_content_hash"] == "raw2"
 
     def test_build_and_release(self, asset_db):
-        asset_db.insert_build("b1", "B-001", "building", "full")
+        asset_db.insert_build("b1", "B-001", "building", "full", domain="test_domain")
         asset_db.update_build_status("b1", "validated")
-        asset_db.insert_release("r1", "R-001", "b1")
+        asset_db.insert_release("r1", "R-001", "b1", domain="test_domain")
         asset_db.activate_release("r1")
-        ar = asset_db.get_active_release()
+        ar = asset_db.get_active_release("test_domain")
         assert ar["status"] == "active"
 
     def test_release_chain(self, asset_db):
-        asset_db.insert_build("b1", "B-001", "validated", "full")
-        asset_db.insert_build("b2", "B-002", "validated", "full")
-        asset_db.insert_release("r1", "R-001", "b1")
+        asset_db.insert_build("b1", "B-001", "validated", "full", domain="test_domain")
+        asset_db.insert_build("b2", "B-002", "validated", "full", domain="test_domain")
+        asset_db.insert_release("r1", "R-001", "b1", domain="test_domain")
         asset_db.activate_release("r1")
-        asset_db.insert_release("r2", "R-002", "b2", previous_release_id="r1")
+        asset_db.insert_release("r2", "R-002", "b2", domain="test_domain", previous_release_id="r1")
         asset_db.activate_release("r2")
-        ar = asset_db.get_active_release()
+        ar = asset_db.get_active_release("test_domain")
         assert ar["release_code"] == "R-002"
         assert ar["previous_release_id"] == "r1"
 
@@ -200,7 +201,7 @@ class TestMiningRuntimeDB:
             id="rd2", run_id="r1", document_key="doc:/b.md",
             raw_content_hash="h2", action="NEW", status="failed",
         ))
-        from knowledge_mining.mining.runtime import RuntimeTracker
+        from knowledge_mining_zym.mining.runtime import RuntimeTracker
         tracker = RuntimeTracker(runtime_db)
         plan = tracker.build_resume_plan("r1")
         assert "doc:/a.md" in plan.skip_document_keys
@@ -234,7 +235,7 @@ class TestHashUtils:
 
 class TestIngestion:
     def test_discover_files(self, input_dir):
-        from knowledge_mining.mining.ingestion import ingest_directory
+        from knowledge_mining_zym.mining.ingestion import ingest_directory
         docs, summary = ingest_directory(input_dir)
         assert len(docs) == 2
         assert summary["parsed_documents"] == 2
@@ -242,7 +243,7 @@ class TestIngestion:
 
     def test_skip_unrecognized(self, tmp_dir):
         (tmp_dir / "skip.xyz").write_text("data")
-        from knowledge_mining.mining.ingestion import ingest_directory
+        from knowledge_mining_zym.mining.ingestion import ingest_directory
         docs, summary = ingest_directory(tmp_dir)
         assert len(docs) == 0
         assert summary["skipped_files"] == 1
@@ -250,13 +251,13 @@ class TestIngestion:
 
 class TestStructure:
     def test_parse_heading_tree(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
         tree = parse_structure(md_content)
         assert tree.title == "Test Command"
         assert any(c.title == "Parameters" for c in tree.children)
 
     def test_table_structure(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
         tree = parse_structure(md_content)
         all_blocks = _collect_blocks(tree)
         tables = [b for b in all_blocks if b.block_type == "table"]
@@ -267,16 +268,16 @@ class TestStructure:
 
 class TestSegmentation:
     def test_heading_segments(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.stages.segment import segment_document
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         headings = [s for s in segments if s.block_type == "heading"]
         assert len(headings) >= 4
 
     def test_segment_hashes(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.stages.segment import segment_document
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
         for seg in segments:
@@ -284,104 +285,18 @@ class TestSegmentation:
             assert seg.normalized_hash, f"Missing normalized_hash"
 
 
-class TestExtractors:
-    def test_command_extraction(self):
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
-        ext = RuleBasedEntityExtractor()
-        refs = ext.extract('ADD APN command for SMF network element', {})
-        types = {r["type"] for r in refs}
-        assert "command" in types
-        assert "network_element" in types
-
-    def test_interface_extraction(self):
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
-        ext = RuleBasedEntityExtractor()
-        refs = ext.extract('配置N4接口，使用PFCP协议建立连接。Sxb接口也需要配置。', {})
-        names = {r["name"] for r in refs if r["type"] == "interface"}
-        assert "N4" in names
-        assert "Sxb" in names
-
-    def test_alarm_extraction(self):
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor
-        ext = RuleBasedEntityExtractor()
-        refs = ext.extract('告警ALM-PFCP-PEER-DOWN需要处理，还有ALM-POOL-THRESHOLD。', {})
-        names = {r["name"] for r in refs if r["type"] == "alarm"}
-        assert "ALM-PFCP-PEER-DOWN" in names
-        assert "ALM-POOL-THRESHOLD" in names
-
-    def test_role_classifier(self):
-        from knowledge_mining.mining.infra.extractors import DefaultRoleClassifier
-        cls = DefaultRoleClassifier()
-        assert cls.classify("", "参数说明", "paragraph", {}) == "parameter"
-        assert cls.classify("", "使用实例", "paragraph", {}) == "example"
-
-
 # ===================================================================
 # T8-T12: Pipeline Modules
 # ===================================================================
 
-class TestEnrich:
-    def test_enrich_adds_metadata(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.enrich import enrich_segments
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        enriched = enrich_segments(
-            segments,
-            entity_extractor=RuleBasedEntityExtractor(),
-            role_classifier=DefaultRoleClassifier(),
-        )
-        assert len(enriched) == len(segments)
-        headings = [s for s in enriched if s.block_type == "heading"]
-        for h in headings:
-            assert "heading_role" in h.metadata_json
-        non_headings = [s for s in enriched if s.block_type != "heading"]
-        roles = {s.semantic_role for s in non_headings}
-        assert len(roles - {"unknown"}) > 0
-
-
-class TestRelations:
-    def test_build_relations(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.relations import build_relations
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        relations, seg_ids = build_relations(segments)
-        assert len(relations) > 0
-        types = {r.relation_type for r in relations}
-        assert "previous" in types
-        assert "section_header_of" in types
-
-    def test_section_header_of_only_from_heading(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.relations import build_relations
-        tree = parse_structure(md_content)
-        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        relations, seg_ids = build_relations(segments)
-        header_rels = [r for r in relations if r.relation_type == "section_header_of"]
-        heading_keys = {_make_key(s) for s in segments if s.block_type == "heading"}
-        for rel in header_rels:
-            assert rel.source_segment_key in heading_keys
-
 
 class TestRetrievalUnits:
     def test_build_units(self, md_content):
-        from knowledge_mining.mining.infra.structure import parse_structure
-        from knowledge_mining.mining.stages.segment import segment_document
-        from knowledge_mining.mining.stages.enrich import enrich_segments
-        from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
-        from knowledge_mining.mining.infra.extractors import RuleBasedEntityExtractor, DefaultRoleClassifier
+        from knowledge_mining_zym.mining.infra.structure import parse_structure
+        from knowledge_mining_zym.mining.stages.segment import segment_document
+        from knowledge_mining_zym.mining.stages.retrieval_units import build_retrieval_units
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
-        segments = enrich_segments(
-            segments,
-            entity_extractor=RuleBasedEntityExtractor(),
-            role_classifier=DefaultRoleClassifier(),
-        )
         units = build_retrieval_units(segments)
         types = {u.unit_type for u in units}
         assert "raw_text" in types
@@ -394,7 +309,7 @@ class TestRetrievalUnits:
 
     def test_source_refs_with_segment_id(self):
         """source_refs_json should include raw_segment_ids when source_seg_id provided."""
-        from knowledge_mining.mining.stages.retrieval_units import _build_source_refs
+        from knowledge_mining_zym.mining.stages.retrieval_units import _build_source_refs
         seg = RawSegmentData(
             document_key="doc:/a.md", segment_index=3,
             source_offsets_json={"start": 10, "end": 50},
@@ -406,14 +321,14 @@ class TestRetrievalUnits:
 
     def test_source_refs_without_segment_id(self):
         """source_refs_json should have empty raw_segment_ids when source_seg_id is None."""
-        from knowledge_mining.mining.stages.retrieval_units import _build_source_refs
+        from knowledge_mining_zym.mining.stages.retrieval_units import _build_source_refs
         seg = RawSegmentData(document_key="doc:/a.md", segment_index=1)
         refs = _build_source_refs(seg)
         assert refs["raw_segment_ids"] == []
 
     def test_generated_question_unit_has_task_id(self):
         """llm_result_refs_json should include task_id from LLM."""
-        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
+        from knowledge_mining_zym.mining.stages.retrieval_units import _make_generated_question_unit
         seg = RawSegmentData(document_key="doc:/a.md", segment_index=0, raw_text="test content")
         unit = _make_generated_question_unit(seg, "What is X?", 0, "seg-1", "task-abc-123")
         assert unit.llm_result_refs_json["task_id"] == "task-abc-123"
@@ -423,7 +338,7 @@ class TestRetrievalUnits:
 
 class TestSnapshot:
     def test_select_or_create(self, asset_db):
-        from knowledge_mining.mining.snapshot import select_or_create_snapshot
+        from knowledge_mining_zym.mining.snapshot import select_or_create_snapshot
         doc = RawFileData(
             file_path="/test/a.md", relative_path="a.md", file_name="a.md",
             file_type="markdown", content="# Hello", raw_content_hash="rh1",
@@ -437,7 +352,7 @@ class TestSnapshot:
 
 class TestPublishing:
     def test_assemble_and_publish(self, asset_db):
-        from knowledge_mining.mining.stages.publishing import assemble_build, publish_release
+        from knowledge_mining_zym.mining.stages.publishing import assemble_build, publish_release
         asset_db.upsert_document("d1", "doc:/a.md", "a.md")
         asset_db.upsert_snapshot("s1", "nh1", "rh1", "text/markdown")
         asset_db.insert_raw_segment(
@@ -450,14 +365,14 @@ class TestPublishing:
         )
         asset_db.commit()
 
-        build_id = assemble_build(asset_db, run_id="r1", snapshot_decisions=[
+        build_id = assemble_build(asset_db, domain="test_domain", run_id="r1", snapshot_decisions=[
             {"document_id": "d1", "document_snapshot_id": "s1", "reason": "add", "selection_status": "active"},
         ])
         build = asset_db.get_build(build_id)
         assert build["status"] == "validated"
 
-        release_id = publish_release(asset_db, build_id)
-        release = asset_db.get_active_release()
+        release_id = publish_release(asset_db, build_id, domain="test_domain")
+        release = asset_db.get_active_release("test_domain")
         assert release["id"] == release_id
 
 
@@ -467,8 +382,8 @@ class TestPublishing:
 
 def _make_db(cls):
     """Create a PG-backed database adapter for testing."""
-    from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-    from knowledge_mining.mining.infra.pg_schema import ensure_schema
+    from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
 
@@ -483,7 +398,7 @@ def _make_db(cls):
 
 class TestEndToEndPipeline:
     def test_full_pipeline(self, input_dir, tmp_dir):
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
         result = run(str(input_dir))
         assert result["status"] == "completed"
         assert result["committed_count"] == 2
@@ -491,24 +406,25 @@ class TestEndToEndPipeline:
         assert result["release_id"] is not None
 
     def test_phase1_only(self, input_dir, tmp_dir):
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
         result = run(str(input_dir), phase1_only=True)
         assert result["status"] == "completed"
         assert result["build_id"] is None
         assert result["release_id"] is None
 
     def test_publish_after_phase1(self, input_dir, tmp_dir):
-        from knowledge_mining.mining.jobs.run import run, publish
+        from knowledge_mining_zym.mining.jobs.run import run, publish
         result = run(str(input_dir))
         assert result["release_id"] is not None
         db = _make_db(AssetCoreDB)
-        ar = db.get_active_release()
+        # MiningConfig default domain_pack is "cloud_core_network"; run() loads it as the profile.
+        ar = db.get_active_release("cloud_core_network")
         assert ar is not None
         db.close()
 
     def test_stage_events_recorded(self, input_dir, tmp_dir):
         """Verify stage events are recorded for each document."""
-        from knowledge_mining.mining.jobs.run import run
+        from knowledge_mining_zym.mining.jobs.run import run
         result = run(str(input_dir))
         rdb = _make_db(MiningRuntimeDB)
         events = rdb.get_stage_events(result["run_id"])

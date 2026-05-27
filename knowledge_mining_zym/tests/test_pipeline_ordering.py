@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from knowledge_mining.mining.pipeline import (
+from knowledge_mining_zym.mining.pipeline import (
     DocumentContext, StreamingPipeline,
 )
 

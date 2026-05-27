@@ -2,23 +2,70 @@
 # General-purpose knowledge base with no domain-specific command vocabulary.
 # Used as a fallback or for non-5G content.
 
-entity_types:
-  - concept
-  - term
-  - parameter
+display_name: "Generic"
 
-strong_entity_types: []
+# ===========================================================================
+# ONTOLOGY — shared entity taxonomy
+# ===========================================================================
 
-extractor_rules: []
+ontology:
+  entity_types:
+    - concept
+    - term
+    - parameter
+
+  strong_entity_types: []
+
+# ===========================================================================
+# MINING — domain-specific mining pipeline configuration
+# ===========================================================================
+
+mining:
+  # Semantic roles for this domain (generic — broad roles)
+  semantic_roles:
+    - concept
+    - parameter
+    - example
+    - note
+    - procedure_step
+    - constraint
+
+  role_keyword_rules: []
+  heading_role_keywords: []
+  extractor_rules: []
+
+  retrieval_policy:
+    raw_text: primary
+    generated_question: auxiliary
+    entity_card: "off"
+    table_row: "off"
+    max_questions_per_segment: 2
+    max_entity_cards_per_segment: 0
+    contextual_retrieval: "off"
+    min_confidence: 0.5
+    max_distance: 5
+    discourse_window_size: 15
+    min_questionworthy_tokens: 50
+    not_questionworthy_roles:
+      - navigation
+      - toc
+      - metadata
+
+  eval_questions:
+    - id: q001
+      question: "什么是 PDU 会话？"
+    - id: q002
+      question: "如何查询系统当前配置？"
+    - id: q003
+      question: "系统连接失败怎么处理？"
+
+# ===========================================================================
+# SERVING
+# ===========================================================================
 
 serving:
-  # No command_regex / op_map / network_elements / products overrides —
-  # the engine's built-in defaults are appropriate for generic content.
   query_understanding: {}
 
-  # Balanced route policy: no strong prior on retrieval strategy.
-  # Dense vector slightly preferred for concept and comparison queries
-  # where semantic similarity matters more than keyword overlap.
   route_policy:
     default:
       lexical_bm25:
@@ -30,17 +77,6 @@ serving:
       entity_exact:
         weight: 0.6
         top_k: 15
-
-    command_usage:
-      lexical_bm25:
-        weight: 1.2
-        top_k: 50
-      entity_exact:
-        weight: 1.0
-        top_k: 20
-      dense_vector:
-        weight: 0.6
-        top_k: 30
 
     concept_lookup:
       dense_vector:
@@ -107,11 +143,3 @@ serving:
       entity_exact:
         weight: 0.6
         top_k: 15
-
-eval_questions:
-  - question: "什么是 PDU 会话？"
-    intent: concept_lookup
-  - question: "如何查询系统当前配置？"
-    intent: command_usage
-  - question: "系统连接失败怎么处理？"
-    intent: troubleshooting

@@ -1,13 +1,7 @@
-# Cloud Core Network Domain Pack
-# Migrated from hardcoded values in extractors.py, llm_templates.py, enrich/__init__.py, models.py
-
 domain_id: cloud_core_network
 display_name: "Cloud Core Network (5GC/UDG)"
 
-# ---------------------------------------------------------------------------
-# Entity configuration
-# ---------------------------------------------------------------------------
-
+# Entity types recognized by the LLM enricher
 entity_types:
   - command
   - network_element
@@ -18,105 +12,37 @@ entity_types:
   - feature
   - concept
 
+# Only these types get entity_card retrieval units
 strong_entity_types:
   - command
   - network_element
   - parameter
   - protocol
-  - interface
-  - alarm
-  - feature
 
-# ---------------------------------------------------------------------------
-# Semantic role mapping: section title keywords -> core semantic_role
-# ---------------------------------------------------------------------------
+# Role keyword rules for role classification (unused after rule-based removal, kept for reference)
+role_keyword_rules: []
 
-role_keyword_rules:
-  - keywords: ["参数", "参数说明", "参数标识"]
-    role: parameter
-  - keywords: ["使用实例", "命令格式", "示例", "配置示例"]
-    role: example
-  - keywords: ["操作步骤", "流程", "检查项", "前置检查", "checklist"]
-    role: procedure_step
-  - keywords: ["排障", "故障", "troubleshoot"]
-    role: troubleshooting_step
-  - keywords: ["注意事项", "限制", "约束", "constraint"]
-    role: constraint
-  - keywords: ["概述", "简介"]
-    role: concept
+# Heading role keywords (unused after rule-based removal, kept for reference)
+heading_role_keywords: []
 
-# ---------------------------------------------------------------------------
-# Heading role classification: heading keywords -> heading role
-# ---------------------------------------------------------------------------
+# Extractor rules (unused after rule-based removal, kept for reference)
+extractor_rules: []
 
-heading_role_keywords:
-  - keywords: ["参数", "参数说明", "参数标识"]
-    role: parameter_definition
-  - keywords: ["使用实例", "示例", "配置示例"]
-    role: example_section
-  - keywords: ["操作步骤", "流程", "检查项"]
-    role: procedure_section
-  - keywords: ["排障", "故障"]
-    role: troubleshooting_section
-  - keywords: ["注意事项", "限制", "约束"]
-    role: constraint_section
-  - keywords: ["概述", "简介", "功能"]
-    role: overview_section
-
-# ---------------------------------------------------------------------------
-# Rule-based extractors (regex)
-# ---------------------------------------------------------------------------
-
-extractor_rules:
-  - name: network_function
-    pattern: "\\b(SMF|UPF|AMF|PCF|UDM|UDR|AUSF|NRF|NSSF|BSF|CHF|SMSF|LMF|GMLC|NEF|SCF)\\b"
-    entity_type: network_element
-
-  - name: command
-    pattern: "\\b(ADD|SHOW|MOD|DEL|DSP|LST|REG|DEREG|SET|GET|CFG|ACT|DEACT|CLR|PRT)\\s+([A-Z][A-Z0-9_]{1,20})"
-    entity_type: command
-    groups:
-      - index: 0
-        format: "{group1} {group2}"
-
-  - name: interface
-    pattern: "(?<![A-Za-z0-9_])(N[1-9]\\d?|N1[0-9]\\d?|N2[0-8]|Sx[abc]|S1[ -](?:MME|U)|S6a|S11|Gx)(?![A-Za-z0-9_])"
-    entity_type: interface
-
-  - name: alarm
-    pattern: "(?<![A-Za-z0-9_])(ALM-[A-Z][A-Z0-9_-]{2,40})(?![A-Za-z0-9_-])"
-    entity_type: alarm
-
-# ---------------------------------------------------------------------------
-# Table parameter column names (used by entity extractor for table segments)
-# ---------------------------------------------------------------------------
-
-# These are handled in code as structural extraction, not regex.
-# The RuleBasedEntityExtractor reads table structure["columns"] and
-# extracts parameter names from columns matching these names.
+# Parameter column names for table enrichment (unused after rule-based removal)
 parameter_column_names:
-  - "参数标识"
-  - "参数名称"
-  - "参数名"
+  - 参数名
+  - 参数
+  - Parameter
+  - Name
 
-# ---------------------------------------------------------------------------
-# Section-title command pattern (used by _add_section_context_entities)
-# ---------------------------------------------------------------------------
-
-section_title_command_pattern: "^(ADD|SHOW|MOD|DEL|DSP|LST|REG|DEREG)\\s+(\\S+)"
-
-# ---------------------------------------------------------------------------
 # Retrieval policy
-# ---------------------------------------------------------------------------
-
 retrieval_policy:
-  raw_text: primary
-  generated_question: auxiliary
-  entity_card: "off"
-  table_row: "off"
   max_questions_per_segment: 2
-  max_entity_cards_per_segment: 0
-  contextual_retrieval: "off"
+  max_entity_cards_per_segment: 3
+  entity_card: strong_entities_only
+  table_row: structured_tables
+  generated_question: auxiliary
+  contextual_retrieval: on
 
 # ---------------------------------------------------------------------------
 # LLM templates
@@ -191,7 +117,7 @@ llm_templates:
     output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
 
   - template_key: mining-discourse-relation
-    template_version: "1"
+    template_version: "2"
     purpose: "分析段落间的语篇关系（RST修辞结构理论）"
     system_prompt: "你是通信网络技术文档的语篇关系分析专家。分析给定段落列表中相邻段落之间的修辞关系。"
     user_prompt_template: >
@@ -199,31 +125,28 @@ llm_templates:
 
       $segments
 
-      对每对相邻或同节段落，判断其修辞关系。可选关系类型：
-      - ELABORATES: 后文详细阐述前文
-      - EVIDENCES: 后文提供证据支持前文
-      - CAUSES: 后文是前文的原因
-      - RESULTS_IN: 后文是前文的结果
-      - BACKGROUNDS: 后文提供背景信息
-      - CONDITIONS: 后文说明前提条件
-      - SUMMARIZES: 后文总结前文
-      - JUSTIFIES: 后文解释前文的理由
-      - ENABLES: 后文使前文的操作成为可能
-      - CONTRASTS_WITH: 后文与前文对比
-      - PARALLELS: 后文与前文并列
-      - SEQUENCES: 后文是前文的后续步骤
-      - UNRELATED: 无明显关系
+      对每对相邻或同节段落，判断其修辞关系。从以下关系类型中选择最合适的一种：
+      - ELABORATION: 后段对前段进行详述/展开（典型标志词：具体来说、其中、包括）
+      - SEQUENCE: 两段按时间/步骤顺序排列（典型标志词：然后、接下来、步骤N）
+      - CAUSATION: 前段是后段的原因或结果（典型标志词：因此、导致、由于）
+      - EVIDENCE: 后段为前段提供证据/依据（典型标志词：例如、数据显示、根据）
+      - BACKGROUND: 前段为后段提供背景知识（典型标志词：背景是、目前、现状）
+      - EXEMPLIFICATION: 后段是前段的具体例子（典型标志词：比如、以X为例）
+      - CONTRAST: 两段形成对比或转折（典型标志词：但是、相比之下、而）
+      - CONCESSION: 承认一方观点但强调另一方（典型标志词：虽然、尽管、即使）
+      - CONDITION: 前段是后段的触发条件（典型标志词：如果、当...时、前提是）
+      - PURPOSE: 后段说明前段操作的目的/意图（典型标志词：为了、目的是、以便）
 
       输出 JSON 数组，每个元素包含：
       - source: 源段落编号（整数）
       - target: 目标段落编号（整数）
-      - relation: 关系类型（大写）
+      - relation: 关系类型（大写，从上述10种中选择）
       - confidence: 置信度（0.0-1.0）
 
-      只输出有明确关系的段落对，跳过 UNRELATED 的。
+      只输出有明确关系的段落对，无明显关系的跳过。
 
       输出示例（仅供参考格式，请根据实际内容生成）：
-      [{"source": 1, "target": 2, "relation": "ELABORATES", "confidence": 0.9}]
+      [{"source": 1, "target": 2, "relation": "ELABORATION", "confidence": 0.9}]
     expected_output_type: json_array
     output_schema_json: '{"type":"array","items":{"type":"object","properties":{"source":{"type":"integer"},"target":{"type":"integer"},"relation":{"type":"string"},"confidence":{"type":"number","minimum":0.0,"maximum":1.0}},"required":["source","target","relation","confidence"],"additionalProperties":false}}'
 

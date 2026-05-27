@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from knowledge_mining.mining.contracts.models import ContentBlock, DocumentProfile, RawSegmentData, SectionNode
-from knowledge_mining.mining.infra.hash_utils import content_hash, normalized_hash
-from knowledge_mining.mining.infra.text_utils import token_count
+from knowledge_mining_zym.mining.contracts.models import ContentBlock, DocumentProfile, RawSegmentData, SectionNode
+from knowledge_mining_zym.mining.infra.hash_utils import content_hash, normalized_hash
+from knowledge_mining_zym.mining.infra.text_utils import token_count
 
 
 class DefaultSegmenter:

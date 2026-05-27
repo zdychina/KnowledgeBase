@@ -15,7 +15,7 @@ from queue import Queue
 from threading import Thread
 from typing import Any, Callable
 
-from knowledge_mining.mining.contracts.models import (
+from knowledge_mining_zym.mining.contracts.models import (
     DocumentProfile,
     RawFileData,
     RawSegmentData,
@@ -23,7 +23,7 @@ from knowledge_mining.mining.contracts.models import (
     SectionNode,
     SegmentRelationData,
 )
-from knowledge_mining.mining.contracts.protocols import Segmenter, RelationBuilder
+from knowledge_mining_zym.mining.contracts.protocols import Segmenter
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,6 @@ class PipelineConfig:
     parser_factory: Callable[[str], Any] = field(default=None)
     segmenter: Segmenter | None = None
     enricher: Any | None = None  # Enricher Protocol
-    relation_builder: RelationBuilder | None = None
     question_generator: Any | None = None  # QuestionGenerator Protocol
     embedding_generator: Any | None = None  # EmbeddingGenerator Protocol
     discourse_relation_builder: Any | None = None  # DiscourseRelationBuilder
@@ -131,7 +130,7 @@ class MiningPipeline:
         parser = cfg.parser_factory(raw.file_type) if cfg.parser_factory else None
         if parser is None:
             return ctx
-        tree = parser.parse(raw.content, raw.file_name, {})
+        tree = parser.parse(raw.content, raw.file_name, {"file_path": raw.file_path})
         ctx = ctx.with_updates(tree=tree)
 
         if tree is None:
@@ -157,32 +156,25 @@ class MiningPipeline:
             enriched = enricher.enrich_batch(list(ctx.segments))
             ctx = ctx.with_updates(segments=tuple(enriched))
 
-        # Stage 4: Build relations
-        if stage_callback:
-            stage_callback("build_relations", ctx)
-        rb = cfg.relation_builder
-        if rb is not None and ctx.segments:
-            relations, seg_ids = rb.build(list(ctx.segments))
-            ctx = ctx.with_updates(
-                relations=tuple(relations),
-                seg_ids=seg_ids,
-            )
+        # Stage 4: Assign segment UUIDs
+        if ctx.segments:
+            from knowledge_mining_zym.mining.stages.relations import build_seg_ids
+            ctx = ctx.with_updates(seg_ids=build_seg_ids(list(ctx.segments)))
 
         # Stage 4b: Build discourse relations (LLM-driven RST analysis)
         drb = cfg.discourse_relation_builder
-        if drb is not None and ctx.segments and ctx.seg_ids:
+        if drb is not None and ctx.segments:
             if stage_callback:
                 stage_callback("discourse_relations", ctx)
-            extra_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
-            if extra_relations:
-                all_relations = list(ctx.relations) + extra_relations
-                ctx = ctx.with_updates(relations=tuple(all_relations))
+            discourse_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
+            if discourse_relations:
+                ctx = ctx.with_updates(relations=tuple(discourse_relations))
 
         # Stage 5: Build retrieval units
         if stage_callback:
             stage_callback("build_retrieval_units", ctx)
         if ctx.segments:
-            from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
+            from knowledge_mining_zym.mining.stages.retrieval_units import build_retrieval_units
             units = build_retrieval_units(
                 list(ctx.segments),
                 seg_ids=ctx.seg_ids,
@@ -241,6 +233,11 @@ def _worker(
             result = fn(item)
         except Exception as e:
             err_msg = str(e)[:500]
+            # 同时把异常打到 stderr，便于控制台直接看到失败原因（不止落 DB）
+            logger.exception(
+                "stage=%s failed for run_document_id=%s: %s",
+                stage_name, rd_id, err_msg,
+            )
             if evt_id is not None:
                 try:
                     tracker.end_stage(evt_id, run_id, stage_name,
@@ -328,17 +325,28 @@ def parse_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     parser = cfg.parser_factory(raw.file_type) if cfg.parser_factory else None
     if parser is None:
         return ctx
-    tree = parser.parse(raw.content, raw.file_name, {})
+    tree = parser.parse(raw.content, raw.file_name, {"file_path": raw.file_path})
     return ctx.with_updates(tree=tree)
 
 
 def segment_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
-    """Stage 2: Segment tree into raw segments."""
+    """Stage 2: Segment tree into raw segments + assign stable seg UUIDs.
+
+    seg_ids are computed here (not in a separate stage) because the work is
+    trivial in-memory work and the DB CHECK constraint on stage_events does
+    not allocate a slot for a standalone 'seg_ids' stage.
+    """
     seg = cfg.segmenter
     if seg is None or ctx.tree is None or ctx.profile is None:
         return ctx
     segments = seg.segment(ctx.tree, ctx.profile)
-    return ctx.with_updates(segments=tuple(segments))
+    if not segments:
+        return ctx.with_updates(segments=tuple(segments))
+    from knowledge_mining_zym.mining.stages.relations import build_seg_ids
+    return ctx.with_updates(
+        segments=tuple(segments),
+        seg_ids=build_seg_ids(list(segments)),
+    )
 
 
 def enrich_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
@@ -350,24 +358,14 @@ def enrich_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     return ctx.with_updates(segments=tuple(enriched))
 
 
-def relations_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
-    """Stage 4: Build structural relations."""
-    rb = cfg.relation_builder
-    if rb is None or not ctx.segments:
-        return ctx
-    relations, seg_ids = rb.build(list(ctx.segments))
-    return ctx.with_updates(relations=tuple(relations), seg_ids=seg_ids)
-
-
 def discourse_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     """Stage 4b: Build discourse relations (LLM-driven RST analysis)."""
     drb = cfg.discourse_relation_builder
-    if drb is None or not ctx.segments or not ctx.seg_ids:
+    if drb is None or not ctx.segments:
         return ctx
-    extra_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
-    if extra_relations:
-        all_relations = list(ctx.relations) + extra_relations
-        return ctx.with_updates(relations=tuple(all_relations))
+    discourse_relations = drb.build(list(ctx.segments), seg_ids=ctx.seg_ids)
+    if discourse_relations:
+        return ctx.with_updates(relations=tuple(discourse_relations))
     return ctx
 
 
@@ -375,7 +373,7 @@ def retrieval_units_stage(ctx: DocumentContext, cfg: PipelineConfig) -> Document
     """Stage 5: Build retrieval units."""
     if not ctx.segments:
         return ctx
-    from knowledge_mining.mining.stages.retrieval_units import build_retrieval_units
+    from knowledge_mining_zym.mining.stages.retrieval_units import build_retrieval_units
     profile = ctx.profile
     units = build_retrieval_units(
         list(ctx.segments),

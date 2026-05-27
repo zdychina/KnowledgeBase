@@ -8,8 +8,8 @@ async def test_emit_creates_event_row(db):
 
     bus = EventBus(db)
     await db.execute(
-        "INSERT INTO agent_llm_tasks (id, caller_domain, pipeline_stage, status, priority, attempt_count, max_attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("t-1", "mining", "test", "queued", 100, 0, 3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        "INSERT INTO agent_llm_tasks (id, caller_domain, caller_service, knowledge_domain, pipeline_stage, status, priority, attempt_count, max_attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("t-1", "mining", "mining", "cloud_core_network", "test", "queued", 100, 0, 3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
     )
     await db.commit()
 
@@ -27,8 +27,8 @@ async def test_emit_stores_metadata(db):
 
     bus = EventBus(db)
     await db.execute(
-        "INSERT INTO agent_llm_tasks (id, caller_domain, pipeline_stage, status, priority, attempt_count, max_attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("t-2", "mining", "test", "queued", 100, 0, 3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
+        "INSERT INTO agent_llm_tasks (id, caller_domain, caller_service, knowledge_domain, pipeline_stage, status, priority, attempt_count, max_attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("t-2", "mining", "mining", "cloud_core_network", "test", "queued", 100, 0, 3, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"),
     )
     await db.commit()
 

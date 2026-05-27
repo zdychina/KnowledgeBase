@@ -36,8 +36,16 @@ def _tokenize(text: str) -> list[str]:
 
 
 def token_count(text: str) -> int:
-    """Count tokens (CJK-aware). CJK chars count individually."""
-    return len(_tokenize(text))
+    """Estimate token count (CJK-aware). CJK chars estimated at 1.5x.
+
+    LLM tokenizers (GPT/BERT family) typically encode each CJK character
+    as 1-2 tokens. We use 1.5x as a practical estimate so that segment
+    splitting thresholds better reflect actual token budgets.
+    """
+    tokens = _tokenize(text)
+    cjk = sum(1 for t in tokens if len(t) == 1 and "\u4e00" <= t <= "\u9fff")
+    non_cjk = len(tokens) - cjk
+    return non_cjk + round(cjk * 1.5)
 
 
 def normalize_text(text: str) -> str:

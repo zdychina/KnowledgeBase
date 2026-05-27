@@ -72,7 +72,7 @@ VALID_RELATION_TYPES = frozenset({
     "elaborates",
     "condition",
     "contrast",
-    # RST discourse relations (EVO-17)
+    # RST discourse relations (EVO-17, legacy verb forms — kept for back-compat)
     "evidences",
     "causes",
     "results_in",
@@ -84,6 +84,20 @@ VALID_RELATION_TYPES = frozenset({
     "contrasts_with",
     "parallels",
     "sequences",
+    "exemplifies",
+    "concedes",
+    "purposes",
+    # RST discourse relations (current noun forms, aligned with domain.yaml prompts)
+    "elaboration",
+    "sequence",
+    "causation",
+    "evidence",
+    "background",
+    "exemplification",
+    "contrast",
+    "concession",
+    "condition",
+    "purpose",
     "unrelated",
     "other",
 })

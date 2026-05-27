@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 # Default port matches llm_service QUICKSTART
 DEFAULT_BASE_URL = "http://localhost:8900"
 
+# Audit constants for llm_service multi-domain routing
+CALLER_SERVICE = "mining"
+UNKNOWN_DOMAIN = "unknown"
+
 
 class LlmClient:
     """Sync HTTP client for llm_service. Field names match llm_service/client.py.
@@ -50,19 +54,26 @@ class LlmClient:
         self,
         template_key: str,
         input: dict[str, Any] | None = None,
-        caller_domain: str = "mining",
+        caller_domain: str | None = None,
         pipeline_stage: str = "retrieval_units",
         expected_output_type: str | None = None,
         metadata: dict[str, Any] | None = None,
         max_attempts: int = 3,
+        *,
+        caller_service: str = CALLER_SERVICE,
+        knowledge_domain: str | None = None,
     ) -> str | None:
         """Submit async task via POST /api/v1/tasks. Returns task_id or None."""
         payload: dict[str, Any] = {
-            "caller_domain": caller_domain,
+            "caller_service": caller_service,
+            "knowledge_domain": knowledge_domain or UNKNOWN_DOMAIN,
             "pipeline_stage": pipeline_stage,
             "template_key": template_key,
             "max_attempts": max_attempts,
         }
+        # Backward compat: if legacy caller_domain passed, add to payload
+        if caller_domain is not None:
+            payload["caller_domain"] = caller_domain
         if input is not None:
             payload["input"] = input
         if expected_output_type is not None:
@@ -74,7 +85,9 @@ class LlmClient:
             client = self._get_client()
             resp = client.post(f"{self._base_url}/api/v1/tasks", json=payload)
             resp.raise_for_status()
-            return resp.json().get("task_id")
+            body = resp.json()
+            # API wraps in {"success": true, "data": {"task_id": ...}}
+            return body.get("data", body).get("task_id")
         except Exception as e:
             logger.warning("submit_task failed: %s", e)
             self.close()
@@ -94,14 +107,16 @@ class LlmClient:
                 # Check task status
                 resp = client.get(f"{self._base_url}/api/v1/tasks/{task_id}")
                 resp.raise_for_status()
-                task_data = resp.json()
-                status = task_data.get("status", "")
+                body = resp.json()
+                task_data = body.get("data", {}).get("task", {})
+                status = task_data.get("status") if task_data else body.get("status", "")
 
                 if status == "succeeded":
                     # Fetch result
                     r_resp = client.get(f"{self._base_url}/api/v1/tasks/{task_id}/result")
                     r_resp.raise_for_status()
-                    result = r_resp.json()
+                    r_body = r_resp.json()
+                    result = r_body.get("data", r_body)
                     parsed = result.get("parsed_output")
                     # parsed_output might already be a list/dict
                     if isinstance(parsed, list):
@@ -137,7 +152,10 @@ class LlmClient:
             client = self._get_client()
             resp = client.get(f"{self._base_url}/api/v1/tasks/{task_id}")
             resp.raise_for_status()
-            return resp.json().get("status")
+            body = resp.json()
+            # API wraps in {"success": true, "data": {"task": {"status": ...}}}
+            task = body.get("data", {}).get("task", {})
+            return task.get("status") if task else body.get("status")
         except Exception as e:
             logger.warning("check_status error for %s: %s", task_id, e)
             self.close()
@@ -149,7 +167,8 @@ class LlmClient:
             client = self._get_client()
             resp = client.get(f"{self._base_url}/api/v1/tasks/{task_id}/result")
             resp.raise_for_status()
-            result = resp.json()
+            body = resp.json()
+            result = body.get("data", body)
             parsed = result.get("parsed_output")
             if isinstance(parsed, list):
                 return parsed
@@ -218,16 +237,23 @@ class LlmClient:
         self,
         template_key: str,
         input: dict[str, Any] | None = None,
-        caller_domain: str = "mining",
+        caller_domain: str | None = None,
         pipeline_stage: str = "retrieval_units",
         expected_output_type: str | None = None,
+        *,
+        caller_service: str = CALLER_SERVICE,
+        knowledge_domain: str | None = None,
     ) -> dict | None:
         """Sync execute via POST /api/v1/execute. Returns full response or None."""
         payload: dict[str, Any] = {
-            "caller_domain": caller_domain,
+            "caller_service": caller_service,
+            "knowledge_domain": knowledge_domain or UNKNOWN_DOMAIN,
             "pipeline_stage": pipeline_stage,
             "template_key": template_key,
         }
+        # Backward compat: if legacy caller_domain passed, add to payload
+        if caller_domain is not None:
+            payload["caller_domain"] = caller_domain
         if input is not None:
             payload["input"] = input
         if expected_output_type is not None:

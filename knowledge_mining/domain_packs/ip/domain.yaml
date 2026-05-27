@@ -30,98 +30,19 @@ strong_entity_types:
 # Semantic role mapping: section title keywords -> core semantic_role
 # ---------------------------------------------------------------------------
 
-role_keyword_rules:
-  - keywords: ["参数", "参数说明", "配置参数"]
-    role: parameter
-  - keywords: ["配置示例", "命令示例", "举例", "典型组网", "示例"]
-    role: example
-  - keywords: ["配置步骤", "操作步骤", "搬迁步骤", "部署步骤", "对接步骤", "前置检查", "checklist"]
-    role: procedure_step
-  - keywords: ["故障", "排障", "故障处理", "问题分析", "troubleshoot"]
-    role: troubleshooting_step
-  - keywords: ["注意事项", "限制", "约束", "前提条件", "适用范围", "constraint"]
-    role: constraint
-  - keywords: ["告警", "alarm"]
-    role: alarm
-  - keywords: ["概述", "简介", "原理", "背景", "架构"]
-    role: concept
+role_keyword_rules: []
 
 # ---------------------------------------------------------------------------
 # Heading role classification: heading keywords -> heading role
 # ---------------------------------------------------------------------------
 
-heading_role_keywords:
-  - keywords: ["参数", "参数说明", "配置参数"]
-    role: parameter_definition
-  - keywords: ["配置示例", "命令示例", "举例", "典型组网"]
-    role: example_section
-  - keywords: ["配置步骤", "操作步骤", "搬迁步骤", "部署步骤", "对接步骤"]
-    role: procedure_section
-  - keywords: ["故障", "排障", "问题分析"]
-    role: troubleshooting_section
-  - keywords: ["注意事项", "限制", "约束", "适用范围"]
-    role: constraint_section
-  - keywords: ["概述", "简介", "原理", "背景", "架构", "功能"]
-    role: overview_section
+heading_role_keywords: []
 
 # ---------------------------------------------------------------------------
 # Rule-based extractors (regex)
 # ---------------------------------------------------------------------------
 
-extractor_rules:
-  # 二/三层协议、路由协议、SDN/EVPN 类协议
-  - name: network_protocol
-    pattern: "(?<![A-Za-z0-9_])(VXLAN|EVPN|BGP[- ]EVPN|BGP|OSPFv3|OSPF|IS-IS|EIGRP|RIPng|RIP|VRRP|HSRP|MSTP|RSTP|PVST\\+?|STP|LACP|BFD|LLDP|ARP|NDP|GRE|IPSec|IPsec|MPLS|LDP|SR-MPLS|SRv6|SR|PIM|IGMP|MLD|DHCP|DHCPv6|DNS|NTP|SNMP|RADIUS|TACACS\\+?|SSH|SFTP|FTP|HTTP|HTTPS|gRPC|gNMI|NETCONF|RESTCONF|YANG|sFlow|NetStream|Telemetry|PFCP|GTP-U|GTPv2)(?![A-Za-z0-9_])"
-    entity_type: network_protocol
-
-  # 数据中心高性能/无损网络特性
-  - name: lossless_feature
-    pattern: "(?<![A-Za-z0-9_])(PFC|ECN|AI ECN|ABS PFC|RoCE|RoCEv2|NOF\\+?|iNOF|iNOFv6|DPFR|RPFR|MACSec|DCBX|ETS|QCN|HQoS|WRED|RED)(?![A-Za-z0-9_])"
-    entity_type: network_feature
-
-  # Spine-Leaf 角色
-  - name: network_role
-    pattern: "(?<![A-Za-z0-9_])(Border Leaf|Service Leaf|Server Leaf|DCI Leaf|Spine|TOR|Leaf|RR|Route Reflector|M-LAG|MLAG|VPC peer|vPC peer|Fabric|Underlay|Overlay)(?![A-Za-z0-9_])"
-    entity_type: network_role
-
-  # 华为/友商主流数据中心交换机/防火墙/存储
-  - name: network_device
-    pattern: "(?<![A-Za-z0-9_])(CE\\d{4,5}[A-Z0-9-]*|S\\d{4,5}[A-Z0-9-]*|NE\\d{2,4}[A-Z0-9-]*|Dorado\\s?V?\\d+|USG\\d{4,5}[A-Z0-9-]*|AR\\d{3,4}[A-Z0-9-]*|N9K-[A-Z0-9-]+|Nexus\\s?\\d{4,5}|ASR\\s?\\d{3,4}|Catalyst\\s?\\d{4,5})(?![A-Za-z0-9_])"
-    entity_type: network_device
-
-  # Huawei VRP CLI 命令片段（动词 + 对象）
-  - name: vrp_command
-    pattern: "(?<![A-Za-z0-9_])(display|undo|reset|debugging|interface|vlan|bridge-domain|evpn|bgp|ospf|isis|stp|m-lag|dcb|qos|acl|traffic-policy|nqa|ip|ipv6|route-policy|nvo3|vxlan|l2vpn|sysname|system-view|commit|save|return)(?:\\s+([A-Za-z][A-Za-z0-9_-]{0,40}(?:\\s+[A-Za-z0-9_./:-]{1,40}){0,4}))?(?![A-Za-z0-9_])"
-    entity_type: command
-    groups:
-      - index: 0
-        format: "{group1} {group2}"
-
-  # 接口名（GE/10GE/25GE/40GE/100GE/400GE/Eth-Trunk/Vlanif/LoopBack/Tunnel/Bridge-Domain）
-  - name: interface
-    pattern: "(?<![A-Za-z0-9_])(GE|10GE|25GE|40GE|100GE|400GE|Eth-Trunk|Trunk|Vlanif|Vlan-interface|LoopBack|Loopback|Tunnel|Bridge-Domain|BD|Nve|NVE)\\s?(\\d+(?:/\\d+){0,3})?(?![A-Za-z0-9_])"
-    entity_type: interface
-    groups:
-      - index: 0
-        format: "{group1}{group2}"
-
-  # VLAN/VNI/VPN-instance/VPC ID
-  - name: vlan_vni_id
-    pattern: "(?<![A-Za-z0-9_])(VLAN|VNI|BD|VPN-instance|VPC|VRF)\\s?(?:ID\\s?)?[:：]?\\s?([0-9]{1,8})(?![A-Za-z0-9_])"
-    entity_type: parameter
-    groups:
-      - index: 0
-        format: "{group1} {group2}"
-
-  # IPv4 / IPv6 CIDR
-  - name: ipv4_cidr
-    pattern: "(?<![0-9.])((?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}/[0-9]{1,2})(?![0-9.])"
-    entity_type: parameter
-
-  # 告警 / 事件
-  - name: alarm
-    pattern: "(?<![A-Za-z0-9_])(ALM-[A-Z][A-Z0-9_-]{2,40}|hwIfNetworkPort\\w*|hwBgp[A-Z]\\w*)(?![A-Za-z0-9_-])"
-    entity_type: alarm
+extractor_rules: []
 
 # ---------------------------------------------------------------------------
 # Table parameter column names (used by entity extractor for table segments)

@@ -11,7 +11,7 @@ import logging
 import uuid
 from typing import Any
 
-from knowledge_mining.mining.infra.db import AssetCoreDB
+from knowledge_mining_zym.mining.infra.db import AssetCoreDB
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ def classify_documents(
     asset_db: AssetCoreDB,
     snapshot_decisions: list[dict[str, Any]],
     *,
+    domain: str,
     detect_remove: bool = True,
 ) -> list[dict[str, Any]]:
     """Classify each document action by comparing with previous active build.
@@ -43,11 +44,12 @@ def classify_documents(
     - REMOVE: document in previous build but not in current run (deleted file)
 
     Args:
+        domain: Scope comparison to this domain's previous active build.
         detect_remove: When False, skip REMOVE detection. Use for incremental
             batch mining where each run only processes a subset of documents.
             Parent build snapshots are carried forward by assemble_build instead.
     """
-    prev_build = asset_db.get_active_build()
+    prev_build = asset_db.get_active_build(domain)
     prev_snapshots: dict[str, str] = {}  # document_id -> snapshot_id
 
     if prev_build:
@@ -109,6 +111,7 @@ def determine_build_mode(has_prev_build: bool) -> str:
 def assemble_build(
     asset_db: AssetCoreDB,
     *,
+    domain: str,
     run_id: str,
     batch_id: str | None = None,
     snapshot_decisions: list[dict[str, Any]],
@@ -120,12 +123,12 @@ def assemble_build(
         selection_status (active/removed), reason (add/update/retain/remove)
 
     Build mode is determined automatically:
-    - "full" when no previous active build exists
-    - "incremental" when merging with previous active build
+    - "full" when no previous active build exists for this domain
+    - "incremental" when merging with previous active build for this domain
 
     Returns build_id.
     """
-    prev_build = asset_db.get_active_build()
+    prev_build = asset_db.get_active_build(domain)
     has_prev = prev_build is not None
     build_mode = determine_build_mode(has_prev)
     parent_build_id = prev_build["id"] if has_prev else None
@@ -143,6 +146,7 @@ def assemble_build(
         build_code=build_code,
         status="building",
         build_mode=build_mode,
+        domain=domain,
         source_batch_id=batch_id,
         parent_build_id=parent_build_id,
         mining_run_id=run_id,
@@ -219,7 +223,8 @@ def publish_release(
     asset_db: AssetCoreDB,
     build_id: str,
     *,
-    channel: str = "default",
+    domain: str,
+    channel: str = "prod",
     released_by: str | None = None,
     release_notes: str | None = None,
 ) -> str:
@@ -232,9 +237,14 @@ def publish_release(
         raise ValueError(f"Build {build_id} not found")
     if build["status"] not in ("validated", "published"):
         raise ValueError(f"Build {build_id} status is {build['status']}, expected validated/published")
+    if build["domain"] != domain:
+        raise ValueError(
+            f"Build {build_id} belongs to domain {build['domain']!r}, "
+            f"cannot publish under domain {domain!r}"
+        )
 
-    # Get previous active release for chain
-    prev_release = asset_db.get_active_release(channel)
+    # Get previous active release for chain (scoped to this domain+channel)
+    prev_release = asset_db.get_active_release(domain, channel)
     prev_release_id = prev_release["id"] if prev_release else None
 
     release_id = uuid.uuid4().hex
@@ -244,6 +254,7 @@ def publish_release(
         release_id=release_id,
         release_code=release_code,
         build_id=build_id,
+        domain=domain,
         channel=channel,
         status="staging",
         previous_release_id=prev_release_id,
@@ -251,7 +262,7 @@ def publish_release(
         release_notes=release_notes,
     )
 
-    # Activate: retire old, activate new
+    # Activate: retire old, activate new (scoped to domain+channel inside activate_release)
     asset_db.activate_release(release_id)
 
     return release_id
@@ -311,7 +322,7 @@ def demo_quality_summary(asset_db: AssetCoreDB, build_id: str) -> dict[str, Any]
         rows = asset_db._fetchall(
             "SELECT relation_type, COUNT(*) as cnt FROM asset_raw_segment_relations "
             "WHERE document_snapshot_id = %s "
-            "AND metadata_json->>'source' = 'discourse_llm' "
+            "AND (metadata_json::jsonb)->>'source' = 'discourse_llm' "
             "GROUP BY relation_type",
             (snap_id,),
         )

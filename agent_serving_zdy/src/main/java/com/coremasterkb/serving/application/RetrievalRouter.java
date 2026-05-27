@@ -5,6 +5,7 @@ import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.Set;
 
 /**
  * Intent-aware dynamic route plan generation.
@@ -92,6 +93,10 @@ public class RetrievalRouter {
             ));
         }
 
+        // Adaptive routing: adjust routes based on query complexity
+        String complexity = computeComplexity(understanding);
+        routeConfigs = applyComplexity(routeConfigs, complexity);
+
         // Determine rerank strategy
         String rerankMethod = "score";
         if (understanding.evidenceNeed() != null && understanding.evidenceNeed().needsComparison()) {
@@ -110,5 +115,50 @@ public class RetrievalRouter {
                 AssemblyConfig.defaults(),
                 ExpansionConfig.defaults()
         );
+    }
+
+    // =========================================================================
+    // Adaptive routing helpers
+    // =========================================================================
+
+    /**
+     * Classify query complexity.
+     * <ul>
+     *   <li>simple  — entity present, no sub-queries, exact-match intent</li>
+     *   <li>complex — comparison intent or has sub-queries (multi-hop reasoning)</li>
+     *   <li>medium  — everything else</li>
+     * </ul>
+     */
+    static String computeComplexity(QueryUnderstanding u) {
+        if (!u.subQueries().isEmpty() || "comparison".equals(u.intent())) {
+            return "complex";
+        }
+        if (Set.of("command_usage", "concept_lookup", "navigational").contains(u.intent())
+                && !u.entities().isEmpty()) {
+            return "simple";
+        }
+        return "medium";
+    }
+
+    /**
+     * Apply complexity rules to the candidate route list:
+     * <ul>
+     *   <li>simple  — disable dense_vector (exact lexical + entity match is sufficient)</li>
+     *   <li>complex — increase topK by 50% for broader recall</li>
+     *   <li>medium  — no change</li>
+     * </ul>
+     */
+    private static List<RouteConfig> applyComplexity(List<RouteConfig> routes, String complexity) {
+        return switch (complexity) {
+            case "simple" -> routes.stream()
+                    .map(r -> "dense_vector".equals(r.name())
+                            ? new RouteConfig(r.name(), false, r.weight(), r.topK())
+                            : r)
+                    .toList();
+            case "complex" -> routes.stream()
+                    .map(r -> new RouteConfig(r.name(), r.enabled(), r.weight(), (int) (r.topK() * 1.5)))
+                    .toList();
+            default -> routes;
+        };
     }
 }

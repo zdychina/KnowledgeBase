@@ -121,7 +121,7 @@ llm_templates:
     output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
 
   - template_key: mining-discourse-relation
-    template_version: "1"
+    template_version: "2"
     purpose: "Analyze discourse relations between segments (RST)"
     system_prompt: "You are a discourse relation analysis expert for technical documentation."
     user_prompt_template: >
@@ -129,31 +129,28 @@ llm_templates:
 
       $segments
 
-      For each pair of adjacent or co-section segments, determine their rhetorical relation. Available types:
-      - ELABORATES: latter elaborates on former
-      - EVIDENCES: latter provides evidence for former
-      - CAUSES: latter is the cause of former
-      - RESULTS_IN: latter is the result of former
-      - BACKGROUNDS: latter provides background info
-      - CONDITIONS: latter states prerequisites
-      - SUMMARIZES: latter summarizes former
-      - JUSTIFIES: latter explains the rationale for former
-      - ENABLES: latter makes the former's action possible
-      - CONTRASTS_WITH: latter contrasts with former
-      - PARALLELS: latter parallels former
-      - SEQUENCES: latter is the next step after former
-      - UNRELATED: no clear relation
+      For each pair of adjacent or co-section segments, determine their rhetorical relation. Choose the best fit from:
+      - ELABORATION: latter elaborates/expands on former (e.g., "specifically", "including", "which consists of")
+      - SEQUENCE: segments follow time/step order (e.g., "then", "next", "step N")
+      - CAUSATION: one segment is the cause or result of the other (e.g., "therefore", "leads to", "because")
+      - EVIDENCE: latter provides evidence or support for former (e.g., "for example", "data shows", "based on")
+      - BACKGROUND: former provides background knowledge for latter (e.g., "background", "currently", "status quo")
+      - EXEMPLIFICATION: latter is a concrete example of former (e.g., "for instance", "take X as an example")
+      - CONTRAST: segments contrast or oppose each other (e.g., "however", "by contrast", "whereas")
+      - CONCESSION: acknowledges one view but emphasizes another (e.g., "although", "despite", "even though")
+      - CONDITION: former is a triggering condition for latter (e.g., "if", "when", "provided that")
+      - PURPOSE: latter states the goal/intent of former (e.g., "in order to", "the purpose is", "so that")
 
       Output a JSON array, each element with:
       - source: source segment number (integer)
       - target: target segment number (integer)
-      - relation: relation type (UPPERCASE)
+      - relation: relation type (UPPERCASE, from the 10 types above)
       - confidence: confidence (0.0-1.0)
 
-      Only output segment pairs with clear relations, skip UNRELATED.
+      Only output segment pairs with clear relations; skip pairs with no clear relation.
 
       Output example (format reference only, generate based on actual content):
-      [{"source": 1, "target": 2, "relation": "ELABORATES", "confidence": 0.9}]
+      [{"source": 1, "target": 2, "relation": "ELABORATION", "confidence": 0.9}]
     expected_output_type: json_array
     output_schema_json: '{"type":"array","items":{"type":"object","properties":{"source":{"type":"integer"},"target":{"type":"integer"},"relation":{"type":"string"},"confidence":{"type":"number","minimum":0.0,"maximum":1.0}},"required":["source","target","relation","confidence"],"additionalProperties":false}}'
 

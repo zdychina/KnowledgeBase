@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from knowledge_mining.mining.contracts.models import (
+from knowledge_mining_zym.mining.contracts.models import (
     DocumentProfile,
     RawSegmentData,
     RetrievalUnitData,

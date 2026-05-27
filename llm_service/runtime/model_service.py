@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
 
+from llm_service.db import LlmRuntimeDB
 from llm_service.models import (
     EmbeddingData,
     EmbeddingRequest,
@@ -26,7 +28,7 @@ def _utcnow() -> str:
 class ModelService:
     """Synchronous-style model facade exposed over HTTP for mining/serving."""
 
-    def __init__(self, provider: ModelProviderProtocol, db=None, *,
+    def __init__(self, provider: ModelProviderProtocol, db: LlmRuntimeDB | None = None, *,
                  default_embedding_model: str = "embedding-3",
                  default_rerank_model: str = ""):
         self._provider = provider
@@ -38,6 +40,9 @@ class ModelService:
         self,
         task_type: str,
         model: str,
+        caller_service: str,
+        knowledge_domain: str | None,
+        pipeline_stage: str,
         status: str,
         latency_ms: int | None,
         total_tokens: int | None,
@@ -47,11 +52,7 @@ class ModelService:
         error_type: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Write a full tasks+requests+attempts+results record for sync calls.
-
-        Format matches what the async Worker produces, so the Dashboard sees
-        both sync and async calls identically.
-        """
+        """Write a full tasks+requests+attempts+results record for sync calls."""
         if self._db is None:
             return
         now = _utcnow()
@@ -59,57 +60,72 @@ class ModelService:
         request_id = uuid.uuid4().hex
         attempt_id = uuid.uuid4().hex
         try:
-            await self._db.execute("BEGIN IMMEDIATE")
+            async with self._db.pool.connection() as conn:
+                async with conn.transaction():
+                    await conn.execute(
+                        """INSERT INTO agent_llm_tasks
+                           (id, caller_service, knowledge_domain, pipeline_stage, task_type, status,
+                            priority, attempt_count, max_attempts,
+                            created_at, updated_at, started_at, finished_at, metadata_json)
+                           VALUES (%s, %s, %s, %s, %s, %s, 100, 1, 1, %s, %s, %s, %s, '{}')""",
+                        (task_id, caller_service, knowledge_domain, pipeline_stage, task_type, status,
+                         now, now, now, now),
+                    )
 
-            await self._db.execute(
-                """INSERT INTO agent_llm_tasks
-                   (id, caller_domain, pipeline_stage, task_type, status,
-                    priority, attempt_count, max_attempts,
-                    created_at, updated_at, started_at, finished_at, metadata_json)
-                   VALUES (?, 'sync', ?, ?, ?, 100, 1, 1, ?, ?, ?, ?, '{}')""",
-                (task_id, task_type, task_type, status,
-                 now, now, now, now),
-            )
+                    await conn.execute(
+                        """INSERT INTO agent_llm_requests
+                           (id, task_id, provider, model, messages_json, input_json,
+                            params_json, expected_output_type, output_schema_json, created_at, metadata_json)
+                           VALUES (%s, %s, 'sync', %s, '[]', %s, '{}', 'text', '{}', %s, '{}')""",
+                        (request_id, task_id, model,
+                         json.dumps(input_json, ensure_ascii=False), now),
+                    )
 
-            await self._db.execute(
-                """INSERT INTO agent_llm_requests
-                   (id, task_id, provider, model, messages_json, input_json,
-                    params_json, expected_output_type, output_schema_json, created_at, metadata_json)
-                   VALUES (?, ?, 'sync', ?, '[]', ?, '{}', 'text', '{}', ?, '{}')""",
-                (request_id, task_id, model,
-                 json.dumps(input_json, ensure_ascii=False), now),
-            )
+                    await conn.execute(
+                        """INSERT INTO agent_llm_attempts
+                           (id, task_id, request_id, attempt_no, status,
+                            total_tokens, latency_ms, started_at, finished_at,
+                            raw_response_json, error_type, error_message, metadata_json)
+                           VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s, %s, '{}')""",
+                        (attempt_id, task_id, request_id, status,
+                         total_tokens, latency_ms, now, now,
+                         json.dumps(raw_response or {}, ensure_ascii=False),
+                         error_type, error_message),
+                    )
 
-            await self._db.execute(
-                """INSERT INTO agent_llm_attempts
-                   (id, task_id, request_id, attempt_no, status,
-                    total_tokens, latency_ms, started_at, finished_at,
-                    raw_response_json, error_type, error_message, metadata_json)
-                   VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, '{}')""",
-                (attempt_id, task_id, request_id, status,
-                 total_tokens, latency_ms, now, now,
-                 json.dumps(raw_response or {}, ensure_ascii=False),
-                 error_type, error_message),
-            )
+                    if status == "succeeded":
+                        result_id = uuid.uuid4().hex
+                        await conn.execute(
+                            """INSERT INTO agent_llm_results
+                               (id, task_id, attempt_id, parse_status, parsed_output_json,
+                                text_output, parse_error, validation_errors_json, created_at, metadata_json)
+                               VALUES (%s, %s, %s, 'not_required', %s, %s, NULL, '[]', %s, '{}')""",
+                            (result_id, task_id, attempt_id,
+                             json.dumps(raw_response or {}, ensure_ascii=False),
+                             text_output, now),
+                        )
 
-            if status == "succeeded":
-                result_id = uuid.uuid4().hex
-                await self._db.execute(
-                    """INSERT INTO agent_llm_results
-                       (id, task_id, attempt_id, parse_status, parsed_output_json,
-                        text_output, parse_error, validation_errors_json, created_at, metadata_json)
-                       VALUES (?, ?, ?, 'not_required', ?, ?, NULL, '[]', ?, '{}')""",
-                    (result_id, task_id, attempt_id,
-                     json.dumps(raw_response or {}, ensure_ascii=False),
-                     text_output, now),
-                )
-
-            await self._db.execute("COMMIT")
+                    await conn.execute(
+                        """INSERT INTO agent_llm_model_calls
+                           (id, call_type, model, caller_service, knowledge_domain, pipeline_stage,
+                            input_count, status, latency_ms, token_usage, error_message, created_at)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (
+                            uuid.uuid4().hex,
+                            task_type,
+                            model,
+                            caller_service,
+                            knowledge_domain,
+                            pipeline_stage,
+                            len(input_json.get("texts") or input_json.get("documents") or []),
+                            status,
+                            latency_ms,
+                            total_tokens,
+                            error_message,
+                            now,
+                        ),
+                    )
         except Exception:
-            try:
-                await self._db.execute("ROLLBACK")
-            except Exception:
-                pass
             logger.exception("Failed to record sync %s task", task_type)
 
     async def embed(self, body: EmbeddingRequest) -> EmbeddingResponse:
@@ -128,11 +144,16 @@ class ModelService:
             token_usage = usage.get("total_tokens") or usage.get("prompt_tokens")
 
             text_output = "\n".join(texts)
-            await self._record_sync_task(
-                task_type="embedding", model=model, status="succeeded",
+            # Fire-and-forget DB recording
+            asyncio.ensure_future(self._record_sync_task(
+                task_type="embedding", model=model,
+                caller_service=body.caller_service or "model",
+                knowledge_domain=body.knowledge_domain,
+                pipeline_stage=body.pipeline_stage,
+                status="succeeded",
                 latency_ms=latency, total_tokens=token_usage,
                 input_json=input_json, raw_response=raw, text_output=text_output,
-            )
+            ))
 
             data = sorted(raw.get("data", []), key=lambda item: item.get("index") or 0)
             return EmbeddingResponse(
@@ -149,12 +170,16 @@ class ModelService:
         except Exception as e:
             latency = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
             error_type = getattr(e, "error_type", "unexpected_error")
-            await self._record_sync_task(
-                task_type="embedding", model=model, status="failed",
+            asyncio.ensure_future(self._record_sync_task(
+                task_type="embedding", model=model,
+                caller_service=body.caller_service or "model",
+                knowledge_domain=body.knowledge_domain,
+                pipeline_stage=body.pipeline_stage,
+                status="failed",
                 latency_ms=latency, total_tokens=None,
                 input_json=input_json,
                 error_type=error_type, error_message=str(e)[:500],
-            )
+            ))
             raise
 
     async def rerank(self, body: RerankRequest) -> RerankResponse:
@@ -177,7 +202,6 @@ class ModelService:
             usage = raw.get("usage") or {}
             token_usage = usage.get("total_tokens")
 
-            # Build readable text_output: query + reranked results
             lines = [f"Query: {body.query}"]
             for r in raw.get("results", []):
                 score = r.get("relevance_score", 0)
@@ -185,11 +209,16 @@ class ModelService:
                 lines.append(f"  [{r.get('index', '?')}] score={score:.4f}: {doc}")
             text_output = "\n".join(lines)
 
-            await self._record_sync_task(
-                task_type="rerank", model=model, status="succeeded",
+            # Fire-and-forget DB recording
+            asyncio.ensure_future(self._record_sync_task(
+                task_type="rerank", model=model,
+                caller_service=body.caller_service or "model",
+                knowledge_domain=body.knowledge_domain,
+                pipeline_stage=body.pipeline_stage,
+                status="succeeded",
                 latency_ms=latency, total_tokens=token_usage,
                 input_json=input_json, raw_response=raw, text_output=text_output,
-            )
+            ))
 
             return RerankResponse(
                 model=raw.get("model") or model or "",
@@ -205,10 +234,14 @@ class ModelService:
         except Exception as e:
             latency = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
             error_type = getattr(e, "error_type", "unexpected_error")
-            await self._record_sync_task(
-                task_type="rerank", model=model, status="failed",
+            asyncio.ensure_future(self._record_sync_task(
+                task_type="rerank", model=model,
+                caller_service=body.caller_service or "model",
+                knowledge_domain=body.knowledge_domain,
+                pipeline_stage=body.pipeline_stage,
+                status="failed",
                 latency_ms=latency, total_tokens=None,
                 input_json=input_json,
                 error_type=error_type, error_message=str(e)[:500],
-            )
+            ))
             raise

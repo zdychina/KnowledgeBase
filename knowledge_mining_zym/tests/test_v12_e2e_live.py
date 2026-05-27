@@ -12,14 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_mining.mining.jobs.run import run
-from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
+from knowledge_mining_zym.mining.jobs.run import run
+from knowledge_mining_zym.mining.infra.db import AssetCoreDB, MiningRuntimeDB
 
 
 def _make_db(cls):
     """Create a PG-backed database adapter for testing."""
-    from knowledge_mining.mining.infra.pg_config import MiningDbConfig
-    from knowledge_mining.mining.infra.pg_schema import ensure_schema
+    from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
+    from knowledge_mining_zym.mining.infra.pg_schema import ensure_schema
     from psycopg.rows import dict_row
     from psycopg_pool import ConnectionPool
 
@@ -266,9 +266,8 @@ class TestLiveLLMPipeline:
 
             # === Relation-level: LLM discourse relations should exist ===
             discourse_types = {
-                "evidences", "causes", "results_in", "backgrounds", "conditions",
-                "summarizes", "justifies", "enables", "contrasts_with", "parallels", "sequences",
-                "elaborates",
+                "elaborates", "sequences", "causes", "evidences", "backgrounds",
+                "exemplifies", "contrasts_with", "concedes", "conditions", "purposes",
             }
             discourse_rels = [r for r in relations if r["relation_type"] in discourse_types]
             print(f"Discourse relations (LLM): {len(discourse_rels)}")

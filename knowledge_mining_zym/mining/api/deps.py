@@ -6,8 +6,8 @@ from typing import Any
 
 from fastapi import Request
 
-from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig
+from knowledge_mining_zym.mining.infra.db import AssetCoreDB, MiningRuntimeDB
+from knowledge_mining_zym.mining.infra.pg_config import MiningDbConfig
 
 
 def get_pool(request: Request) -> Any:

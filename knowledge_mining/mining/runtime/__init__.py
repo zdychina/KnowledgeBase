@@ -57,6 +57,9 @@ class RuntimeTracker:
         self._db.insert_run_document(patched)
         return patched.id
 
+    def start_document(self, rd_id: str) -> None:
+        self._db.update_run_document(rd_id, status="processing")
+
     def commit_document(
         self,
         rd_id: str,

@@ -137,11 +137,13 @@ class LLMServiceEmbeddingGenerator:
         model: str = "embedding-3",
         dimensions: int | None = None,
         timeout: int = 60,
+        knowledge_domain: str | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._dimensions = dimensions
         self._timeout = timeout
+        self._knowledge_domain = knowledge_domain
 
     @property
     def model_name(self) -> str:
@@ -158,6 +160,9 @@ class LLMServiceEmbeddingGenerator:
         payload: dict[str, Any] = {
             "input": texts,
             "model": self._model,
+            "caller_service": "mining",
+            "knowledge_domain": self._knowledge_domain or "unknown",
+            "pipeline_stage": "embedding",
         }
         if self._dimensions is not None:
             payload["dimensions"] = self._dimensions

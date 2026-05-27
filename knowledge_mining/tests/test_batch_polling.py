@@ -34,6 +34,7 @@ class TestQuestionGeneratorBatchPolling:
         gen._timeout = 30
         gen._last_task_ids = {}
         gen._profile = None
+        gen._knowledge_domain = None
 
         # Mock submit to return task_ids
         gen._client.submit_task.side_effect = [
@@ -72,6 +73,7 @@ class TestQuestionGeneratorBatchPolling:
         gen._timeout = 30
         gen._last_task_ids = {}
         gen._profile = None
+        gen._knowledge_domain = None
 
         results = gen.generate_batch([])
         assert results == {}
@@ -88,6 +90,7 @@ class TestContextualizerBatchPolling:
         ctxer._client = MagicMock()
         ctxer._timeout = 30
         ctxer._last_task_ids = {}
+        ctxer._knowledge_domain = None
 
         ctxer._client.submit_task.side_effect = ["task-a", "task-b"]
         ctxer._client.poll_all.return_value = {
@@ -113,6 +116,7 @@ class TestContextualizerBatchPolling:
         ctxer._client = MagicMock()
         ctxer._timeout = 30
         ctxer._last_task_ids = {}
+        ctxer._knowledge_domain = None
 
         segments = [
             RawSegmentData(document_key="doc:/a.md", segment_index=0, raw_text=""),

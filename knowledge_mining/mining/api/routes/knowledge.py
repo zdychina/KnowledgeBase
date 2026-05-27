@@ -33,17 +33,16 @@ async def knowledge_stats(request: Request) -> dict:
         )
         type_dist = {r["unit_type"]: r["c"] for r in await cur.fetchall()}
 
-        # Active release
+        # Active releases (by domain+channel)
         cur = await conn.execute(
-            "SELECT id FROM asset_publish_releases WHERE status = 'active' LIMIT 1"
+            "SELECT id, domain, channel FROM asset_publish_releases WHERE status = 'active'"
         )
-        active = await cur.fetchone()
-        active_release = active["id"] if active else None
+        active_releases = [dict(r) for r in await cur.fetchall()]
 
     return {
         **counts,
         "retrieval_units_by_type": type_dist,
-        "active_release": active_release,
+        "active_releases": active_releases,
     }
 
 
@@ -90,7 +89,7 @@ async def get_document(document_id: str, request: Request) -> dict:
     async with pool.connection() as conn:
         cur = await conn.execute(
             "SELECT id, document_key, document_name, document_type, "
-            "source_uri, created_at "
+            "created_at "
             "FROM asset_documents WHERE id = %s", [document_id]
         )
         doc = await cur.fetchone()
@@ -178,6 +177,44 @@ async def get_document_units(
             f"WHERE document_snapshot_id = %s {where} "
             f"ORDER BY created_at LIMIT %s OFFSET %s",
             params + [limit, offset],
+        )
+        rows = await cur.fetchall()
+
+    return {"document_id": document_id, "snapshot_id": snapshot_id, "items": [dict(r) for r in rows]}
+
+
+@router.get("/documents/{document_id}/relations")
+async def get_document_relations(
+    document_id: str,
+    request: Request,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """Get segment relations for a document (via latest snapshot)."""
+    pool = request.app.state.pg_pool
+
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT document_snapshot_id FROM asset_document_snapshot_links "
+            "WHERE document_id = %s ORDER BY linked_at DESC LIMIT 1",
+            [document_id],
+        )
+        link = await cur.fetchone()
+        if not link:
+            raise HTTPException(404, f"No snapshots found for document {document_id}")
+
+        snapshot_id = link["document_snapshot_id"]
+        cur = await conn.execute(
+            "SELECT r.id, r.document_snapshot_id, r.source_segment_id, "
+            "r.target_segment_id, r.relation_type, r.weight, "
+            "r.confidence, r.distance, "
+            "s1.raw_text AS source_text, s2.raw_text AS target_text "
+            "FROM asset_raw_segment_relations r "
+            "LEFT JOIN asset_raw_segments s1 ON s1.id = r.source_segment_id "
+            "LEFT JOIN asset_raw_segments s2 ON s2.id = r.target_segment_id "
+            "WHERE r.document_snapshot_id = %s "
+            "ORDER BY r.confidence DESC NULLS LAST LIMIT %s OFFSET %s",
+            [snapshot_id, limit, offset],
         )
         rows = await cur.fetchall()
 
@@ -275,22 +312,27 @@ async def list_relations(
     conditions = []
     params: list[str] = []
     if type:
-        conditions.append("relation_type = %s")
+        conditions.append("r.relation_type = %s")
         params.append(type)
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     async with pool.connection() as conn:
         count_cur = await conn.execute(
-            f"SELECT COUNT(*) as c FROM asset_raw_segment_relations {where}", params
+            "SELECT COUNT(*) as c FROM asset_raw_segment_relations", []
         )
         total = (await count_cur.fetchone())["c"]
 
         cur = await conn.execute(
-            f"SELECT id, document_snapshot_id, source_segment_id, "
-            f"target_segment_id, relation_type, weight, confidence, distance "
-            f"FROM asset_raw_segment_relations {where} "
-            f"ORDER BY document_snapshot_id LIMIT %s OFFSET %s",
+            f"SELECT r.id, r.document_snapshot_id, r.source_segment_id, "
+            f"r.target_segment_id, r.relation_type, r.weight, "
+            f"r.confidence, r.distance, "
+            f"s1.raw_text AS source_text, s2.raw_text AS target_text "
+            f"FROM asset_raw_segment_relations r "
+            f"LEFT JOIN asset_raw_segments s1 ON s1.id = r.source_segment_id "
+            f"LEFT JOIN asset_raw_segments s2 ON s2.id = r.target_segment_id "
+            f"{where} "
+            f"ORDER BY r.document_snapshot_id LIMIT %s OFFSET %s",
             params + [limit, offset],
         )
         rows = await cur.fetchall()
