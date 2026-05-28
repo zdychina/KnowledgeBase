@@ -191,10 +191,20 @@ public class QueryUnderstandingEngine {
         List<SubQuery> subQueries = new ArrayList<>();
         List<Map<String, Object>> rawSubQueries = (List<Map<String, Object>>) parsed.getOrDefault("sub_queries", List.of());
         for (var sq : rawSubQueries) {
+            List<EntityRef> sqEntities = new ArrayList<>();
+            List<Map<String, Object>> rawSqEntities =
+                    (List<Map<String, Object>>) sq.getOrDefault("entities", List.of());
+            for (var e : rawSqEntities) {
+                String name = String.valueOf(e.getOrDefault("name", ""));
+                sqEntities.add(new EntityRef(
+                        String.valueOf(e.getOrDefault("type", "unknown")),
+                        name,
+                        String.valueOf(e.getOrDefault("normalized_name", name))));
+            }
             subQueries.add(new SubQuery(
                     String.valueOf(sq.getOrDefault("text", "")),
                     String.valueOf(sq.getOrDefault("intent", "general")),
-                    null
+                    sqEntities.isEmpty() ? null : sqEntities
             ));
         }
 

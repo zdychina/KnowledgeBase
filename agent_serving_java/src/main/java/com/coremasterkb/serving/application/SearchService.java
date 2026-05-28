@@ -259,8 +259,8 @@ public class SearchService {
                 allRouteTraces.addAll(varResult.routeTraces());
             }
 
-            // 6b. Query decomposition: retrieve for each LLM-identified sub-query
-            for (com.coremasterkb.serving.domain.SubQuery subQuery : understanding.subQueries()) {
+            // 6b. Query decomposition: retrieve for each LLM-identified sub-query (cap at 4)
+            for (com.coremasterkb.serving.domain.SubQuery subQuery : understanding.subQueries().stream().limit(4).toList()) {
                 QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(understanding, subQuery);
                 float[] subEmb = variantEmbeddings.get(subQuery.text());
                 OrchestratorResult subResult = orchestrator.execute(
