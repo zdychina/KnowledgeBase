@@ -13,8 +13,11 @@ import java.util.stream.Collectors;
  * <p>Each step records a {@link RerankTraceStep} for observability.
  * After the cascade completes, unified post-processing applies:
  * <ol>
+ *   <li>Segment dedup: same {@code source_segment_id} → keep highest-scored candidate</li>
+ *   <li>Low-value type downweight: heading / toc / link × {@value #LOW_VALUE_SCORE_FACTOR}</li>
+ *   <li>Text similarity dedup: {@code text} Jaccard &gt; {@value #TEXT_SIMILARITY_THRESHOLD} → keep highest-scored</li>
  *   <li>Annotate each candidate's {@link ScoreChain} with {@code rerankScore}</li>
- *   <li>Threshold filter: remove candidates with score &lt; 0.01</li>
+ *   <li>Threshold filter: remove candidates with score &lt; {@value #MIN_RERANK_SCORE}</li>
  *   <li>Truncate to {@code routePlan.assembly().maxItems()}</li>
  * </ol>
  */
@@ -26,6 +29,7 @@ public class RerankPipeline {
 
     private static final Set<String> LOW_VALUE_UNIT_TYPES = Set.of("heading", "toc", "link");
     private static final double LOW_VALUE_SCORE_FACTOR = 0.5;
+    private static final double TEXT_SIMILARITY_THRESHOLD = 0.9;
 
     private final Reranker modelReranker;
     private final Reranker llmReranker;
@@ -127,12 +131,16 @@ public class RerankPipeline {
         result = deduplicateBySegment(result);
 
         // 2. Downweight low-value unit types (heading / toc / link)
+        //    Applied before text-similarity dedup so penalized types naturally lose to content types.
         result = downweightLowValueTypes(result);
 
-        // 3. Annotate rerank scores into score_chain
+        // 3. Text-similarity dedup: remove near-duplicate texts (Jaccard > 0.9), keep highest-scored
+        result = deduplicateByTextSimilarity(result);
+
+        // 4. Annotate rerank scores into score_chain
         result = annotateRerankScores(result);
 
-        // 4. Minimum score threshold filter
+        // 5. Minimum score threshold filter
         int beforeFilter = result.size();
         result = result.stream()
                 .filter(c -> c.score() >= MIN_RERANK_SCORE)
@@ -145,7 +153,7 @@ public class RerankPipeline {
                     String.format("%.4f", minScore), String.format("%.4f", maxScore));
         }
 
-        // 5. Truncate to max_items
+        // 6. Truncate to max_items
         int maxItems = resolveMaxItems(routePlan);
         if (result.size() > maxItems) {
             result = result.subList(0, maxItems);
@@ -153,6 +161,10 @@ public class RerankPipeline {
 
         return new RerankResult(result, traces);
     }
+
+    // =========================================================================
+    // Post-processing steps
+    // =========================================================================
 
     private List<RetrievalCandidate> deduplicateBySegment(List<RetrievalCandidate> candidates) {
         Map<String, RetrievalCandidate> bestBySegment = new LinkedHashMap<>();
@@ -191,6 +203,45 @@ public class RerankPipeline {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Remove near-duplicate candidates whose {@code text} metadata has character-bigram Jaccard
+     * similarity above {@value #TEXT_SIMILARITY_THRESHOLD}.
+     *
+     * <p>Input is assumed to be sorted by score descending (after downweight). The first
+     * occurrence (highest-scored) is kept; subsequent near-duplicates are dropped.</p>
+     */
+    private List<RetrievalCandidate> deduplicateByTextSimilarity(List<RetrievalCandidate> candidates) {
+        List<RetrievalCandidate> kept = new ArrayList<>();
+        List<Set<String>> keptBigrams = new ArrayList<>();
+
+        for (RetrievalCandidate c : candidates) {
+            String text = candidateText(c);
+            if (text == null || text.isEmpty()) {
+                kept.add(c);
+                keptBigrams.add(Set.of());
+                continue;
+            }
+            Set<String> bigrams = charBigrams(text);
+            boolean isDuplicate = false;
+            for (Set<String> kb : keptBigrams) {
+                if (!kb.isEmpty() && jaccardSimilarity(bigrams, kb) > TEXT_SIMILARITY_THRESHOLD) {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            if (!isDuplicate) {
+                kept.add(c);
+                keptBigrams.add(bigrams);
+            }
+        }
+
+        int before = candidates.size();
+        if (kept.size() < before) {
+            log.debug("Text similarity dedup: {} -> {}", before, kept.size());
+        }
+        return kept;
+    }
+
     private List<RetrievalCandidate> annotateRerankScores(List<RetrievalCandidate> candidates) {
         List<RetrievalCandidate> annotated = new ArrayList<>();
         for (RetrievalCandidate c : candidates) {
@@ -205,6 +256,43 @@ public class RerankPipeline {
         }
         return annotated;
     }
+
+    // =========================================================================
+    // Text similarity helpers
+    // =========================================================================
+
+    private static String candidateText(RetrievalCandidate c) {
+        Object text = c.metadata().get("text");
+        return text != null ? text.toString().trim() : null;
+    }
+
+    /**
+     * Generate the set of all character bigrams from the given text.
+     * Works for both Chinese and Latin characters without tokenization.
+     */
+    private static Set<String> charBigrams(String text) {
+        if (text.length() < 2) return Set.of();
+        Set<String> bigrams = new HashSet<>();
+        for (int i = 0; i < text.length() - 1; i++) {
+            bigrams.add(text.substring(i, i + 2));
+        }
+        return bigrams;
+    }
+
+    private static double jaccardSimilarity(Set<String> a, Set<String> b) {
+        if (a.isEmpty() && b.isEmpty()) return 1.0;
+        if (a.isEmpty() || b.isEmpty()) return 0.0;
+        int intersectionSize = 0;
+        for (String s : a) {
+            if (b.contains(s)) intersectionSize++;
+        }
+        int unionSize = a.size() + b.size() - intersectionSize;
+        return (double) intersectionSize / unionSize;
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
 
     private String resolveRerankMethod(RetrievalRoutePlan routePlan) {
         if (routePlan != null && routePlan.rerank() != null && routePlan.rerank().method() != null) {
