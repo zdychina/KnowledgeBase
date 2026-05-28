@@ -30,6 +30,10 @@ public class ContextAssembler {
     private static final Logger log = LoggerFactory.getLogger(ContextAssembler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    // Context compression budget: 3000 tokens × ~4 chars/token
+    private static final int MAX_TOTAL_TOKENS = 3000;
+    private static final int MAX_TOTAL_CHARS = MAX_TOTAL_TOKENS * 4;
+
     // Issue type constants (match Python)
     private static final String ISSUE_NO_RESULT = "no_result";
     private static final String ISSUE_LOW_CONFIDENCE = "low_confidence";
@@ -206,6 +210,11 @@ public class ContextAssembler {
         if (allItems.size() > maxItems) {
             allItems = allItems.subList(0, maxItems);
         }
+
+        // Phase 3: context compression — keep total text under MAX_TOTAL_CHARS (≈3000 tokens)
+        List<String> ckw = understanding != null ? understanding.keywords() : List.of();
+        String cq = understanding != null ? understanding.originalQuery() : query;
+        allItems = compressItems(new ArrayList<>(allItems), ckw, cq);
 
         // Filter relations: only keep edges where both endpoints exist in final items
         Set<String> itemIds = new HashSet<>();
@@ -501,6 +510,157 @@ public class ContextAssembler {
             groups.add(new EvidenceGroup(entry.getKey(), entry.getValue(), groupRelIds));
         }
         return groups;
+    }
+
+    // =========================================================================
+    // Context compression
+    // =========================================================================
+
+    /**
+     * Compresses items to stay within MAX_TOTAL_CHARS (≈ 3000 tokens).
+     * Seeds receive 60 % of the budget via hard truncation (already relevance-ranked).
+     * Context/support items receive the remaining 40 % via extractive summarization:
+     * sentences are scored by character-bigram overlap with the query, and only the
+     * most-relevant sentences are kept up to each item's per-item budget.
+     */
+    private static List<ContextItem> compressItems(
+            List<ContextItem> items, List<String> queryKeywords, String queryText) {
+        int totalChars = items.stream()
+                .mapToInt(i -> i.text() != null ? i.text().length() : 0)
+                .sum();
+        if (totalChars <= MAX_TOTAL_CHARS) {
+            return items;
+        }
+
+        List<ContextItem> seeds = new ArrayList<>();
+        List<ContextItem> others = new ArrayList<>();
+        for (ContextItem item : items) {
+            if (ROLE_SEED.equals(item.role())) seeds.add(item);
+            else others.add(item);
+        }
+
+        int seedBudget  = (int) (MAX_TOTAL_CHARS * 0.6);
+        int otherBudget = MAX_TOTAL_CHARS - seedBudget;
+
+        List<ContextItem> compressed = new ArrayList<>(items.size());
+        if (!seeds.isEmpty()) {
+            int perSeed = Math.max(200, seedBudget / seeds.size());
+            for (ContextItem item : seeds) compressed.add(truncateText(item, perSeed));
+        }
+        if (!others.isEmpty()) {
+            Set<String> queryBigrams = buildQueryBigrams(queryKeywords, queryText);
+            int perOther = Math.max(100, otherBudget / others.size());
+            for (ContextItem item : others) compressed.add(extractiveSummarize(item, perOther, queryBigrams));
+        }
+        return compressed;
+    }
+
+    /**
+     * Selects the most query-relevant sentences from {@code item.text()} up to {@code maxChars}.
+     * Falls back to hard truncation when the text has only one sentence or no query context.
+     * Selected sentences are returned in their original order to preserve readability.
+     */
+    private static ContextItem extractiveSummarize(ContextItem item, int maxChars, Set<String> queryBigrams) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+
+        List<String> sentences = splitSentences(text);
+        if (sentences.size() <= 1 || queryBigrams.isEmpty()) {
+            return truncateText(item, maxChars);
+        }
+
+        record Sent(int idx, String text, double score) {}
+        List<Sent> scored = new ArrayList<>();
+        for (int i = 0; i < sentences.size(); i++) {
+            String s = sentences.get(i);
+            if (!s.isEmpty()) {
+                scored.add(new Sent(i, s, bigramOverlapScore(s, queryBigrams)));
+            }
+        }
+
+        // Greedy: highest-scored first, stop when budget is full
+        scored.sort(Comparator.comparingDouble(Sent::score).reversed());
+        List<Sent> selected = new ArrayList<>();
+        int used = 0;
+        for (Sent s : scored) {
+            int needed = s.text().length() + (selected.isEmpty() ? 0 : 1); // +1 for separator
+            if (used + needed <= maxChars) {
+                selected.add(s);
+                used += needed;
+            }
+        }
+        if (selected.isEmpty()) {
+            // Budget too tight for any full sentence — truncate the highest-scored one
+            Sent top = scored.get(0);
+            String truncated = top.text().substring(0, Math.min(top.text().length(), maxChars));
+            selected.add(new Sent(top.idx(), truncated, top.score()));
+        }
+
+        // Restore original sentence order
+        selected.sort(Comparator.comparingInt(Sent::idx));
+        String summarized = String.join(" ", selected.stream().map(Sent::text).toList());
+
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), summarized,
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
+    }
+
+    private static ContextItem truncateText(ContextItem item, int maxChars) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), text.substring(0, maxChars) + "…",
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
+    }
+
+    /** Splits text on Chinese/English sentence-ending punctuation and newlines. */
+    private static List<String> splitSentences(String text) {
+        String[] parts = text.split("(?<=[。！？!?])\\s*|\\n+");
+        List<String> result = new ArrayList<>();
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) result.add(trimmed);
+        }
+        return result;
+    }
+
+    /** Builds a character-bigram set from the combined query text and keyword list. */
+    private static Set<String> buildQueryBigrams(List<String> keywords, String queryText) {
+        StringBuilder combined = new StringBuilder();
+        if (queryText != null) combined.append(queryText);
+        if (keywords != null) {
+            for (String kw : keywords) combined.append(' ').append(kw);
+        }
+        return charBigrams(combined.toString().trim());
+    }
+
+    /** Returns the proportion of query bigrams that appear in the sentence (0.0–1.0). */
+    private static double bigramOverlapScore(String sentence, Set<String> queryBigrams) {
+        if (queryBigrams.isEmpty()) return 1.0;
+        Set<String> sentBigrams = charBigrams(sentence);
+        if (sentBigrams.isEmpty()) return 0.0;
+        int matches = 0;
+        for (String bg : sentBigrams) {
+            if (queryBigrams.contains(bg)) matches++;
+        }
+        return (double) matches / queryBigrams.size();
+    }
+
+    private static Set<String> charBigrams(String text) {
+        if (text == null || text.length() < 2) return Set.of();
+        Set<String> bigrams = new HashSet<>();
+        for (int i = 0; i < text.length() - 1; i++) {
+            bigrams.add(text.substring(i, i + 2));
+        }
+        return bigrams;
     }
 
     // =========================================================================
