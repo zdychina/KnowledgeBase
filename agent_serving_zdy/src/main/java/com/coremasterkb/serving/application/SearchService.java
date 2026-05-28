@@ -131,8 +131,9 @@ public class SearchService {
                 : CompletableFuture.completedFuture(null);
 
         // 2. Query Understanding (LLM-first, rule fallback)
+        // complexityHint from request overrides auto-derivation when present
         trace.startStage("query_understanding");
-        QueryUnderstanding understanding = quEngine.understand(quQuery, profile);
+        QueryUnderstanding understanding = quEngine.understand(quQuery, profile, request.complexityHint());
         trace.endStage("query_understanding",
                 "intent=" + understanding.intent()
                         + ", entities=" + understanding.entities().size()
@@ -368,7 +369,8 @@ public class SearchService {
                 original.keywords(),
                 original.evidenceNeed(),
                 original.ambiguities(),
-                original.source()
+                original.source(),
+                original.queryComplexity()
         );
     }
 
@@ -391,7 +393,8 @@ public class SearchService {
                 parent.keywords(),
                 parent.evidenceNeed(),
                 parent.ambiguities(),
-                parent.source()
+                parent.source(),
+                parent.queryComplexity()
         );
     }
 
@@ -403,6 +406,7 @@ public class SearchService {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("original_query", u.originalQuery());
         map.put("intent", u.intent());
+        map.put("complexity", u.queryComplexity());
         map.put("source", u.source());
         map.put("keywords", u.keywords());
         map.put("entities_count", u.entities().size());
