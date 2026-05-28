@@ -89,7 +89,7 @@ class SearchServiceTest {
         void allStagesCalled() {
             var understanding = new QueryUnderstanding("SMF配置", "concept_lookup",
                     List.of(), List.of(), Map.of(), List.of("SMF"),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -108,7 +108,7 @@ class SearchServiceTest {
             when(assembler.assemble(anyString(), any(), any(), any(), any())).thenReturn(expectedPack);
 
             var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence", null);
+                    "cloud_core_network", null, "evidence", null, null);
 
             var result = searchService.search(request);
 
@@ -125,7 +125,7 @@ class SearchServiceTest {
         void debugFlagPopulatesDebugMap() {
             var understanding = new QueryUnderstanding("test", "general",
                     List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -141,7 +141,7 @@ class SearchServiceTest {
                     .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()));
 
             var request = new SearchRequest("test", Map.of(), List.of(), true,
-                    "cloud_core_network", null, "evidence", null);
+                    "cloud_core_network", null, "evidence", null, null);
             var result = searchService.search(request);
 
             assertThat(result.debug()).containsKey("understanding");
@@ -154,7 +154,7 @@ class SearchServiceTest {
         void domainContextClearedOnException() {
             var understanding = new QueryUnderstanding("test", "general",
                     List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -168,7 +168,7 @@ class SearchServiceTest {
                     .thenThrow(new IllegalArgumentException("no_active_release"));
 
             var request = new SearchRequest("test", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence", null);
+                    "cloud_core_network", null, "evidence", null, null);
 
             assertThatThrownBy(() -> searchService.search(request))
                     .isInstanceOf(IllegalArgumentException.class);

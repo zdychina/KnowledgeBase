@@ -21,7 +21,7 @@ class DomainRecordDefaultsTest {
         @Test
         @DisplayName("null scope defaults to empty map")
         void nullScopeDefaultsToEmptyMap() {
-            var req = new SearchRequest("test", null, null, false, "cloud_core_network", null, null, null);
+            var req = new SearchRequest("test", null, null, false, "cloud_core_network", null, null, null, null);
             assertThat(req.scope()).isEmpty();
             assertThat(req.entities()).isEmpty();
             assertThat(req.mode()).isEqualTo("evidence");
@@ -120,7 +120,7 @@ class DomainRecordDefaultsTest {
         @Test
         @DisplayName("null fields default correctly")
         void nullFieldsDefaultCorrectly() {
-            var qu = new QueryUnderstanding("q", null, null, null, null, null, null, null, null);
+            var qu = new QueryUnderstanding("q", null, null, null, null, null, null, null, null, null);
             assertThat(qu.intent()).isEqualTo("general");
             assertThat(qu.subQueries()).isEmpty();
             assertThat(qu.entities()).isEmpty();
