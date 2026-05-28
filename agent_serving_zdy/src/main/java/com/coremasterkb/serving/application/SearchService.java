@@ -138,6 +138,10 @@ public class SearchService {
                 "intent=" + understanding.intent()
                         + ", entities=" + understanding.entities().size()
                         + ", source=" + understanding.source());
+        log.info("[QU] intent={}, complexity={}, entities={}, subQueries={}, source={}",
+                understanding.intent(), understanding.queryComplexity(),
+                understanding.entities().size(), understanding.subQueries().size(),
+                understanding.source());
 
         // 3. Retrieval Router
         trace.startStage("retrieval_router");
@@ -145,6 +149,10 @@ public class SearchService {
         trace.endStage("retrieval_router",
                 "routes=" + routePlan.routes().size()
                         + ", fusion=" + routePlan.fusion().method());
+        log.info("[route] routes={}, fusion={}, rerank={}",
+                routePlan.routes().stream().filter(r -> r.enabled())
+                        .map(r -> r.name() + "(w=" + r.weight() + ")").toList(),
+                routePlan.fusion().method(), routePlan.rerank().method());
 
         // 4. Resolve domain and channel; validate DB availability
         String effectiveDomain = (request.domain() != null && !request.domain().isBlank())
@@ -178,11 +186,15 @@ public class SearchService {
                 throw e;
             }
             trace.endStage("resolve_scope", "snapshots=" + scope.snapshotIds().size());
+            log.info("[scope] domain={}, channel={}, release={}, build={}, snapshots={}",
+                    effectiveDomain, channel, scope.releaseId(), scope.buildId(),
+                    scope.snapshotIds().size());
 
             // 3.5. Multi-Query Expansion: original + up to 2 LLM variants
             trace.startStage("multi_query_expand");
             List<String> queryVariants = multiQueryExpander.expand(request.query());
             trace.endStage("multi_query_expand", "variants=" + queryVariants.size());
+            log.info("[expand] variants={}", queryVariants.size());
 
             // 5. Generate embeddings in parallel for all variants and sub-queries (HyDE per text).
             // The original query future was already launched before QU; other texts are started here.
@@ -224,6 +236,8 @@ public class SearchService {
                 trace.endStage("embedding",
                         "texts=" + variantEmbeddings.size()
                         + ", dim=" + (queryEmbedding != null ? queryEmbedding.length : 0));
+                log.info("[embed] texts={}, dim={}",
+                        variantEmbeddings.size(), queryEmbedding != null ? queryEmbedding.length : 0);
             }
 
             // 5.5. Semantic cache lookup (after embedding, before heavy retrieval)
@@ -231,10 +245,11 @@ public class SearchService {
             ContextPack cachedPack = semanticCache.lookup(effectiveDomain, queryEmbedding);
             if (cachedPack != null) {
                 trace.endStage("semantic_cache", "hit=true");
-                log.info("[search] semantic cache hit, skipping pipeline");
+                log.info("[cache] hit=true, items={}, skipping pipeline", cachedPack.items().size());
                 return cachedPack;
             }
             trace.endStage("semantic_cache", "hit=false");
+            log.info("[cache] hit=false");
 
             // 6. Retrieve for each variant and sub-query, merge candidates
             trace.startStage("retrieve");
@@ -266,6 +281,9 @@ public class SearchService {
                     "candidates=" + rawCandidates.size()
                     + ", variants=" + queryVariants.size()
                     + ", sub_queries=" + understanding.subQueries().size());
+            log.info("[retrieve] rawCandidates={}, from variants={}, subQueries={}",
+                    rawCandidates.size(), queryVariants.size(),
+                    Math.min(understanding.subQueries().size(), 4));
 
             // 7. Fuse
             trace.startStage("fusion");
@@ -277,18 +295,28 @@ public class SearchService {
             List<RetrievalCandidate> fused = fusion.fuse(rawCandidates, routePlan);
             trace.endStage("fusion",
                     "fused=" + fused.size() + ", method=" + routePlan.fusion().method());
+            log.info("[fuse] method={}, in={}, out={}", routePlan.fusion().method(),
+                    rawCandidates.size(), fused.size());
 
             // 8. Rerank (cascading: model -> LLM -> score)
             trace.startStage("rerank");
             var rerankResult = rerankPipeline.rerank(fused, routePlan, understanding);
             ranked = rerankResult.candidates();
             trace.endStage("rerank", "ranked=" + ranked.size());
+            log.info("[rerank] method={}, in={}, out={}", routePlan.rerank().method(),
+                    fused.size(), ranked.size());
 
             // 9. Assemble ContextPack
             trace.startStage("assembly");
             pack = assembler.assemble(
                     request.query(), understanding, scope, ranked, routePlan);
             trace.endStage("assembly", "items=" + pack.items().size());
+            String assemblyIssues = pack.issues().stream()
+                    .map(Issue::type).reduce((a, b) -> a + "," + b).orElse("none");
+            log.info("[assemble] items={}, expanded={}, issues=[{}]",
+                    pack.items().stream().filter(i -> "seed".equals(i.role())).count(),
+                    pack.items().stream().filter(i -> !"seed".equals(i.role())).count(),
+                    assemblyIssues);
 
             // 9.5. Store result in semantic cache (best-effort, non-blocking)
             semanticCache.store(effectiveDomain, request.query(), queryEmbedding, pack);
