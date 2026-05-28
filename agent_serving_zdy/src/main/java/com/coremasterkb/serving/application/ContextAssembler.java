@@ -35,8 +35,9 @@ public class ContextAssembler {
     private static final int MAX_TOTAL_CHARS = MAX_TOTAL_TOKENS * 4;
 
     // Issue type constants (match Python)
-    private static final String ISSUE_NO_RESULT = "no_result";
-    private static final String ISSUE_LOW_CONFIDENCE = "low_confidence";
+    private static final String ISSUE_NO_RESULT            = "no_result";
+    private static final String ISSUE_LOW_CONFIDENCE       = "low_confidence";
+    private static final String ISSUE_CONFLICTING_EVIDENCE = "conflicting_evidence";
 
     // Kind/role constants
     private static final String KIND_RETRIEVAL_UNIT = "retrieval_unit";
@@ -44,6 +45,27 @@ public class ContextAssembler {
     private static final String ROLE_SEED = "seed";
     private static final String ROLE_CONTEXT = "context";
     private static final String ROLE_SUPPORT = "support";
+
+    /**
+     * Phase 2 – RST relation weights used as initial scores for expanded items.
+     * Mirrors the priority order in GraphExpander: higher weight = higher score = more context budget.
+     */
+    private static final Map<String, Double> RST_RELATION_WEIGHTS = Map.ofEntries(
+            Map.entry("elaborates",           1.5),
+            Map.entry("conditions",           1.4),
+            Map.entry("backgrounds",          1.3),
+            Map.entry("enables",              1.2),
+            Map.entry("results_in",           1.1),
+            Map.entry("sequences",            1.0),
+            Map.entry("contrasts_with",       0.9),
+            Map.entry("causes",               0.8),
+            Map.entry("parallels",            0.7),
+            Map.entry("section_header_of",    0.6),
+            Map.entry("same_section",         0.5),
+            Map.entry("previous",             0.4),
+            Map.entry("next",                 0.4),
+            Map.entry("same_parent_section",  0.3)
+    );
 
     // RST relation type -> evidence role mapping for expansion
     private static final Map<String, String> RST_ROLE_MAP = Map.ofEntries(
@@ -251,6 +273,20 @@ public class ContextAssembler {
                     null, releaseId, buildId, snapshotCount);
         }
 
+        // Phase 3: Conflict detection — scan final item set for contrasts_with expansions
+        List<ContextItem> contrastingItems = allItems.stream()
+                .filter(item -> Boolean.TRUE.equals(item.metadata().get("is_contrasting")))
+                .toList();
+        if (!contrastingItems.isEmpty()) {
+            issues.add(new Issue(
+                    ISSUE_CONFLICTING_EVIDENCE,
+                    "检测到矛盾信息：以下内容与主要检索结果存在对比关系，请注意辨别",
+                    Map.of("conflicting_count", contrastingItems.size(),
+                           "conflicting_ids", contrastingItems.stream().map(ContextItem::id).toList())
+            ));
+            log.info("[assemble] conflict detected: {} contrasting items", contrastingItems.size());
+        }
+
         // 10. Build evidence groups and suggestions
         List<EvidenceGroup> evidenceGroups = buildEvidenceGroups(allItems, filteredRelations);
         List<String> suggestions = buildSuggestions(issues);
@@ -392,28 +428,43 @@ public class ContextAssembler {
         List<ContextItem> items = new ArrayList<>();
         for (var exp : expansions) {
             SegmentWithMetaRow seg = exp.segment();
-            // For expanded items, use a default relation type since ExpandedSegmentRow doesn't carry it
-            String evidenceRole = "background";
+            String relType = exp.relationType() != null ? exp.relationType() : "";
+
+            // Phase 2: evidence role and score from RST relation type
+            String evidenceRole = RST_ROLE_MAP.getOrDefault(relType, "background");
+            double score = RST_RELATION_WEIGHTS.getOrDefault(relType, 0.3);
+
+            // Phase 3: tag contrasting items so conflict detection can find them later
+            Map<String, Object> meta;
+            if ("contrasts_with".equals(relType)) {
+                meta = new LinkedHashMap<>();
+                meta.put("is_contrasting", true);
+                meta.put("contrasts_with_seed", exp.sourceSegmentId());
+            } else {
+                meta = Map.of();
+            }
 
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
                     ROLE_SUPPORT,
                     seg.getRawText() != null ? seg.getRawText() : "",
-                    0.0,
+                    score,
                     seg.getSnapshotTitle(),
                     seg.getBlockType() != null ? seg.getBlockType() : "unknown",
                     seg.getSemanticRole() != null ? seg.getSemanticRole() : "unknown",
                     seg.getDocumentId(),
-                    "expansion",
+                    relType,
                     Map.of(),
-                    Map.of(),
+                    meta,
                     List.of(),
                     null,
                     evidenceRole,
                     Map.of()
             ));
         }
+        // Higher RST-weight relations appear first, giving them priority in the context budget
+        items.sort(Comparator.comparingDouble(ContextItem::score).reversed());
         return items;
     }
 
@@ -474,6 +525,8 @@ public class ContextAssembler {
                 suggestions.add("尝试使用更通用的关键词");
             } else if (ISSUE_LOW_CONFIDENCE.equals(issue.type())) {
                 suggestions.add("尝试更精确的描述或添加产品/版本约束");
+            } else if (ISSUE_CONFLICTING_EVIDENCE.equals(issue.type())) {
+                suggestions.add("检索到矛盾信息，建议参考多方文档进行综合判断");
             }
         }
         return suggestions;

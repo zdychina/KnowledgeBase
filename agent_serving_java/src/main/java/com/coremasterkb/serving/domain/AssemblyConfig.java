@@ -27,6 +27,6 @@ public record AssemblyConfig(
     );
 
     public static AssemblyConfig defaults() {
-        return new AssemblyConfig(true, true, 10, 10, 2, DEFAULT_RELATION_TYPES);
+        return new AssemblyConfig(true, true, 10, 20, 2, DEFAULT_RELATION_TYPES);
     }
 }
