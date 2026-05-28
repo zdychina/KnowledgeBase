@@ -7,6 +7,7 @@ import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Client for the shared LLM service (llm_service).
@@ -25,12 +26,17 @@ import java.util.*;
 public class LlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(LlmClient.class);
+    private static final long HEALTH_CACHE_TTL_MS = 30_000;
     private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE =
             new ParameterizedTypeReference<>() {};
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
     private volatile String knowledgeDomain;
+
+    // Health check cache
+    private final AtomicLong lastHealthCheckMs = new AtomicLong(0);
+    private volatile boolean cachedHealth = false;
 
     public LlmClient(RestTemplate restTemplate, String baseUrl) {
         this.restTemplate = restTemplate;
@@ -46,12 +52,34 @@ public class LlmClient {
     // Availability — lightweight check (no HTTP call)
     // =========================================================================
 
-    /**
-     * Returns true if the client has a non-blank baseUrl configured.
-     * No HTTP health-check is performed — call failures are handled by callers.
-     */
     public boolean isAvailable() {
-        return baseUrl != null && !baseUrl.isBlank();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        long last = lastHealthCheckMs.get();
+        if (now - last < HEALTH_CACHE_TTL_MS) {
+            return cachedHealth;
+        }
+        boolean healthy = checkHealth();
+        cachedHealth = healthy;
+        lastHealthCheckMs.set(now);
+        return healthy;
+    }
+
+    public boolean checkHealth() {
+        try {
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                    baseUrl + "/health",
+                    HttpMethod.GET,
+                    new HttpEntity<>(buildHeaders()),
+                    MAP_TYPE
+            );
+            return response.getStatusCode().is2xxSuccessful();
+        } catch (Exception e) {
+            log.debug("LLM health check failed: {}", e.getMessage());
+            return false;
+        }
     }
 
     // =========================================================================
