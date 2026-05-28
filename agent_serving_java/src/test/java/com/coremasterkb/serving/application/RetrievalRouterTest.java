@@ -80,7 +80,7 @@ class RetrievalRouterTest {
         void comparisonIntentCascadeRerank() {
             var understanding = new QueryUnderstanding(
                     "UDG和UNC的区别", "comparison", List.of(), List.of(), Map.of(), List.of(),
-                    new EvidenceNeed(List.of(), List.of(), true, false), List.of(), "rule"
+                    new EvidenceNeed(List.of(), List.of(), true, false), List.of(), "rule", null
             );
             var plan = router.route(understanding, null);
             assertThat(plan.rerank().method()).isEqualTo("cascade");
@@ -101,7 +101,7 @@ class RetrievalRouterTest {
         var understanding = new QueryUnderstanding(
                 "SMF配置", "general", List.of(), List.of(),
                 Map.of("network_elements", List.of("SMF")), List.of("SMF", "配置"),
-                EvidenceNeed.empty(), List.of(), "rule"
+                EvidenceNeed.empty(), List.of(), "rule", null
         );
         var plan = router.route(understanding, null);
         assertThat(plan.filters()).containsKey("network_elements");
@@ -110,16 +110,16 @@ class RetrievalRouterTest {
     // Helpers
     private QueryUnderstanding generalUnderstanding() {
         return new QueryUnderstanding("你好", "general", List.of(), List.of(),
-                Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule");
+                Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", null);
     }
 
     private QueryUnderstanding commandUsageUnderstanding() {
         return new QueryUnderstanding("ADD SMFPARTNER 命令怎么写", "command_usage", List.of(),
-                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule");
+                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", null);
     }
 
     private QueryUnderstanding conceptLookupUnderstanding() {
         return new QueryUnderstanding("AMF是什么", "concept_lookup", List.of(),
-                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule");
+                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", null);
     }
 }

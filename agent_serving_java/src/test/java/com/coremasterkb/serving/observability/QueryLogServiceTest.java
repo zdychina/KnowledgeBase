@@ -28,7 +28,7 @@ class QueryLogServiceTest {
     }
 
     private SearchRequest req(String query, String domain, String channel) {
-        return new SearchRequest(query, Map.of(), List.of(), false, domain, channel, "evidence");
+        return new SearchRequest(query, Map.of(), List.of(), false, domain, channel, "evidence", null, null);
     }
 
     private ContextQuery ctxQuery(String intent, String source,

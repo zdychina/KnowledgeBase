@@ -39,7 +39,7 @@ class RetrievalOrchestratorTest {
         @Test
         @DisplayName("null snapshotIds returns empty result")
         void nullReturnsEmpty() {
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(List.of(), null, null, null, null, null);
             var result = orchestrator.execute(understanding, plan, null, null);
             assertThat(result.candidates()).isEmpty();
@@ -48,7 +48,7 @@ class RetrievalOrchestratorTest {
         @Test
         @DisplayName("empty snapshotIds returns empty result")
         void emptyReturnsEmpty() {
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(List.of(), null, null, null, null, null);
             var result = orchestrator.execute(understanding, plan, null, List.of());
             assertThat(result.candidates()).isEmpty();
@@ -63,7 +63,7 @@ class RetrievalOrchestratorTest {
         void denseSkippedNoEmbedding() {
             when(bm25Retriever.retrieve(any(), any(), anyInt())).thenReturn(List.of());
 
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(
                             new RouteConfig("lexical_bm25", true, 1.0, 50),
@@ -89,7 +89,7 @@ class RetrievalOrchestratorTest {
             when(bm25Retriever.retrieve(any(), any(), anyInt())).thenReturn(List.of());
             when(denseRetriever.retrieve(any(), any(), anyInt())).thenReturn(List.of());
 
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(
                             new RouteConfig("lexical_bm25", true, 1.0, 50),
@@ -113,7 +113,7 @@ class RetrievalOrchestratorTest {
             when(bm25Retriever.retrieve(any(), any(), anyInt()))
                     .thenThrow(new RuntimeException("DB error"));
 
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     null, null, null, null, null
@@ -132,7 +132,7 @@ class RetrievalOrchestratorTest {
         @Test
         @DisplayName("unregistered route traced as not_registered")
         void unregisteredTraced() {
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("unknown_route", true, 1.0, 50)),
                     null, null, null, null, null
