@@ -30,9 +30,14 @@ public class ContextAssembler {
     private static final Logger log = LoggerFactory.getLogger(ContextAssembler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    // Context compression budget: 3000 tokens × ~4 chars/token
+    private static final int MAX_TOTAL_TOKENS = 3000;
+    private static final int MAX_TOTAL_CHARS = MAX_TOTAL_TOKENS * 4;
+
     // Issue type constants (match Python)
-    private static final String ISSUE_NO_RESULT = "no_result";
-    private static final String ISSUE_LOW_CONFIDENCE = "low_confidence";
+    private static final String ISSUE_NO_RESULT            = "no_result";
+    private static final String ISSUE_LOW_CONFIDENCE       = "low_confidence";
+    private static final String ISSUE_CONFLICTING_EVIDENCE = "conflicting_evidence";
 
     // Kind/role constants
     private static final String KIND_RETRIEVAL_UNIT = "retrieval_unit";
@@ -40,6 +45,27 @@ public class ContextAssembler {
     private static final String ROLE_SEED = "seed";
     private static final String ROLE_CONTEXT = "context";
     private static final String ROLE_SUPPORT = "support";
+
+    /**
+     * Phase 2 – RST relation weights used as initial scores for expanded items.
+     * Mirrors the priority order in GraphExpander: higher weight = higher score = more context budget.
+     */
+    private static final Map<String, Double> RST_RELATION_WEIGHTS = Map.ofEntries(
+            Map.entry("elaborates",           1.5),
+            Map.entry("conditions",           1.4),
+            Map.entry("backgrounds",          1.3),
+            Map.entry("enables",              1.2),
+            Map.entry("results_in",           1.1),
+            Map.entry("sequences",            1.0),
+            Map.entry("contrasts_with",       0.9),
+            Map.entry("causes",               0.8),
+            Map.entry("parallels",            0.7),
+            Map.entry("section_header_of",    0.6),
+            Map.entry("same_section",         0.5),
+            Map.entry("previous",             0.4),
+            Map.entry("next",                 0.4),
+            Map.entry("same_parent_section",  0.3)
+    );
 
     // RST relation type -> evidence role mapping for expansion
     private static final Map<String, String> RST_ROLE_MAP = Map.ofEntries(
@@ -207,6 +233,11 @@ public class ContextAssembler {
             allItems = allItems.subList(0, maxItems);
         }
 
+        // Phase 3: context compression — keep total text under MAX_TOTAL_CHARS (≈3000 tokens)
+        List<String> ckw = understanding != null ? understanding.keywords() : List.of();
+        String cq = understanding != null ? understanding.originalQuery() : query;
+        allItems = compressItems(new ArrayList<>(allItems), ckw, cq);
+
         // Filter relations: only keep edges where both endpoints exist in final items
         Set<String> itemIds = new HashSet<>();
         for (var item : allItems) {
@@ -240,6 +271,20 @@ public class ContextAssembler {
         } else {
             contextQuery = new ContextQuery(query, "", null, null, null, null,
                     null, releaseId, buildId, snapshotCount);
+        }
+
+        // Phase 3: Conflict detection — scan final item set for contrasts_with expansions
+        List<ContextItem> contrastingItems = allItems.stream()
+                .filter(item -> Boolean.TRUE.equals(item.metadata().get("is_contrasting")))
+                .toList();
+        if (!contrastingItems.isEmpty()) {
+            issues.add(new Issue(
+                    ISSUE_CONFLICTING_EVIDENCE,
+                    "检测到矛盾信息：以下内容与主要检索结果存在对比关系，请注意辨别",
+                    Map.of("conflicting_count", contrastingItems.size(),
+                           "conflicting_ids", contrastingItems.stream().map(ContextItem::id).toList())
+            ));
+            log.info("[assemble] conflict detected: {} contrasting items", contrastingItems.size());
         }
 
         // 10. Build evidence groups and suggestions
@@ -383,28 +428,43 @@ public class ContextAssembler {
         List<ContextItem> items = new ArrayList<>();
         for (var exp : expansions) {
             SegmentWithMetaRow seg = exp.segment();
-            // For expanded items, use a default relation type since ExpandedSegmentRow doesn't carry it
-            String evidenceRole = "background";
+            String relType = exp.relationType() != null ? exp.relationType() : "";
+
+            // Phase 2: evidence role and score from RST relation type
+            String evidenceRole = RST_ROLE_MAP.getOrDefault(relType, "background");
+            double score = RST_RELATION_WEIGHTS.getOrDefault(relType, 0.3);
+
+            // Phase 3: tag contrasting items so conflict detection can find them later
+            Map<String, Object> meta;
+            if ("contrasts_with".equals(relType)) {
+                meta = new LinkedHashMap<>();
+                meta.put("is_contrasting", true);
+                meta.put("contrasts_with_seed", exp.sourceSegmentId());
+            } else {
+                meta = Map.of();
+            }
 
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
                     ROLE_SUPPORT,
                     seg.getRawText() != null ? seg.getRawText() : "",
-                    0.0,
+                    score,
                     seg.getSnapshotTitle(),
                     seg.getBlockType() != null ? seg.getBlockType() : "unknown",
                     seg.getSemanticRole() != null ? seg.getSemanticRole() : "unknown",
                     seg.getDocumentId(),
-                    "expansion",
+                    relType,
                     Map.of(),
-                    Map.of(),
+                    meta,
                     List.of(),
                     null,
                     evidenceRole,
                     Map.of()
             ));
         }
+        // Higher RST-weight relations appear first, giving them priority in the context budget
+        items.sort(Comparator.comparingDouble(ContextItem::score).reversed());
         return items;
     }
 
@@ -465,6 +525,8 @@ public class ContextAssembler {
                 suggestions.add("尝试使用更通用的关键词");
             } else if (ISSUE_LOW_CONFIDENCE.equals(issue.type())) {
                 suggestions.add("尝试更精确的描述或添加产品/版本约束");
+            } else if (ISSUE_CONFLICTING_EVIDENCE.equals(issue.type())) {
+                suggestions.add("检索到矛盾信息，建议参考多方文档进行综合判断");
             }
         }
         return suggestions;
@@ -501,6 +563,157 @@ public class ContextAssembler {
             groups.add(new EvidenceGroup(entry.getKey(), entry.getValue(), groupRelIds));
         }
         return groups;
+    }
+
+    // =========================================================================
+    // Context compression
+    // =========================================================================
+
+    /**
+     * Compresses items to stay within MAX_TOTAL_CHARS (≈ 3000 tokens).
+     * Seeds receive 60 % of the budget via hard truncation (already relevance-ranked).
+     * Context/support items receive the remaining 40 % via extractive summarization:
+     * sentences are scored by character-bigram overlap with the query, and only the
+     * most-relevant sentences are kept up to each item's per-item budget.
+     */
+    private static List<ContextItem> compressItems(
+            List<ContextItem> items, List<String> queryKeywords, String queryText) {
+        int totalChars = items.stream()
+                .mapToInt(i -> i.text() != null ? i.text().length() : 0)
+                .sum();
+        if (totalChars <= MAX_TOTAL_CHARS) {
+            return items;
+        }
+
+        List<ContextItem> seeds = new ArrayList<>();
+        List<ContextItem> others = new ArrayList<>();
+        for (ContextItem item : items) {
+            if (ROLE_SEED.equals(item.role())) seeds.add(item);
+            else others.add(item);
+        }
+
+        int seedBudget  = (int) (MAX_TOTAL_CHARS * 0.6);
+        int otherBudget = MAX_TOTAL_CHARS - seedBudget;
+
+        List<ContextItem> compressed = new ArrayList<>(items.size());
+        if (!seeds.isEmpty()) {
+            int perSeed = Math.max(200, seedBudget / seeds.size());
+            for (ContextItem item : seeds) compressed.add(truncateText(item, perSeed));
+        }
+        if (!others.isEmpty()) {
+            Set<String> queryBigrams = buildQueryBigrams(queryKeywords, queryText);
+            int perOther = Math.max(100, otherBudget / others.size());
+            for (ContextItem item : others) compressed.add(extractiveSummarize(item, perOther, queryBigrams));
+        }
+        return compressed;
+    }
+
+    /**
+     * Selects the most query-relevant sentences from {@code item.text()} up to {@code maxChars}.
+     * Falls back to hard truncation when the text has only one sentence or no query context.
+     * Selected sentences are returned in their original order to preserve readability.
+     */
+    private static ContextItem extractiveSummarize(ContextItem item, int maxChars, Set<String> queryBigrams) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+
+        List<String> sentences = splitSentences(text);
+        if (sentences.size() <= 1 || queryBigrams.isEmpty()) {
+            return truncateText(item, maxChars);
+        }
+
+        record Sent(int idx, String text, double score) {}
+        List<Sent> scored = new ArrayList<>();
+        for (int i = 0; i < sentences.size(); i++) {
+            String s = sentences.get(i);
+            if (!s.isEmpty()) {
+                scored.add(new Sent(i, s, bigramOverlapScore(s, queryBigrams)));
+            }
+        }
+
+        // Greedy: highest-scored first, stop when budget is full
+        scored.sort(Comparator.comparingDouble(Sent::score).reversed());
+        List<Sent> selected = new ArrayList<>();
+        int used = 0;
+        for (Sent s : scored) {
+            int needed = s.text().length() + (selected.isEmpty() ? 0 : 1); // +1 for separator
+            if (used + needed <= maxChars) {
+                selected.add(s);
+                used += needed;
+            }
+        }
+        if (selected.isEmpty()) {
+            // Budget too tight for any full sentence — truncate the highest-scored one
+            Sent top = scored.get(0);
+            String truncated = top.text().substring(0, Math.min(top.text().length(), maxChars));
+            selected.add(new Sent(top.idx(), truncated, top.score()));
+        }
+
+        // Restore original sentence order
+        selected.sort(Comparator.comparingInt(Sent::idx));
+        String summarized = String.join(" ", selected.stream().map(Sent::text).toList());
+
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), summarized,
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
+    }
+
+    private static ContextItem truncateText(ContextItem item, int maxChars) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), text.substring(0, maxChars) + "…",
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
+    }
+
+    /** Splits text on Chinese/English sentence-ending punctuation and newlines. */
+    private static List<String> splitSentences(String text) {
+        String[] parts = text.split("(?<=[。！？!?])\\s*|\\n+");
+        List<String> result = new ArrayList<>();
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) result.add(trimmed);
+        }
+        return result;
+    }
+
+    /** Builds a character-bigram set from the combined query text and keyword list. */
+    private static Set<String> buildQueryBigrams(List<String> keywords, String queryText) {
+        StringBuilder combined = new StringBuilder();
+        if (queryText != null) combined.append(queryText);
+        if (keywords != null) {
+            for (String kw : keywords) combined.append(' ').append(kw);
+        }
+        return charBigrams(combined.toString().trim());
+    }
+
+    /** Returns the proportion of query bigrams that appear in the sentence (0.0–1.0). */
+    private static double bigramOverlapScore(String sentence, Set<String> queryBigrams) {
+        if (queryBigrams.isEmpty()) return 1.0;
+        Set<String> sentBigrams = charBigrams(sentence);
+        if (sentBigrams.isEmpty()) return 0.0;
+        int matches = 0;
+        for (String bg : sentBigrams) {
+            if (queryBigrams.contains(bg)) matches++;
+        }
+        return (double) matches / queryBigrams.size();
+    }
+
+    private static Set<String> charBigrams(String text) {
+        if (text == null || text.length() < 2) return Set.of();
+        Set<String> bigrams = new HashSet<>();
+        for (int i = 0; i < text.length() - 1; i++) {
+            bigrams.add(text.substring(i, i + 2));
+        }
+        return bigrams;
     }
 
     // =========================================================================
