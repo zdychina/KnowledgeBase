@@ -1,6 +1,7 @@
 package com.coremasterkb.serving.application;
 
 import com.coremasterkb.serving.domain.*;
+import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -92,6 +94,67 @@ class RetrievalRouterTest {
             var understanding = generalUnderstanding();
             var plan = router.route(understanding, null);
             assertThat(plan.rerank().method()).isEqualTo("score");
+        }
+    }
+
+    @Nested
+    @DisplayName("intent-aware graph expansion + rerank")
+    class IntentAwareStrategy {
+
+        private QueryUnderstanding intentU(String intent) {
+            return new QueryUnderstanding("q", intent, List.of(), List.of(), Map.of(), List.of(),
+                    EvidenceNeed.empty(), List.of(), "rule", null);
+        }
+
+        @Test
+        @DisplayName("troubleshooting expands along the causal chain + cascade rerank")
+        void troubleshooting() {
+            var plan = router.route(intentU("troubleshooting"), null);
+            assertThat(plan.assembly().relationExpansion()).isTrue();
+            assertThat(plan.assembly().relationTypes()).contains("causes", "results_in");
+            assertThat(plan.rerank().method()).isEqualTo("cascade");
+        }
+
+        @Test
+        @DisplayName("comparison expands along contrasts_with")
+        void comparison() {
+            var plan = router.route(intentU("comparison"), null);
+            assertThat(plan.assembly().relationExpansion()).isTrue();
+            assertThat(plan.assembly().relationTypes()).contains("contrasts_with");
+        }
+
+        @Test
+        @DisplayName("procedure expands along purposes/enables")
+        void procedure() {
+            var plan = router.route(intentU("procedure"), null);
+            assertThat(plan.assembly().relationExpansion()).isTrue();
+            assertThat(plan.assembly().relationTypes()).contains("purposes", "enables");
+        }
+
+        @Test
+        @DisplayName("non-targeted intent keeps default (no forced expansion, score rerank)")
+        void otherIntentUnchanged() {
+            var plan = router.route(intentU("general"), null);
+            assertThat(plan.assembly().relationExpansion()).isFalse();
+            assertThat(plan.rerank().method()).isEqualTo("score");
+        }
+
+        @Test
+        @DisplayName("domain pack intent_strategy overrides built-in expansion + rerank")
+        void domainOverride() {
+            Map<String, Object> ge = Map.of(
+                    "enabled", true,
+                    "relation_types", List.of("custom_rel"),
+                    "max_expanded", 3);
+            Map<String, Object> strategy = Map.of(
+                    "troubleshooting", Map.of("graph_expand", ge, "rerank", "llm"));
+            var profile = new ServingDomainProfile(
+                    "d", Set.of(), Set.of(), Map.of(), List.of(), List.of(), Map.of(), strategy);
+
+            var plan = router.route(intentU("troubleshooting"), profile);
+            assertThat(plan.assembly().relationTypes()).containsExactly("custom_rel");
+            assertThat(plan.assembly().maxExpanded()).isEqualTo(3);
+            assertThat(plan.rerank().method()).isEqualTo("llm");
         }
     }
 

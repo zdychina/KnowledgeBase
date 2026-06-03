@@ -84,6 +84,28 @@ public class RetrievalRouter {
     }
 
     /**
+     * Intent → discourse relation types to follow during graph expansion (built-in defaults).
+     * troubleshooting walks the causal chain, comparison surfaces contrasts, procedure
+     * follows purpose/enable/sequence dependencies. Overridable per domain via
+     * {@code serving.intent_strategy.<intent>.graph_expand.relation_types}.
+     */
+    private static final Map<String, List<String>> INTENT_EXPANSION = Map.of(
+            "troubleshooting", List.of("causes", "results_in", "enables", "conditions", "elaborates", "backgrounds"),
+            "comparison",      List.of("contrasts_with", "parallels", "elaborates"),
+            "procedure",       List.of("purposes", "enables", "sequences", "conditions", "elaborates")
+    );
+
+    /** Intent → rerank method (built-in defaults; overridable per domain via intent_strategy). */
+    private static final Map<String, String> INTENT_RERANK = Map.of(
+            "troubleshooting", "cascade",
+            "comparison",      "cascade",
+            "procedure",       "cascade"
+    );
+
+    private static final int INTENT_EXPANSION_MAX_EXPANDED = 8;
+    private static final int INTENT_EXPANSION_MAX_DEPTH = 2;
+
+    /**
      * Build a route plan from query understanding.
      *
      * <p>Routing uses a two-layer strategy:
@@ -126,19 +148,20 @@ public class RetrievalRouter {
             ));
         }
 
-        // Rerank: complex always uses cascade; others use cascade only if comparison is needed
-        String rerankMethod = "complex".equals(complexity) ? "cascade"
-                : (understanding.evidenceNeed() != null && understanding.evidenceNeed().needsComparison()
-                        ? "cascade" : "score");
+        // Per-intent strategy overrides from the domain pack (optional).
+        Map<String, Object> intentOverride = profile != null
+                ? profile.intentStrategyFor(intent) : Map.of();
+
+        // Rerank: domain override > built-in intent default > complexity/comparison default.
+        String rerankMethod = resolveRerankMethod(intent, complexity, understanding, intentOverride);
 
         // Fusion: weighted_rrf when more than one route is active
         long enabledCount = routeConfigs.stream().filter(RouteConfig::enabled).count();
         String fusionMethod = enabledCount > 1 ? "weighted_rrf" : "identity";
 
-        // Graph expansion: only for complex queries (simple/medium skip expansion to save latency)
-        AssemblyConfig assemblyConfig = "complex".equals(complexity)
-                ? AssemblyConfig.defaults()
-                : new AssemblyConfig(true, false, 10, 0, 0, List.of());
+        // Graph expansion: intent-aware relation chains (troubleshooting→causal,
+        // comparison→contrasts_with, procedure→purposes/enables); else complexity default.
+        AssemblyConfig assemblyConfig = resolveAssembly(intent, complexity, intentOverride);
 
         return new RetrievalRoutePlan(
                 routeConfigs,
@@ -148,5 +171,59 @@ public class RetrievalRouter {
                 assemblyConfig,
                 ExpansionConfig.defaults()
         );
+    }
+
+    // =========================================================================
+    // Intent-aware strategy resolution (rerank method + graph expansion)
+    // =========================================================================
+
+    private static String resolveRerankMethod(
+            String intent, String complexity, QueryUnderstanding understanding,
+            Map<String, Object> intentOverride) {
+        if (intentOverride.get("rerank") instanceof String s && !s.isBlank()) {
+            return s;
+        }
+        String builtin = INTENT_RERANK.get(intent);
+        if (builtin != null) {
+            return builtin;
+        }
+        if ("complex".equals(complexity)) return "cascade";
+        if (understanding.evidenceNeed() != null && understanding.evidenceNeed().needsComparison()) {
+            return "cascade";
+        }
+        return "score";
+    }
+
+    /**
+     * Resolve the assembly/expansion config for an intent. Precedence:
+     * domain-pack {@code graph_expand} override &gt; built-in intent expansion &gt;
+     * complexity-driven baseline (only complex queries expand by default).
+     */
+    @SuppressWarnings("unchecked")
+    private static AssemblyConfig resolveAssembly(
+            String intent, String complexity, Map<String, Object> intentOverride) {
+        AssemblyConfig base = "complex".equals(complexity)
+                ? AssemblyConfig.defaults()
+                : new AssemblyConfig(true, false, 10, 0, 0, List.of());
+
+        List<String> builtinTypes = INTENT_EXPANSION.get(intent);
+        Map<String, Object> ge = intentOverride.get("graph_expand") instanceof Map<?, ?> m
+                ? (Map<String, Object>) m : Map.of();
+
+        if (builtinTypes == null && ge.isEmpty()) {
+            return base;  // no intent-specific expansion → leave other intents unchanged
+        }
+
+        boolean enabled = ge.get("enabled") instanceof Boolean b ? b : true;
+        List<String> relationTypes = ge.get("relation_types") instanceof List<?> l
+                ? l.stream().map(String::valueOf).toList()
+                : (builtinTypes != null ? builtinTypes : base.relationTypes());
+        int maxDepth = ge.get("max_depth") instanceof Number n
+                ? n.intValue() : Math.max(base.maxRelationDepth(), INTENT_EXPANSION_MAX_DEPTH);
+        int maxExpanded = ge.get("max_expanded") instanceof Number n2
+                ? n2.intValue() : Math.max(base.maxExpanded(), INTENT_EXPANSION_MAX_EXPANDED);
+        int maxItems = base.maxItems() > 0 ? base.maxItems() : 10;
+
+        return new AssemblyConfig(true, enabled, maxItems, maxExpanded, maxDepth, relationTypes);
     }
 }

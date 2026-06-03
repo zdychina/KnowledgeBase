@@ -442,6 +442,7 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
     On failure, calls tracker.fail_document and returns ctx with error set.
     """
     import json as _json
+    from knowledge_mining.mining.stages.relations import compute_discourse_roles
 
     asset_db = cfg.asset_db
     tracker = cfg.tracker
@@ -507,9 +508,15 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
             asset_db.commit()
 
         # --- commit_segments ---
+        # Infer RST discourse role (nucleus/satellite/standalone) from the relations
+        # built in the discourse stage, and persist it into each segment's
+        # metadata_json so Serving can prioritize nucleus content.
+        discourse_roles = compute_discourse_roles(relations)
         for seg in segments:
             seg_key = f"{seg.document_key}#{seg.segment_index}"
             seg_id = seg_id_map.get(seg_key, uuid.uuid4().hex)
+            seg_metadata = dict(seg.metadata_json)
+            seg_metadata["discourse_role"] = discourse_roles.get(seg_key, "standalone")
             asset_db.insert_raw_segment(
                 segment_id=seg_id,
                 document_snapshot_id=snapshot_id,
@@ -527,7 +534,7 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
                 structure_json=seg.structure_json,
                 source_offsets_json=seg.source_offsets_json,
                 entity_refs_json=seg.entity_refs_json,
-                metadata_json=seg.metadata_json,
+                metadata_json=seg_metadata,
             )
 
         # --- build_relations ---

@@ -46,6 +46,11 @@ public class ContextAssembler {
     private static final String ROLE_CONTEXT = "context";
     private static final String ROLE_SUPPORT = "support";
 
+    // RST discourse roles, written by Mining into asset_raw_segments.metadata_json.
+    private static final String DISCOURSE_NUCLEUS = "nucleus";
+    private static final String DISCOURSE_SATELLITE = "satellite";
+    private static final String DISCOURSE_STANDALONE = "standalone";
+
     /**
      * Phase 2 – RST relation weights used as initial scores for expanded items.
      * Mirrors the priority order in GraphExpander: higher weight = higher score = more context budget.
@@ -60,6 +65,12 @@ public class ContextAssembler {
             Map.entry("contrasts_with",       0.9),
             Map.entry("causes",               0.8),
             Map.entry("parallels",            0.7),
+            Map.entry("evidences",            1.35),
+            Map.entry("exemplifies",          1.25),
+            Map.entry("purposes",             1.15),
+            Map.entry("justifies",            1.10),
+            Map.entry("summarizes",           1.05),
+            Map.entry("concedes",             0.85),
             Map.entry("section_header_of",    0.6),
             Map.entry("same_section",         0.5),
             Map.entry("previous",             0.4),
@@ -75,6 +86,12 @@ public class ContextAssembler {
             Map.entry("results_in", "support"),
             Map.entry("backgrounds", "background"),
             Map.entry("enables", "support"),
+            Map.entry("evidences", "support"),
+            Map.entry("exemplifies", "support"),
+            Map.entry("purposes", "support"),
+            Map.entry("justifies", "support"),
+            Map.entry("summarizes", "support"),
+            Map.entry("concedes", "contrast"),
             Map.entry("parallels", "context"),
             Map.entry("contrasts_with", "contrast"),
             Map.entry("previous", "context"),
@@ -114,10 +131,7 @@ public class ContextAssembler {
         if (scope == null) scope = new ActiveScope("", "", List.of(), Map.of());
         if (routePlan == null) routePlan = new RetrievalRoutePlan(List.of(), Map.of(), null, null, null, null);
 
-        // 1. Build seed items from retrieval candidates
-        List<ContextItem> seedItems = buildSeedItems(candidates, understanding);
-
-        // 2. Resolve source segment IDs from candidates
+        // 1. Resolve source segment IDs from candidates
         List<String> allSourceSegmentIds = new ArrayList<>();
         for (var candidate : candidates) {
             allSourceSegmentIds.addAll(resolveCandidateSources(candidate));
@@ -132,7 +146,7 @@ public class ContextAssembler {
             }
         }
 
-        // 3. Fetch source segments
+        // 2. Fetch source segments
         List<SegmentWithMetaRow> sourceSegments;
         if (!uniqueSegIds.isEmpty() && scope.snapshotIds() != null && !scope.snapshotIds().isEmpty()) {
             sourceSegments = repo.resolveSegmentsByIds(uniqueSegIds, scope.snapshotIds());
@@ -145,6 +159,13 @@ public class ContextAssembler {
                 sourceSegMap.put(seg.getId(), seg);
             }
         }
+
+        // RST discourse role (nucleus/satellite/standalone) per segment id, read from
+        // asset_raw_segments.metadata_json (written by Mining). Empty when un-mined.
+        Map<String, String> segDiscourseRole = buildDiscourseRoleMap(sourceSegments);
+
+        // 3. Build seed items (discourse-aware: nucleus prioritized over satellite)
+        List<ContextItem> seedItems = buildSeedItems(candidates, understanding, segDiscourseRole);
         List<ContextItem> sourceItems = buildSourceItems(sourceSegments);
 
         // 4. Graph expansion if enabled
@@ -309,7 +330,8 @@ public class ContextAssembler {
 
     private List<ContextItem> buildSeedItems(
             List<RetrievalCandidate> candidates,
-            QueryUnderstanding understanding) {
+            QueryUnderstanding understanding,
+            Map<String, String> segDiscourseRole) {
         List<ContextItem> items = new ArrayList<>();
         for (var c : candidates) {
             Map<String, Object> citation = buildCitation(c);
@@ -318,6 +340,11 @@ public class ContextAssembler {
             if (c.scoreChain() != null && c.scoreChain().routeSources() != null) {
                 routeSources = c.scoreChain().routeSources();
             }
+
+            // Attach the discourse role of the seed's underlying segment(s) so the
+            // classifier can use it and so seeds can be reordered nucleus-first.
+            Map<String, Object> metadata = new LinkedHashMap<>(c.metadata());
+            metadata.put("discourse_role", resolveSeedDiscourseRole(c, segDiscourseRole));
 
             items.add(new ContextItem(
                     c.retrievalUnitId(),
@@ -331,14 +358,74 @@ public class ContextAssembler {
                     null,
                     null,
                     safeJsonParse(getMetadataString(c.metadata(), "source_refs_json", "{}")),
-                    c.metadata(),
+                    metadata,
                     routeSources,
                     c.scoreChain(),
                     "",
                     citation
             ));
         }
+        // Stable reorder: nucleus first, then standalone, then satellite, preserving
+        // relevance (rerank) order within each tier. Guarantees nucleus seeds rank
+        // ahead of satellite seeds; a no-op when no discourse roles are present
+        // (graceful degradation for data mined before this feature).
+        items.sort(Comparator.comparingInt(it ->
+                discourseTier(getMetadataString(it.metadata(), "discourse_role", DISCOURSE_STANDALONE))));
         return items;
+    }
+
+    /** Tier for discourse-aware ordering: nucleus(0) &lt; standalone(1) &lt; satellite(2). */
+    private static int discourseTier(String role) {
+        if (DISCOURSE_NUCLEUS.equals(role)) return 0;
+        if (DISCOURSE_SATELLITE.equals(role)) return 2;
+        return 1;
+    }
+
+    /** Build {segmentId -&gt; discourse_role} from segment metadata_json. */
+    private Map<String, String> buildDiscourseRoleMap(List<SegmentWithMetaRow> segments) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (var seg : segments) {
+            if (seg.getId() != null) {
+                map.put(seg.getId(), discourseRoleOf(seg.getMetadataJson()));
+            }
+        }
+        return map;
+    }
+
+    /** Extract discourse_role from a segment metadata_json string; "standalone" if absent/unparseable. */
+    private static String discourseRoleOf(String metadataJson) {
+        if (metadataJson == null || metadataJson.isBlank()) {
+            return DISCOURSE_STANDALONE;
+        }
+        try {
+            Map<String, Object> m = MAPPER.readValue(metadataJson, new TypeReference<LinkedHashMap<String, Object>>() {});
+            Object r = m.get("discourse_role");
+            return r != null && !r.toString().isBlank() ? r.toString() : DISCOURSE_STANDALONE;
+        } catch (Exception e) {
+            return DISCOURSE_STANDALONE;
+        }
+    }
+
+    /**
+     * Resolve a seed's discourse role from its underlying segment(s).
+     * Nucleus wins if any source segment is a nucleus; otherwise satellite only if
+     * a source segment is a satellite; else standalone.
+     */
+    private String resolveSeedDiscourseRole(RetrievalCandidate c, Map<String, String> segDiscourseRole) {
+        if (segDiscourseRole.isEmpty()) {
+            return DISCOURSE_STANDALONE;
+        }
+        boolean sawSatellite = false;
+        for (String segId : resolveCandidateSources(c)) {
+            String role = segDiscourseRole.get(segId);
+            if (DISCOURSE_NUCLEUS.equals(role)) {
+                return DISCOURSE_NUCLEUS;
+            }
+            if (DISCOURSE_SATELLITE.equals(role)) {
+                sawSatellite = true;
+            }
+        }
+        return sawSatellite ? DISCOURSE_SATELLITE : DISCOURSE_STANDALONE;
     }
 
     private Map<String, Object> buildCitation(RetrievalCandidate candidate) {
@@ -402,6 +489,8 @@ public class ContextAssembler {
     private List<ContextItem> buildSourceItems(List<SegmentWithMetaRow> segments) {
         List<ContextItem> items = new ArrayList<>();
         for (var seg : segments) {
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
@@ -414,7 +503,7 @@ public class ContextAssembler {
                     seg.getDocumentId(),
                     null,
                     Map.of(),
-                    Map.of(),
+                    metadata,
                     List.of(),
                     null,
                     "",
@@ -435,13 +524,11 @@ public class ContextAssembler {
             double score = RST_RELATION_WEIGHTS.getOrDefault(relType, 0.3);
 
             // Phase 3: tag contrasting items so conflict detection can find them later
-            Map<String, Object> meta;
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
             if ("contrasts_with".equals(relType)) {
-                meta = new LinkedHashMap<>();
                 meta.put("is_contrasting", true);
                 meta.put("contrasts_with_seed", exp.sourceSegmentId());
-            } else {
-                meta = Map.of();
             }
 
             items.add(new ContextItem(
