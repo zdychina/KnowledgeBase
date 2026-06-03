@@ -49,6 +49,7 @@ public class SearchService {
     private final SemanticCacheService semanticCache;
     private final SessionStore sessionStore;
     private final SearchMetrics metrics;
+    private final TreeNavigator treeNavigator;
     private final String defaultDomain;
     private final Executor pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -67,6 +68,7 @@ public class SearchService {
             SemanticCacheService semanticCache,
             SessionStore sessionStore,
             SearchMetrics metrics,
+            TreeNavigator treeNavigator,
             ServingProperties properties) {
         this.quEngine = quEngine;
         this.router = router;
@@ -82,6 +84,7 @@ public class SearchService {
         this.semanticCache = semanticCache;
         this.sessionStore = sessionStore;
         this.metrics = metrics;
+        this.treeNavigator = treeNavigator;
         this.defaultDomain = properties.defaultDomain();
         if (!embeddingClient.isConfigured()) {
             log.info("Embedding client not configured (LLM_SERVICE_URL blank) — dense retrieval disabled");
@@ -182,6 +185,7 @@ public class SearchService {
         List<RouteTrace> allRouteTraces = new ArrayList<>();
         ContextPack pack = null;
         float[] queryEmbedding = null;
+        Set<String> navigatedSections = Set.of();
         try {
             trace.startStage("resolve_scope");
             try {
@@ -194,6 +198,14 @@ public class SearchService {
             log.info("[scope] domain={}, channel={}, release={}, build={}, snapshots={}",
                     effectiveDomain, channel, scope.releaseId(), scope.buildId(),
                     scope.snapshotIds().size());
+
+            // 3.4. Tree navigation: infer the relevant chapters for the query entities
+            // (rule-based, one aggregation query). Empty ⇒ full-base search.
+            trace.startStage("tree_navigation");
+            Set<String> navSections = treeNavigator.inferSections(understanding.entities(), scope.snapshotIds());
+            navigatedSections = (navSections != null) ? navSections : Set.of();
+            trace.endStage("tree_navigation", "sections=" + navigatedSections.size());
+            log.info("[tree-nav] sections={}", navigatedSections);
 
             // 3.5. Multi-Query Expansion: original + up to 2 LLM variants
             trace.startStage("multi_query_expand");
@@ -324,7 +336,7 @@ public class SearchService {
             // 9. Assemble ContextPack
             trace.startStage("assembly");
             pack = assembler.assemble(
-                    request.query(), understanding, scope, ranked, routePlan);
+                    request.query(), understanding, scope, ranked, routePlan, navigatedSections);
             trace.endStage("assembly", "items=" + pack.items().size());
             String assemblyIssues = pack.issues().stream()
                     .map(Issue::type).reduce((a, b) -> a + "," + b).orElse("none");
@@ -366,6 +378,7 @@ public class SearchService {
             debugInfo.put("candidate_count", ranked.size());
             debugInfo.put("fusion_method", routePlan.fusion().method());
             debugInfo.put("query_embedding_dim", queryEmbedding != null ? queryEmbedding.length : 0);
+            debugInfo.put("navigated_sections", navigatedSections);
             if (!allRouteTraces.isEmpty()) {
                 debugInfo.put("route_traces", routeTracesToList(allRouteTraces));
             }

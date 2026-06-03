@@ -39,6 +39,17 @@ class ContextAssemblerTest {
         return row;
     }
 
+    private static com.coremasterkb.serving.mapper.result.SegmentWithMetaRow segWithSection(String id, String sectionTitle) {
+        var row = new com.coremasterkb.serving.mapper.result.SegmentWithMetaRow();
+        row.setId(id);
+        row.setRawText("text-" + id);
+        row.setBlockType("paragraph");
+        row.setSemanticRole("concept");
+        row.setMetadataJson("{}");
+        row.setSectionPath("[{\"title\":\"" + sectionTitle + "\",\"level\":1}]");
+        return row;
+    }
+
     /** Average 0-based position of seed items whose discourse_role equals {@code role}. */
     private static double avgRank(List<ContextItem> seeds, String role) {
         double sum = 0;
@@ -162,6 +173,36 @@ class ContextAssemblerTest {
             double nucAvg = avgRank(seeds, "nucleus");
             double satAvg = avgRank(seeds, "satellite");
             assertThat(nucAvg).isLessThan(satAvg);
+        }
+
+        @Test
+        @DisplayName("tree navigation: in-chapter seed ranks ahead despite lower score")
+        void navigatedSectionSeedsRankAhead() {
+            var understanding = new QueryUnderstanding("SMF 会话管理", "concept_lookup", null, null, null, null,
+                    EvidenceNeed.empty(), null, "rule", null);
+            var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
+            var plan = new RetrievalRoutePlan(null, null, null, null,
+                    new AssemblyConfig(false, false, 10, 10, 2, List.of()), null);
+
+            var candidates = List.of(
+                    new RetrievalCandidate("u_out", 0.90, "bm25",
+                            Map.of("text", "其他", "source_segment_id", "segOut"), null),
+                    new RetrievalCandidate("u_in", 0.50, "bm25",
+                            Map.of("text", "会话", "source_segment_id", "segIn"), null));
+
+            when(repo.resolveSegmentsByIds(any(), any())).thenReturn(List.of(
+                    segWithSection("segOut", "其他章节"),
+                    segWithSection("segIn", "SMF")));
+            when(repo.getRelationsForSegments(any(), any(), any())).thenReturn(List.of());
+            when(repo.getDocumentSources(any(), any())).thenReturn(List.of());
+
+            var pack = assembler.assemble("SMF 会话管理", understanding, scope, candidates, plan,
+                    java.util.Set.of("smf"));
+
+            var seeds = pack.items().stream().filter(i -> "seed".equals(i.role())).toList();
+            // In-chapter seed promoted to the top despite its lower relevance score
+            assertThat(seeds.get(0).id()).isEqualTo("u_in");
+            assertThat(seeds.get(0).metadata().get("in_navigated_section")).isEqualTo(true);
         }
 
         @Test

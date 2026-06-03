@@ -126,7 +126,24 @@ public class ContextAssembler {
             ActiveScope scope,
             List<RetrievalCandidate> candidates,
             RetrievalRoutePlan routePlan) {
+        return assemble(query, understanding, scope, candidates, routePlan, Set.of());
+    }
 
+    /**
+     * Full assembly with tree-navigation hints: seeds whose source segment falls in a
+     * navigated chapter ({@code navigatedSections} = lower-cased section_path prefixes)
+     * are ranked ahead, then nucleus-first within each tier. An empty navigatedSections
+     * applies no section bias (full-base behavior).
+     */
+    public ContextPack assemble(
+            String query,
+            QueryUnderstanding understanding,
+            ActiveScope scope,
+            List<RetrievalCandidate> candidates,
+            RetrievalRoutePlan routePlan,
+            Set<String> navigatedSections) {
+
+        if (navigatedSections == null) navigatedSections = Set.of();
         if (candidates == null) candidates = List.of();
         if (scope == null) scope = new ActiveScope("", "", List.of(), Map.of());
         if (routePlan == null) routePlan = new RetrievalRoutePlan(List.of(), Map.of(), null, null, null, null);
@@ -163,9 +180,11 @@ public class ContextAssembler {
         // RST discourse role (nucleus/satellite/standalone) per segment id, read from
         // asset_raw_segments.metadata_json (written by Mining). Empty when un-mined.
         Map<String, String> segDiscourseRole = buildDiscourseRoleMap(sourceSegments);
+        Map<String, String> segSectionPrefix = buildSectionPrefixMap(sourceSegments);
 
-        // 3. Build seed items (discourse-aware: nucleus prioritized over satellite)
-        List<ContextItem> seedItems = buildSeedItems(candidates, understanding, segDiscourseRole);
+        // 3. Build seed items (tree-nav section bias, then discourse nucleus-first)
+        List<ContextItem> seedItems = buildSeedItems(
+                candidates, understanding, segDiscourseRole, segSectionPrefix, navigatedSections);
         List<ContextItem> sourceItems = buildSourceItems(sourceSegments);
 
         // 4. Graph expansion if enabled
@@ -331,7 +350,9 @@ public class ContextAssembler {
     private List<ContextItem> buildSeedItems(
             List<RetrievalCandidate> candidates,
             QueryUnderstanding understanding,
-            Map<String, String> segDiscourseRole) {
+            Map<String, String> segDiscourseRole,
+            Map<String, String> segSectionPrefix,
+            Set<String> navigatedSections) {
         List<ContextItem> items = new ArrayList<>();
         for (var c : candidates) {
             Map<String, Object> citation = buildCitation(c);
@@ -341,10 +362,14 @@ public class ContextAssembler {
                 routeSources = c.scoreChain().routeSources();
             }
 
-            // Attach the discourse role of the seed's underlying segment(s) so the
-            // classifier can use it and so seeds can be reordered nucleus-first.
+            // Attach the discourse role + navigated-chapter membership of the seed's
+            // underlying segment(s) for classification and reordering.
             Map<String, Object> metadata = new LinkedHashMap<>(c.metadata());
             metadata.put("discourse_role", resolveSeedDiscourseRole(c, segDiscourseRole));
+            String sectionPrefix = resolveSeedSectionPrefix(c, segSectionPrefix);
+            metadata.put("section_path_prefix", sectionPrefix != null ? sectionPrefix : "");
+            metadata.put("in_navigated_section",
+                    sectionPrefix != null && navigatedSections.contains(sectionPrefix));
 
             items.add(new ContextItem(
                     c.retrievalUnitId(),
@@ -365,13 +390,51 @@ public class ContextAssembler {
                     citation
             ));
         }
-        // Stable reorder: nucleus first, then standalone, then satellite, preserving
-        // relevance (rerank) order within each tier. Guarantees nucleus seeds rank
-        // ahead of satellite seeds; a no-op when no discourse roles are present
-        // (graceful degradation for data mined before this feature).
-        items.sort(Comparator.comparingInt(it ->
-                discourseTier(getMetadataString(it.metadata(), "discourse_role", DISCOURSE_STANDALONE))));
+        // Composite stable ordering: navigated-chapter seeds first (tree navigation),
+        // then nucleus-first within each tier (discourse). Relevance (rerank) order is
+        // preserved within equal keys. Both signals are no-ops when absent — so
+        // un-navigated / un-mined data keeps the original order.
+        items.sort(Comparator
+                .comparingInt((ContextItem it) -> sectionTier(it, navigatedSections))
+                .thenComparingInt(it -> discourseTier(
+                        getMetadataString(it.metadata(), "discourse_role", DISCOURSE_STANDALONE))));
         return items;
+    }
+
+    /** Tier for tree-navigation ordering: in-navigated-chapter(0) before others(1). */
+    private static int sectionTier(ContextItem it, Set<String> navigatedSections) {
+        if (navigatedSections == null || navigatedSections.isEmpty()) {
+            return 0;  // no navigation → no section bias
+        }
+        return Boolean.TRUE.equals(it.metadata().get("in_navigated_section")) ? 0 : 1;
+    }
+
+    /** Build {segmentId -&gt; lower-cased top-level section title} from source segments. */
+    private Map<String, String> buildSectionPrefixMap(List<SegmentWithMetaRow> segments) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (var seg : segments) {
+            if (seg.getId() != null) {
+                String prefix = TreeNavigator.prefixOf(seg.getSectionPath());
+                if (prefix != null) {
+                    map.put(seg.getId(), prefix);
+                }
+            }
+        }
+        return map;
+    }
+
+    /** Section prefix of a seed's first resolvable source segment; null if none. */
+    private String resolveSeedSectionPrefix(RetrievalCandidate c, Map<String, String> segSectionPrefix) {
+        if (segSectionPrefix.isEmpty()) {
+            return null;
+        }
+        for (String segId : resolveCandidateSources(c)) {
+            String prefix = segSectionPrefix.get(segId);
+            if (prefix != null) {
+                return prefix;
+            }
+        }
+        return null;
     }
 
     /** Tier for discourse-aware ordering: nucleus(0) &lt; standalone(1) &lt; satellite(2). */

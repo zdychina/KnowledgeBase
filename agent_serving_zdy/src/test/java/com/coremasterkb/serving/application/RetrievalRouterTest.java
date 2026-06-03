@@ -36,22 +36,28 @@ class RetrievalRouterTest {
                     .contains("lexical_bm25", "dense_vector");
         }
 
+        // Per-intent route weights come from the domain route policy (complexity tiers
+        // drive the built-in defaults; the domain pack overrides weights per intent).
         @Test
-        @DisplayName("command_usage gives higher weight to lexical")
+        @DisplayName("command_usage favors entity_exact over lexical (domain route policy)")
         void commandUsageWeights() {
             var understanding = commandUsageUnderstanding();
-            var plan = router.route(understanding, null);
+            var plan = router.route(understanding, ServingDomainProfile.defaults("test"));
+            var entityExact = plan.routes().stream()
+                    .filter(r -> "entity_exact".equals(r.name())).findFirst();
             var lexical = plan.routes().stream()
                     .filter(r -> "lexical_bm25".equals(r.name())).findFirst();
+            assertThat(entityExact).isPresent();
             assertThat(lexical).isPresent();
-            assertThat(lexical.get().weight()).isGreaterThan(1.0);
+            assertThat(entityExact.get().weight()).isGreaterThan(1.0);
+            assertThat(entityExact.get().weight()).isGreaterThan(lexical.get().weight());
         }
 
         @Test
-        @DisplayName("concept_lookup gives higher weight to dense")
+        @DisplayName("concept_lookup gives higher weight to dense (domain route policy)")
         void conceptLookupWeights() {
             var understanding = conceptLookupUnderstanding();
-            var plan = router.route(understanding, null);
+            var plan = router.route(understanding, ServingDomainProfile.defaults("test"));
             var dense = plan.routes().stream()
                     .filter(r -> "dense_vector".equals(r.name())).findFirst();
             assertThat(dense).isPresent();

@@ -53,4 +53,37 @@
         </if>
     </select>
 
+    <resultMap id="sectionPathCountMap"
+               type="com.coremasterkb.serving.mapper.result.SectionPathCountRow">
+        <result column="section_path" property="sectionPath"/>
+        <result column="cnt"          property="cnt"/>
+    </resultMap>
+
+    <!--
+        TreeNavigator: section paths most frequently containing the query entities.
+        entity_refs_json is a JSONB array of {type,name,...}; match by name.
+    -->
+    <select id="selectSectionPathsByEntities" resultMap="sectionPathCountMap">
+        SELECT rs.section_path AS section_path,
+               COUNT(*)        AS cnt
+        FROM asset_raw_segments rs
+        WHERE rs.document_snapshot_id IN
+        <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
+            #{sid}
+        </foreach>
+          AND rs.section_path &lt;&gt; '[]'
+          AND rs.entity_refs_json != '[]'
+          AND EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(rs.entity_refs_json::jsonb) AS e
+              WHERE e->>'name' IN
+              <foreach collection="entityNames" item="name" open="(" separator="," close=")">
+                  #{name}
+              </foreach>
+          )
+        GROUP BY rs.section_path
+        ORDER BY cnt DESC
+        LIMIT 200
+    </select>
+
 </mapper>
