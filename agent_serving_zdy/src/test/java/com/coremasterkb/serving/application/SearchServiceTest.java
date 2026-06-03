@@ -74,11 +74,14 @@ class SearchServiceTest {
         ServingProperties properties = new ServingProperties(
                 null, null, "cloud_core_network", null, null, null);
 
+        var searchMetrics = new com.coremasterkb.serving.observability.SearchMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+
         searchService = new SearchService(
                 quEngine, router, orchestrator, rerankPipeline,
                 assembler, domainPackReader, domainRegistry, domainPoolManager,
                 embeddingClient, assetRepo, multiQueryExpander, semanticCache, sessionStore,
-                properties);
+                searchMetrics, properties);
     }
 
     @Nested
@@ -101,7 +104,7 @@ class SearchServiceTest {
                     List.of(), List.of(), List.of(), Map.of());
 
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
             when(orchestrator.execute(any(), any(), any(), any())).thenReturn(orchResult);
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(rerankResult);
@@ -113,7 +116,7 @@ class SearchServiceTest {
             var result = searchService.search(request);
 
             assertThat(result).isNotNull();
-            verify(quEngine).understand("SMF配置", null);
+            verify(quEngine).understand("SMF配置", null, null);
             verify(router).route(understanding, null);
             verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")));
             verify(rerankPipeline).rerank(any(), eq(routePlan), eq(understanding));
@@ -133,7 +136,7 @@ class SearchServiceTest {
                     AssemblyConfig.defaults(), ExpansionConfig.defaults());
 
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
             when(orchestrator.execute(any(), any(), any(), any())).thenReturn(OrchestratorResult.empty());
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(new RerankResult(List.of(), List.of()));
@@ -162,7 +165,7 @@ class SearchServiceTest {
                     AssemblyConfig.defaults(), ExpansionConfig.defaults());
 
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
             when(assetRepo.resolveActiveScope(anyString(), anyString()))
                     .thenThrow(new IllegalArgumentException("no_active_release"));

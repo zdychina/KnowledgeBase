@@ -8,6 +8,7 @@ import com.coremasterkb.serving.domainpack.DomainRegistry;
 import com.coremasterkb.serving.config.ServingProperties;
 import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
+import com.coremasterkb.serving.observability.SearchMetrics;
 import com.coremasterkb.serving.observability.TraceCollector;
 import com.coremasterkb.serving.pipeline.*;
 import com.coremasterkb.serving.rerank.RerankPipeline;
@@ -47,6 +48,7 @@ public class SearchService {
     private final MultiQueryExpander multiQueryExpander;
     private final SemanticCacheService semanticCache;
     private final SessionStore sessionStore;
+    private final SearchMetrics metrics;
     private final String defaultDomain;
     private final Executor pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -64,6 +66,7 @@ public class SearchService {
             MultiQueryExpander multiQueryExpander,
             SemanticCacheService semanticCache,
             SessionStore sessionStore,
+            SearchMetrics metrics,
             ServingProperties properties) {
         this.quEngine = quEngine;
         this.router = router;
@@ -78,6 +81,7 @@ public class SearchService {
         this.multiQueryExpander = multiQueryExpander;
         this.semanticCache = semanticCache;
         this.sessionStore = sessionStore;
+        this.metrics = metrics;
         this.defaultDomain = properties.defaultDomain();
         if (!embeddingClient.isConfigured()) {
             log.info("Embedding client not configured (LLM_SERVICE_URL blank) — dense retrieval disabled");
@@ -142,6 +146,7 @@ public class SearchService {
                 understanding.intent(), understanding.queryComplexity(),
                 understanding.entities().size(), understanding.subQueries().size(),
                 understanding.source());
+        metrics.recordIntent(understanding.intent());
 
         // 3. Retrieval Router
         trace.startStage("retrieval_router");
@@ -285,6 +290,13 @@ public class SearchService {
                     rawCandidates.size(), queryVariants.size(),
                     Math.min(understanding.subQueries().size(), 4));
 
+            // Observability: per-route candidate counts (one record per route execution)
+            for (RouteTrace rt : allRouteTraces) {
+                if (rt.attempted()) {
+                    metrics.recordRouteCandidates(rt.name(), rt.candidateCount());
+                }
+            }
+
             // 7. Fuse
             trace.startStage("fusion");
             FusionStrategy fusion = switch (routePlan.fusion().method()) {
@@ -300,8 +312,11 @@ public class SearchService {
 
             // 8. Rerank (cascading: model -> LLM -> score)
             trace.startStage("rerank");
+            long rerankStartNanos = System.nanoTime();
             var rerankResult = rerankPipeline.rerank(fused, routePlan, understanding);
+            metrics.recordRerankDuration((System.nanoTime() - rerankStartNanos) / 1_000_000.0);
             ranked = rerankResult.candidates();
+            metrics.recordRerankFallback(resolveWinningRerankMethod(rerankResult.traces()));
             trace.endStage("rerank", "ranked=" + ranked.size());
             log.info("[rerank] method={}, in={}, out={}", routePlan.rerank().method(),
                     fused.size(), ranked.size());
@@ -317,6 +332,12 @@ public class SearchService {
                     pack.items().stream().filter(i -> "seed".equals(i.role())).count(),
                     pack.items().stream().filter(i -> !"seed".equals(i.role())).count(),
                     assemblyIssues);
+
+            // Observability: empty-scope no-result — no seed item while query scope was empty
+            boolean noSeedResult = pack.items().stream().noneMatch(i -> "seed".equals(i.role()));
+            if (noSeedResult && understanding.scope().isEmpty()) {
+                metrics.recordScopeEmpty();
+            }
 
             // 9.5. Store result in semantic cache (best-effort, non-blocking)
             semanticCache.store(effectiveDomain, request.query(), queryEmbedding, pack);
@@ -376,6 +397,22 @@ public class SearchService {
 
     private ActiveScope resolveActiveScope(String domain, String channel) {
         return assetRepository.resolveActiveScope(domain, channel);
+    }
+
+    /**
+     * Determine which rerank tier produced the final ranking, for fallback metrics.
+     * Returns the provider of the last succeeded trace step, defaulting to "score"
+     * (the always-succeeding fallback) when no step is marked succeeded.
+     */
+    private static String resolveWinningRerankMethod(List<RerankTraceStep> traces) {
+        if (traces != null) {
+            for (int i = traces.size() - 1; i >= 0; i--) {
+                if (traces.get(i).succeeded()) {
+                    return traces.get(i).provider();
+                }
+            }
+        }
+        return "score";
     }
 
     // =========================================================================

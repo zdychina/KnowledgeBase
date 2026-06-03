@@ -22,9 +22,11 @@ public class QueryLogAspect {
     private static final Logger log = LoggerFactory.getLogger(QueryLogAspect.class);
 
     private final QueryLogService queryLogService;
+    private final SearchMetrics searchMetrics;
 
-    public QueryLogAspect(QueryLogService queryLogService) {
+    public QueryLogAspect(QueryLogService queryLogService, SearchMetrics searchMetrics) {
         this.queryLogService = queryLogService;
+        this.searchMetrics = searchMetrics;
     }
 
     @Around("execution(* com.coremasterkb.serving.application.SearchService.search(..))")
@@ -49,6 +51,8 @@ public class QueryLogAspect {
             throw t;
         } finally {
             long durationMs = System.currentTimeMillis() - startMs;
+            // Full-pipeline latency metric — recorded for every outcome (success or exception)
+            searchMetrics.recordSearchDuration(durationMs);
             if (thrown != null) {
                 log.warn("[search] error id={} domain={} duration={}ms error={}",
                         queryId, request.domain(), durationMs, thrown.getMessage());
