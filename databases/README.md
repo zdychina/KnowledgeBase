@@ -9,11 +9,12 @@ databases/
   asset_core/         # Mining 写、Serving 读的知识资产库
   mining_runtime/     # Mining 自身运行态与断点续跑状态库
   agent_llm_runtime/  # 独立 LLM 服务运行态库
+  serving_runtime/    # Serving 检索服务运行态库（查询日志、审计）
 ```
 
 ## 当前决定
 
-### 1. 三个库逻辑上分开
+### 1. 四个库逻辑上分开
 
 当前正式设计不合并为一个总库。
 
@@ -22,6 +23,7 @@ databases/
 1. `asset_core` 是稳定知识资产 + build/release 控制面。
 2. `mining_runtime` 是挖掘过程状态，带有大量中间态、失败态、重试态。
 3. `agent_llm_runtime` 是独立服务的任务队列、请求、attempt、结果和审计日志。
+4. `serving_runtime` 是检索服务的查询日志、检索审计、性能指标。
 
 三者职责不同、生命周期不同、读写模式也不同。
 
@@ -57,6 +59,7 @@ dev / 单机调试便利
 | `asset_core` | 单独数据库 |
 | `mining_runtime` | 单独数据库 |
 | `agent_llm_runtime` | 单独数据库，由 claude-llm 独立维护 |
+| `serving_runtime` | 单独数据库，Serving 检索审计 |
 
 如果只看 1.1 当前阶段，最稳妥的结论就是：
 
@@ -85,4 +88,5 @@ source_batch
 
 - `mining_runtime` 负责“怎么生产出来”
 - `asset_core` 负责“生产出了什么，以及哪些正式生效”
-- `agent_llm_runtime` 负责“LLM 在这个过程中做了什么”
+- `agent_llm_runtime` 负责”LLM 在这个过程中做了什么”
+- `serving_runtime` 负责”检索服务对外提供了什么服务”

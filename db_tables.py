@@ -19,6 +19,8 @@ EXPORT_TABLES = [
     "mining_runs",
     "mining_run_documents",
     "mining_run_stage_events",
+    # serving_runtime
+    "serving_query_logs",
     # asset_core
     "asset_source_batches",
     "asset_documents",
