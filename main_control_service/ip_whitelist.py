@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 _SKIP_PATHS: frozenset[str] = frozenset({
     "/health",
     "/api/v1/admin/reload-ip-whitelist",
+    "/api/v1/admin/ip-whitelist-status",
 })
 
 
@@ -26,12 +27,14 @@ class IpWhitelistConfig:
     def __init__(self) -> None:
         self.enabled: bool = False
         self._networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+        self._trusted_proxies: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
 
     def load(self, config_path: Path) -> None:
         if not config_path.exists():
             logger.info("IP whitelist config not found at %s — whitelist disabled", config_path)
             self.enabled = False
             self._networks = []
+            self._trusted_proxies = []
             return
 
         with open(config_path, encoding="utf-8") as f:
@@ -39,24 +42,39 @@ class IpWhitelistConfig:
 
         self.enabled = bool(data.get("enabled", False))
         raw_ips: list[str] = data.get("allowed_ips") or []
+        raw_proxies: list[str] = data.get("trusted_proxies") or []
 
+        self._networks = self._parse_networks(raw_ips)
+        self._trusted_proxies = self._parse_networks(raw_proxies)
+
+        logger.info(
+            "IP whitelist %s — %d allowed IPs, %d trusted proxies",
+            "ENABLED" if self.enabled else "DISABLED",
+            len(self._networks),
+            len(self._trusted_proxies),
+        )
+
+    @staticmethod
+    def _parse_networks(raw: list[str]) -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
         networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
-        for entry in raw_ips:
+        for entry in raw:
             entry = entry.strip()
             if not entry:
                 continue
             try:
-                # Try parsing as CIDR network first
                 networks.append(ipaddress.ip_network(entry, strict=False))
             except ValueError:
                 logger.warning("Invalid IP/network in whitelist: %s", entry)
+        return networks
 
-        self._networks = networks
-        logger.info(
-            "IP whitelist %s — %d entries loaded",
-            "ENABLED" if self.enabled else "DISABLED",
-            len(self._networks),
-        )
+    def is_trusted_proxy(self, ip: str) -> bool:
+        if not self._trusted_proxies:
+            return False
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return any(addr in net for net in self._trusted_proxies)
 
     def is_allowed(self, client_ip: str) -> bool:
         if not self.enabled:
@@ -83,6 +101,7 @@ class IpWhitelistMiddleware(BaseHTTPMiddleware):
         return {
             "enabled": self._state.enabled,
             "allowed_ips": [str(n) for n in self._state._networks],
+            "trusted_proxies": [str(n) for n in self._state._trusted_proxies],
         }
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -90,7 +109,7 @@ class IpWhitelistMiddleware(BaseHTTPMiddleware):
         if request.url.path in _SKIP_PATHS:
             return await call_next(request)
 
-        # Determine client IP — respect X-Forwarded-For from trusted proxy
+        # Determine client IP — use X-Forwarded-For ONLY from trusted proxies
         client_ip = self._resolve_client_ip(request)
 
         if not self._state.is_allowed(client_ip):
@@ -102,13 +121,21 @@ class IpWhitelistMiddleware(BaseHTTPMiddleware):
 
         return await call_next(request)
 
-    @staticmethod
-    def _resolve_client_ip(request: Request) -> str:
-        """Extract the real client IP, respecting one level of proxy."""
-        xff = request.headers.get("x-forwarded-for")
-        if xff:
-            # Leftmost IP is the original client
-            return xff.split(",")[0].strip()
-        if request.client:
-            return request.client.host
-        return "unknown"
+    def _resolve_client_ip(self, request: Request) -> str:
+        """Extract the real client IP.
+
+        Security model:
+        - If the direct connection comes from a trusted proxy (e.g., Nginx on same host),
+          trust X-Forwarded-For to get the real client IP.
+        - If the connection comes from anywhere else, ignore X-Forwarded-For
+          (prevents header spoofing) and use the direct connection IP.
+        """
+        direct_ip = request.client.host if request.client else "unknown"
+
+        if self._state.is_trusted_proxy(direct_ip):
+            xff = request.headers.get("x-forwarded-for")
+            if xff:
+                # Leftmost IP is the original client
+                return xff.split(",")[0].strip()
+
+        return direct_ip

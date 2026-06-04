@@ -157,14 +157,26 @@ def create_app(
     # Admin — IP whitelist hot-reload
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/admin/reload-ip-whitelist")
-    def reload_ip_whitelist(request: Request) -> dict:
-        # Walk the middleware stack to find our IpWhitelistMiddleware instance
+    def _find_ip_whitelist_mw(request: Request) -> IpWhitelistMiddleware | None:
         layer = request.app
         while hasattr(layer, "app"):
             if isinstance(layer, IpWhitelistMiddleware):
-                return layer.reload()
+                return layer
             layer = layer.app
+        return None
+
+    @app.post("/api/v1/admin/reload-ip-whitelist")
+    def reload_ip_whitelist(request: Request) -> dict:
+        mw = _find_ip_whitelist_mw(request)
+        if mw:
+            return mw.reload()
+        return {"error": "IpWhitelistMiddleware not found in middleware stack"}
+
+    @app.get("/api/v1/admin/ip-whitelist-status")
+    def ip_whitelist_status(request: Request) -> dict:
+        mw = _find_ip_whitelist_mw(request)
+        if mw:
+            return mw.reload()  # reload() returns current state
         return {"error": "IpWhitelistMiddleware not found in middleware stack"}
 
     return app
