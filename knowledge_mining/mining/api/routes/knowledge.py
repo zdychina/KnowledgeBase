@@ -7,12 +7,46 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
+from knowledge_mining.mining.infra.upload_config import UploadConfig
+
 logger = logging.getLogger(__name__)
 
 _RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
 _MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+
+_upload_cfg = UploadConfig()
+
+
+def _resolve_source_file(source_uri: str, relative_path: str) -> Path | None:
+    """Try to locate the source file on disk.
+
+    source_uri may be an absolute path from a different environment
+    (e.g. Docker /app/uploads/... vs Windows D:\\...\\uploads\\...).
+    Strategy:
+      1. Try source_uri as-is (same-environment).
+      2. Search UPLOAD_ROOT for the relative_path.
+    """
+    # 1. Direct path
+    p = Path(source_uri)
+    if p.is_file():
+        return p
+
+    # 2. Fallback: search upload_root for the relative_path
+    upload_root = _upload_cfg.upload_root_path
+    if relative_path and upload_root.is_dir():
+        # Walk domain subdirectories to find the file
+        for domain_dir in upload_root.iterdir():
+            if not domain_dir.is_dir():
+                continue
+            for batch_dir in domain_dir.iterdir():
+                if not batch_dir.is_dir():
+                    continue
+                candidate = batch_dir / relative_path
+                if candidate.is_file():
+                    return candidate
+    return None
 
 
 @router.get("/stats")
@@ -137,12 +171,13 @@ async def get_document_raw_content(document_id: str, request: Request):
             raise HTTPException(404, f"No snapshot found for document {document_id}")
 
     source_uri = link["source_uri"]
-    if not source_uri:
+    relative_path = link["relative_path"]
+    if not source_uri and not relative_path:
         raise HTTPException(404, "No source file path recorded for this document")
 
-    file_path = Path(source_uri).resolve()
-    if not file_path.is_file():
-        raise HTTPException(404, f"Source file not found on disk: {link['relative_path']}")
+    file_path = _resolve_source_file(source_uri or "", relative_path or "")
+    if file_path is None:
+        raise HTTPException(404, f"Source file not found: {relative_path}")
 
     ext = file_path.suffix.lower()
     if ext not in _RENDERABLE_EXTS:

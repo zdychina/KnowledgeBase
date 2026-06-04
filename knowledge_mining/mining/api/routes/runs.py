@@ -391,6 +391,24 @@ _RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
 _MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+def _find_file_in_uploads(relative_path: str) -> Path | None:
+    """Search UPLOAD_ROOT/domain/*/relative_path for a file."""
+    from knowledge_mining.mining.infra.upload_config import UploadConfig
+    upload_root = UploadConfig().upload_root_path
+    if not relative_path or not upload_root.is_dir():
+        return None
+    for domain_dir in upload_root.iterdir():
+        if not domain_dir.is_dir():
+            continue
+        for batch_dir in domain_dir.iterdir():
+            if not batch_dir.is_dir():
+                continue
+            candidate = batch_dir / relative_path
+            if candidate.is_file():
+                return candidate
+    return None
+
+
 @router.get("/{run_id}/documents/{doc_id}/raw-content")
 async def get_run_document_raw_content(run_id: str, doc_id: str, request: Request):
     """Return the original file content for a run document (md/txt/html)."""
@@ -418,18 +436,21 @@ async def get_run_document_raw_content(run_id: str, doc_id: str, request: Reques
     else:
         rel_path = document_key
 
-    if not input_path or not rel_path:
-        raise HTTPException(404, "Cannot locate source file for this document")
+    file_path: Path | None = None
 
-    base_path = Path(input_path).resolve()
-    file_path = (base_path / rel_path).resolve()
+    # Strategy 1: input_path + rel_path (same-environment)
+    if input_path and rel_path:
+        base_path = Path(input_path).resolve()
+        candidate = (base_path / rel_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(base_path):
+            file_path = candidate
 
-    # Path traversal check
-    if not file_path.is_relative_to(base_path):
-        raise HTTPException(403, "Access denied")
+    # Strategy 2: Search UPLOAD_ROOT for relative_path (cross-environment fallback)
+    if file_path is None and rel_path:
+        file_path = _find_file_in_uploads(rel_path)
 
-    if not file_path.is_file():
-        raise HTTPException(404, f"Source file not found on disk: {rel_path}")
+    if file_path is None:
+        raise HTTPException(404, f"Source file not found: {rel_path}")
 
     ext = file_path.suffix.lower()
     if ext not in _RENDERABLE_EXTS:
