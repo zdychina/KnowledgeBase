@@ -26,7 +26,7 @@ class UploadConfig(BaseSettings):
     upload_max_archive_size: int = 500 * 1024 * 1024       # 500MB
     upload_max_files_per_request: int = 100
     upload_disk_reserve_bytes: int = 1024 * 1024 * 1024    # 1GB
-    upload_archive_extensions: str = ".zip"
+    upload_archive_extensions: str = ".zip,.chm,.hdx"
 
     model_config = {
         "env_prefix": "",
@@ -38,7 +38,7 @@ class UploadConfig(BaseSettings):
     @computed_field
     @property
     def archive_exts_set(self) -> frozenset[str]:
-        """Extensions that will be auto-extracted after upload (ZIP only — pure Python)."""
+        """Extensions that will be auto-extracted after upload (ZIP, CHM, HDX)."""
         return frozenset(e.strip().lower() for e in self.upload_archive_extensions.split(",") if e.strip())
 
     @computed_field
