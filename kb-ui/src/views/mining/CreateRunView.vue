@@ -123,7 +123,7 @@ const uploadConfig = ref<UploadConfig | null>(null)
 
 const acceptedExtensions = computed(() => {
   if (uploadConfig.value) return uploadConfig.value.accepted_extensions
-  return ['.md', '.txt', '.pdf', '.html', '.htm', '.doc', '.docx', '.zip']
+  return ['.md', '.txt', '.pdf', '.html', '.htm', '.doc', '.docx', '.zip', '.chm', '.hdx']
 })
 
 const acceptedExtensionsStr = computed(() => acceptedExtensions.value.join(','))

@@ -106,11 +106,11 @@
             :auto-upload="false"
             :multiple="true"
             :limit="50"
-            accept=".md,.txt,.pdf,.html,.docx"
+            accept=".md,.txt,.pdf,.html,.htm,.doc,.docx,.zip,.chm,.hdx"
           >
             <el-button size="small">选择文件</el-button>
             <template #tip>
-              <div class="el-upload__tip">支持 .md, .txt, .pdf, .html, .docx</div>
+              <div class="el-upload__tip">支持 .md, .txt, .pdf, .html, .docx, .zip, .chm</div>
             </template>
           </el-upload>
         </el-form-item>
