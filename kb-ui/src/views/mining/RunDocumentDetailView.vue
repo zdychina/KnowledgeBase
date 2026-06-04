@@ -176,6 +176,15 @@
         <div class="tab-pagination" v-if="relTotal > PAGE_SIZE">
           <el-pagination v-model:current-page="relPage" :page-size="PAGE_SIZE" :total="relTotal" layout="prev, pager, next" size="small" />
         </div>
+        <!-- Raw Content -->
+        <div v-if="activeArtifactTab === 'raw-content'" v-loading="rawLoading" class="raw-content-wrapper">
+          <div v-if="rawError" class="raw-content-error">
+            <el-icon><WarningFilled /></el-icon>
+            {{ rawError }}
+          </div>
+          <div v-else-if="rawHtml" class="raw-content-body" v-html="rawHtml" />
+          <div v-else-if="!rawLoading" class="stage-empty">无可渲染的原始文件</div>
+        </div>
       </div>
     </template>
   </div>
@@ -183,10 +192,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, WarningFilled } from '@element-plus/icons-vue'
 import { useMiningStore } from '@/stores/mining'
 import { useMiningApi } from '@/api/mining'
 import StatusBadge from '@/components/common/StatusBadge.vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const props = defineProps<{ runId: string; docId: string }>()
 const miningStore = useMiningStore()
@@ -204,6 +215,11 @@ const unitTotal = ref(0)
 const unitPage = ref(1)
 const relTotal = ref(0)
 const relPage = ref(1)
+
+// Raw content
+const rawLoading = ref(false)
+const rawHtml = ref('')
+const rawError = ref('')
 
 function toggleExpand(key: string) {
   if (expandedKeys.value.has(key)) {
@@ -224,6 +240,7 @@ const artifactTabs = [
   { key: 'segments', label: '原始分段' },
   { key: 'units', label: '检索单元' },
   { key: 'relations', label: '关系图谱' },
+  { key: 'raw-content', label: '原始文本' },
 ]
 
 // ── Computed ──
@@ -355,7 +372,42 @@ async function loadArtifacts() {
       relTotal.value = result.total ?? 0
     } catch { /* ignore */ }
     finally { artifactsLoading.value = false }
+  } else if (activeArtifactTab.value === 'raw-content') {
+    loadRawContent()
   }
+}
+
+async function loadRawContent() {
+  rawLoading.value = true
+  rawError.value = ''
+  rawHtml.value = ''
+  try {
+    const res = await miningApi.getRunDocumentRawContent(props.runId, props.docId)
+    if (res.format === 'markdown') {
+      rawHtml.value = DOMPurify.sanitize(await marked(res.content))
+    } else if (res.format === 'html') {
+      rawHtml.value = DOMPurify.sanitize(res.content)
+    } else {
+      rawHtml.value = `<pre class="raw-plain">${escapeHtml(res.content)}</pre>`
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '加载失败'
+    if (msg.includes('not renderable') || msg.includes('404')) {
+      rawError.value = '该文件类型不支持在线预览'
+    } else {
+      rawError.value = msg
+    }
+  } finally {
+    rawLoading.value = false
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 async function loadAll() {
@@ -639,5 +691,97 @@ watch(relPage, loadArtifacts)
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* Raw content */
+.raw-content-wrapper {
+  min-height: 200px;
+}
+
+.raw-content-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--kb-text-tertiary);
+  font-size: 13px;
+}
+
+.raw-content-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--kb-text-primary);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.raw-content-body :deep(h1),
+.raw-content-body :deep(h2),
+.raw-content-body :deep(h3),
+.raw-content-body :deep(h4) {
+  color: var(--kb-text-primary);
+  margin: 1em 0 0.5em;
+}
+
+.raw-content-body :deep(p) {
+  margin: 0.5em 0;
+}
+
+.raw-content-body :deep(pre) {
+  background: var(--kb-bg-card);
+  border: 1px solid var(--kb-border-light);
+  border-radius: var(--kb-radius-sm);
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.raw-content-body :deep(code) {
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 0.9em;
+  background: var(--kb-bg-card);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+.raw-content-body :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+}
+
+.raw-content-body :deep(th),
+.raw-content-body :deep(td) {
+  border: 1px solid var(--kb-border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.raw-content-body :deep(th) {
+  background: var(--kb-bg-card);
+  font-weight: 600;
+}
+
+.raw-content-body :deep(blockquote) {
+  border-left: 3px solid var(--kb-accent);
+  padding-left: 12px;
+  color: var(--kb-text-secondary);
+  margin: 0.8em 0;
+}
+
+.raw-content-body :deep(img) {
+  max-width: 100%;
+  border-radius: var(--kb-radius-sm);
+}
+
+.raw-content-body :deep(.raw-plain) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kb-text-secondary);
 }
 </style>

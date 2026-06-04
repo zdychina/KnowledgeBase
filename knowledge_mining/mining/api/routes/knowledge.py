@@ -1,7 +1,16 @@
 """Knowledge asset read-only query routes."""
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
+
+logger = logging.getLogger(__name__)
+
+_RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
+_MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -108,6 +117,67 @@ async def get_document(document_id: str, request: Request) -> dict:
         snapshots = [dict(r) for r in await cur.fetchall()]
 
     return {**dict(doc), "snapshots": snapshots}
+
+
+@router.get("/documents/{document_id}/raw-content")
+async def get_document_raw_content(document_id: str, request: Request):
+    """Return the original file content for renderable file types (md/txt/html)."""
+    pool = request.app.state.pg_pool
+
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT dsl.source_uri, dsl.relative_path "
+            "FROM asset_document_snapshot_links dsl "
+            "WHERE dsl.document_id = %s "
+            "ORDER BY dsl.linked_at DESC LIMIT 1",
+            [document_id],
+        )
+        link = await cur.fetchone()
+        if not link:
+            raise HTTPException(404, f"No snapshot found for document {document_id}")
+
+    source_uri = link["source_uri"]
+    if not source_uri:
+        raise HTTPException(404, "No source file path recorded for this document")
+
+    file_path = Path(source_uri).resolve()
+    if not file_path.is_file():
+        raise HTTPException(404, f"Source file not found on disk: {link['relative_path']}")
+
+    ext = file_path.suffix.lower()
+    if ext not in _RENDERABLE_EXTS:
+        raise HTTPException(
+            400,
+            f"File type '{ext}' is not renderable. Supported: {', '.join(sorted(_RENDERABLE_EXTS))}",
+        )
+
+    file_size = file_path.stat().st_size
+    if file_size > _MAX_RAW_CONTENT_SIZE:
+        raise HTTPException(413, "File too large for inline rendering")
+
+    try:
+        content_bytes = file_path.read_bytes()
+    except OSError as exc:
+        logger.error("Failed to read file %s: %s", file_path, exc)
+        raise HTTPException(500, "Failed to read source file") from exc
+
+    if ext in (".html", ".htm"):
+        return HTMLResponse(
+            content=content_bytes,
+            status_code=200,
+            headers={"X-Content-Format": "html"},
+        )
+
+    content = content_bytes.decode("utf-8", errors="replace")
+
+    if ext in (".md", ".markdown"):
+        return PlainTextResponse(
+            content=content,
+            status_code=200,
+            headers={"X-Content-Format": "markdown"},
+        )
+
+    return PlainTextResponse(content=content, status_code=200)
 
 
 @router.get("/documents/{document_id}/segments")

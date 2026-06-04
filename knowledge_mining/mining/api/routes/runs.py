@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from knowledge_mining.mining.infra.pg_config import MiningDbConfig
@@ -383,6 +385,86 @@ async def get_run_document(run_id: str, doc_id: str, request: Request) -> dict:
         result["document_name"] = dk.replace("doc:/", "", 1) if dk.startswith("doc:/") else dk
 
     return result
+
+
+_RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
+_MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+@router.get("/{run_id}/documents/{doc_id}/raw-content")
+async def get_run_document_raw_content(run_id: str, doc_id: str, request: Request):
+    """Return the original file content for a run document (md/txt/html)."""
+    pool = request.app.state.pg_pool
+
+    async with pool.connection() as conn:
+        # Get document_key and run's input_path
+        cur = await conn.execute(
+            "SELECT d.document_key, r.input_path "
+            "FROM mining_run_documents d "
+            "JOIN mining_runs r ON r.id = d.run_id "
+            "WHERE d.id = %s AND d.run_id = %s",
+            [doc_id, run_id],
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, f"Document {doc_id} not found in run {run_id}")
+
+    document_key = row["document_key"] or ""
+    input_path = row["input_path"]
+
+    # document_key format: "doc:/relative/path/file.md" or just "relative/path/file.md"
+    if document_key.startswith("doc:/"):
+        rel_path = document_key[5:]
+    else:
+        rel_path = document_key
+
+    if not input_path or not rel_path:
+        raise HTTPException(404, "Cannot locate source file for this document")
+
+    base_path = Path(input_path).resolve()
+    file_path = (base_path / rel_path).resolve()
+
+    # Path traversal check
+    if not file_path.is_relative_to(base_path):
+        raise HTTPException(403, "Access denied")
+
+    if not file_path.is_file():
+        raise HTTPException(404, f"Source file not found on disk: {rel_path}")
+
+    ext = file_path.suffix.lower()
+    if ext not in _RENDERABLE_EXTS:
+        raise HTTPException(
+            400,
+            f"File type '{ext}' is not renderable. Supported: {', '.join(sorted(_RENDERABLE_EXTS))}",
+        )
+
+    file_size = file_path.stat().st_size
+    if file_size > _MAX_RAW_CONTENT_SIZE:
+        raise HTTPException(413, "File too large for inline rendering")
+
+    try:
+        content_bytes = file_path.read_bytes()
+    except OSError as exc:
+        logger.error("Failed to read file %s: %s", file_path, exc)
+        raise HTTPException(500, "Failed to read source file") from exc
+
+    if ext in (".html", ".htm"):
+        return HTMLResponse(
+            content=content_bytes,
+            status_code=200,
+            headers={"X-Content-Format": "html"},
+        )
+
+    content = content_bytes.decode("utf-8", errors="replace")
+
+    if ext in (".md", ".markdown"):
+        return PlainTextResponse(
+            content=content,
+            status_code=200,
+            headers={"X-Content-Format": "markdown"},
+        )
+
+    return PlainTextResponse(content=content, status_code=200)
 
 
 @router.get("/{run_id}/documents/{doc_id}/stages")
