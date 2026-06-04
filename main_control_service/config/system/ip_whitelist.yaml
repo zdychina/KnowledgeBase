@@ -1,0 +1,11 @@
+# IP 白名单配置
+# enabled: true 表示启用白名单，false 表示不限制访问
+# allowed_ips: 允许访问的 IP 地址列表（支持 CIDR 格式，如 192.168.1.0/24）
+# 为空列表时表示不限制任何 IP（需 enabled=true 才生效）
+# 修改后调用 POST /api/v1/admin/reload-ip-whitelist 热更新
+
+enabled: false
+allowed_ips: []
+  # - "127.0.0.1"
+  # - "::1"
+  # - "192.168.1.0/24"

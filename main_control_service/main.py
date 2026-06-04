@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from main_control_service.config import MainControlSettings
+from main_control_service.ip_whitelist import IpWhitelistMiddleware
 from main_control_service.proxy import create_proxy_client, set_proxy_client, shutdown_proxy_client, proxy_request
 from main_control_service.service import YamlConfigService
 
@@ -20,6 +21,7 @@ def create_app(
     cfg = settings or MainControlSettings()
     effective_config_dir = config_dir or cfg.config_dir
     service = YamlConfigService(config_dir=effective_config_dir)
+    ip_whitelist_path = effective_config_dir / "system" / "ip_whitelist.yaml"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -38,6 +40,12 @@ def create_app(
         description="YAML config center for CoreMasterKB services — full CRUD.",
         lifespan=lifespan,
     )
+
+    # IP whitelist middleware — runs before all other middleware
+    # Starlette processes middleware in reverse registration order,
+    # so register it LAST to make it run FIRST (outermost layer).
+    app.add_middleware(IpWhitelistMiddleware, config_path=ip_whitelist_path)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -144,6 +152,20 @@ def create_app(
         svc: YamlConfigService = request.app.state.main_control  # type: ignore[attr-defined]
         domain_services = svc.get_domain_services(domain_id)
         return await proxy_request(request, domain_id, service, path, domain_services)
+
+    # ------------------------------------------------------------------
+    # Admin — IP whitelist hot-reload
+    # ------------------------------------------------------------------
+
+    @app.post("/api/v1/admin/reload-ip-whitelist")
+    def reload_ip_whitelist(request: Request) -> dict:
+        # Walk the middleware stack to find our IpWhitelistMiddleware instance
+        layer = request.app
+        while hasattr(layer, "app"):
+            if isinstance(layer, IpWhitelistMiddleware):
+                return layer.reload()
+            layer = layer.app
+        return {"error": "IpWhitelistMiddleware not found in middleware stack"}
 
     return app
 
