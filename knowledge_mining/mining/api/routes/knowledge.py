@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -17,6 +18,28 @@ _MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 _upload_cfg = UploadConfig()
+
+
+def _decode_html_bytes(raw: bytes) -> str:
+    """Decode HTML bytes to UTF-8 string, handling GBK/GB2312/GB18030."""
+    # 1. Check for BOM
+    if raw[:3] == b'\xef\xbb\xbf':
+        return raw[3:].decode("utf-8", errors="replace")
+    # 2. Look for charset in <meta> tag
+    head = raw[:4000].lower()
+    charset_match = re.search(rb'charset=["\']?\s*([a-z0-9_-]+)', head)
+    if charset_match:
+        charset = charset_match.group(1).decode("ascii")
+        try:
+            return raw.decode(charset, errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            pass
+    # 3. Try UTF-8 first, then GBK (common for Chinese CHM extracts)
+    try:
+        raw.decode("utf-8")
+        return raw.decode("utf-8", errors="replace")
+    except UnicodeDecodeError:
+        return raw.decode("gbk", errors="replace")
 
 
 def _resolve_source_file(source_uri: str, relative_path: str) -> Path | None:
@@ -197,8 +220,9 @@ async def get_document_raw_content(document_id: str, request: Request):
         raise HTTPException(500, "Failed to read source file") from exc
 
     if ext in (".html", ".htm"):
+        html_text = _decode_html_bytes(content_bytes)
         return HTMLResponse(
-            content=content_bytes,
+            content=html_text.encode("utf-8"),
             status_code=200,
             headers={"X-Content-Format": "html"},
         )

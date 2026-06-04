@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -391,6 +392,25 @@ _RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
 _MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+def _decode_html_bytes(raw: bytes) -> str:
+    """Decode HTML bytes to UTF-8 string, handling GBK/GB2312/GB18030."""
+    if raw[:3] == b'\xef\xbb\xbf':
+        return raw[3:].decode("utf-8", errors="replace")
+    head = raw[:4000].lower()
+    charset_match = re.search(rb'charset=["\']?\s*([a-z0-9_-]+)', head)
+    if charset_match:
+        charset = charset_match.group(1).decode("ascii")
+        try:
+            return raw.decode(charset, errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            pass
+    try:
+        raw.decode("utf-8")
+        return raw.decode("utf-8", errors="replace")
+    except UnicodeDecodeError:
+        return raw.decode("gbk", errors="replace")
+
+
 def _find_file_in_uploads(relative_path: str) -> Path | None:
     """Search UPLOAD_ROOT/domain/*/relative_path for a file."""
     from knowledge_mining.mining.infra.upload_config import UploadConfig
@@ -470,8 +490,9 @@ async def get_run_document_raw_content(run_id: str, doc_id: str, request: Reques
         raise HTTPException(500, "Failed to read source file") from exc
 
     if ext in (".html", ".htm"):
+        html_text = _decode_html_bytes(content_bytes)
         return HTMLResponse(
-            content=content_bytes,
+            content=html_text.encode("utf-8"),
             status_code=200,
             headers={"X-Content-Format": "html"},
         )
