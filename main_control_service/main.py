@@ -141,6 +141,22 @@ def create_app(
         return {"ok": True}
 
     # ------------------------------------------------------------------
+    # Code sync — GitHub archive -> local Python services
+    # ------------------------------------------------------------------
+
+    @app.post("/api/v1/code-sync")
+    def sync_code() -> dict:
+        from main_control_service.code_sync import sync_from_github
+
+        result = sync_from_github()
+        return {
+            "ok": result.ok,
+            "updated_dirs": result.updated_dirs,
+            "file_count": result.file_count,
+            **({"error": result.error} if result.error else {}),
+        }
+
+    # ------------------------------------------------------------------
     # Reverse proxy — domain-aware routing to backend services
     # ------------------------------------------------------------------
 

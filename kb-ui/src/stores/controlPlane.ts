@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useControlPlaneApi } from '@/api/controlPlane'
+import type { CodeSyncResult } from '@/api/controlPlane'
 
 export const useControlPlaneStore = defineStore('control-plane', () => {
   const api = useControlPlaneApi()
@@ -26,6 +27,8 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
   const saving = ref(false)
   const reloading = ref(false)
   const reloadResult = ref<{ ok: boolean; error?: string; config?: Record<string, unknown> } | null>(null)
+  const syncing = ref(false)
+  const syncResult = ref<CodeSyncResult | null>(null)
   const error = ref('')
 
   const systemConfigDirty = computed(() => systemConfigText.value !== systemConfigOriginal.value)
@@ -167,6 +170,19 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
     }
   }
 
+  // ── Code sync actions ──
+  async function syncCode() {
+    syncing.value = true
+    syncResult.value = null
+    try {
+      syncResult.value = await api.codeSync()
+    } catch (err) {
+      syncResult.value = { ok: false, error: err instanceof Error ? err.message : 'Sync failed' }
+    } finally {
+      syncing.value = false
+    }
+  }
+
   return {
     systemConfigNames,
     selectedSystemConfigName,
@@ -183,6 +199,8 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
     saving,
     reloading,
     reloadResult,
+    syncing,
+    syncResult,
     error,
     systemConfigDirty,
     domainYamlDirty,
@@ -197,5 +215,6 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
     deleteDomain,
     saveScenarioYaml,
     reloadService,
+    syncCode,
   }
 })
