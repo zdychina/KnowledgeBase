@@ -294,10 +294,12 @@ class StreamingPipeline:
         *,
         run_id: str | None = None,
         tracker: Any | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self._stages = stages
         self._queues: list[Queue] = [Queue() for _ in range(len(stages) + 1)]
         self._threads: list[list[Thread]] = []
+        self._cancel_check = cancel_check
 
         for i, (name, fn, n) in enumerate(stages):
             stage_threads = []
@@ -313,10 +315,19 @@ class StreamingPipeline:
             self._threads.append(stage_threads)
 
     def process_all(self, items: list[DocumentContext]) -> list[DocumentContext]:
-        """Submit all items, wait for completion, return results in input order."""
-        n = len(items)
+        """Submit all items, wait for completion, return results in input order.
+
+        If a cancel_check is set, stops submitting remaining items once it
+        returns True. Items already in flight still complete so workers and
+        queues drain cleanly.
+        """
+        submitted = 0
         for i, item in enumerate(items):
+            if self._cancel_check and self._cancel_check():
+                logger.info("Pipeline cancelled: %d/%d items submitted", submitted, len(items))
+                break
             self._queues[0].put(item.with_updates(sequence_id=i))
+            submitted += 1
 
         # Send sentinels stage-by-stage to shut down workers
         for i, stage_threads in enumerate(self._threads):
@@ -326,7 +337,7 @@ class StreamingPipeline:
                 t.join()
 
         results: list[DocumentContext] = []
-        while len(results) < n:
+        while len(results) < submitted:
             results.append(self._queues[-1].get())
         results.sort(key=lambda ctx: ctx.sequence_id)
         return results
