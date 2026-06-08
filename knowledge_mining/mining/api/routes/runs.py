@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +51,12 @@ class CancelRunResponse(BaseModel):
 
 @router.post("", response_model=RunResponse, status_code=202)
 async def create_run(body: CreateRunRequest, request: Request) -> dict:
-    """Submit a mining run (async, returns immediately)."""
+    """Submit a mining run (async, returns immediately).
+
+    Pre-inserts the mining_runs row so the UI can list the task instantly,
+    without waiting for the background thread to finish pool/LLM/ingest setup.
+    The thread later upserts source_batch_id/total_documents/metadata.
+    """
     pool = request.app.state.pg_pool
     db_config: MiningDbConfig = request.app.state.db_config
 
@@ -64,6 +71,24 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
     if not _run_lock.acquire(blocking=False):
         raise HTTPException(409, "A mining run is already in progress. Please wait for it to complete.")
 
+    # Pre-generate run_id and pre-insert a minimal run row so the UI sees the
+    # task instantly. The background thread upserts the ingest results later
+    # (MiningRuntimeDB.insert_run uses ON CONFLICT DO UPDATE).
+    run_id = uuid.uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        async with pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO mining_runs
+                       (id, source_batch_id, input_path, domain, channel, status,
+                        total_documents, started_at, metadata_json)
+                   VALUES (%s, NULL, %s, %s, NULL, 'running', 0, %s, '{}'::jsonb)""",
+                (run_id, body.input_path, resolved_domain, started_at),
+            )
+    except Exception:
+        _run_lock.release()
+        raise
+
     def _run_in_thread():
         try:
             from knowledge_mining.mining.jobs.run import run as mining_run
@@ -75,35 +100,21 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
                 llm_base_url=llm_base_url,
                 max_workers=body.max_workers,
                 domain=resolved_domain,
+                run_id=run_id,
             )
         except Exception as e:
             logger.error("Mining run failed: %s", e, exc_info=True)
         finally:
             _run_lock.release()
 
-    # Pre-create run to get run_id — but the actual run() creates its own.
-    # We start the thread and query the run table after.
     thread = threading.Thread(target=_run_in_thread, daemon=True)
     thread.start()
 
-    # Poll for the run to appear in DB (up to 10s)
-    import asyncio
-    for _ in range(20):
-        await asyncio.sleep(0.5)
-        async with pool.connection() as conn:
-            cur = await conn.execute(
-                "SELECT id, status, started_at FROM mining_runs "
-                "ORDER BY started_at DESC LIMIT 1"
-            )
-            row = await cur.fetchone()
-            if row:
-                return {
-                    "run_id": row["id"],
-                    "status": row["status"],
-                    "started_at": row["started_at"],
-                }
-
-    return {"run_id": "pending", "status": "starting"}
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "started_at": started_at,
+    }
 
 
 @router.get("")

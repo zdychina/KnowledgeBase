@@ -119,6 +119,7 @@ def run(
     domain: str | None = None,
     domain_pack: str | None = None,
     channel: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute the mining pipeline.
 
@@ -133,6 +134,9 @@ def run(
         domain_pack: (Deprecated) Use domain instead.
         channel: Release channel. None = from registry default_channel.
         max_workers: Max concurrent workers for streaming pipeline. None = from env.
+        run_id: External run_id (from API pre-insert). If provided, the run row
+                already exists in mining_runs and insert_run will upsert.
+                None = generate a fresh one (standalone/demo/test callers).
 
     Returns:
         Summary dict with run_id, counts, and status.
@@ -180,8 +184,12 @@ def run(
     # Open databases (PostgreSQL) — per-domain conninfo if available
     asset_db, runtime_db = _create_dbs(db_config, conninfo=conninfo)
 
-    # Pre-generate run_id so we can fail_run on global exception
-    run_id = uuid.uuid4().hex
+    # Use externally-provided run_id (from API pre-insert) or generate one.
+    # The API layer pre-inserts the run row so the UI sees it instantly;
+    # standalone callers (demo, tests) skip pre-insert and rely on the
+    # upsert in MiningRuntimeDB.insert_run.
+    if run_id is None:
+        run_id = uuid.uuid4().hex
 
     # LLM integration: create question generator if URL provided
     llm_services = _init_llm(llm_base_url, profile, knowledge_domain=profile.domain_id)
