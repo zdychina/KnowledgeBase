@@ -21,7 +21,11 @@ import java.util.*;
  * <p>Phase 1 – Traversal Budget: total nodes explored is capped at {@value #TOTAL_BUDGET},
  * regardless of the caller's {@code maxResults} argument.
  * Phase 2 – Relation Priority: neighbors at each BFS level are processed in priority order
- * so that high-value discourse relations (elaborates, conditions, …) fill the budget first.</p>
+ * so that high-value relations fill the budget first. When the caller supplies an explicit
+ * {@code relationTypes} list (intent-aware expansion), that list's ORDER defines the priority
+ * — so each intent's signature relations (causal for troubleshooting, contrasts_with for
+ * comparison) claim the budget before generic structural ones. When no list is supplied, the
+ * global {@link #RELATION_PRIORITY} RST table applies.</p>
  */
 public class GraphExpander {
 
@@ -71,6 +75,26 @@ public class GraphExpander {
     private record NodeInfo(int depth, String relationType) {}
 
     /**
+     * Resolve the budget-allocation priority for this expansion.
+     *
+     * <p>When {@code relationTypes} is non-empty (intent-aware expansion), the list's order IS
+     * the priority — index 0 highest — so an intent's signature relations (e.g. {@code causes}
+     * for troubleshooting, {@code contrasts_with} for comparison) fill the budget before generic
+     * structural relations. When it is null/empty (no intent filter), the global RST
+     * {@link #RELATION_PRIORITY} table applies. Relations absent from the resolved map sort last.</p>
+     */
+    private static Map<String, Integer> resolvePriority(List<String> relationTypes) {
+        if (relationTypes == null || relationTypes.isEmpty()) {
+            return RELATION_PRIORITY;
+        }
+        Map<String, Integer> p = new LinkedHashMap<>();
+        for (int i = 0; i < relationTypes.size(); i++) {
+            p.putIfAbsent(relationTypes.get(i), i);
+        }
+        return p;
+    }
+
+    /**
      * Expand seed segment IDs by BFS up to maxDepth levels.
      *
      * @param seedIds       starting segments from source_refs_json
@@ -93,6 +117,11 @@ public class GraphExpander {
 
         int budget = Math.min(maxResults, TOTAL_BUDGET);
 
+        // Priority used to allocate the budget within each BFS level. An explicit relationTypes
+        // list (intent-aware expansion) takes precedence: its order IS the priority, so the
+        // intent's signature relations are consumed first. Otherwise fall back to the global table.
+        Map<String, Integer> priority = resolvePriority(relationTypes);
+
         Set<String> visited = new LinkedHashSet<>(seedIds);
         Set<String> frontier = new LinkedHashSet<>(seedIds);
         Map<String, NodeInfo> expandedNodes = new LinkedHashMap<>();  // neighborId -> (depth, relationType)
@@ -108,9 +137,10 @@ public class GraphExpander {
             List<NeighborRow> neighbors = relationMapper.selectNeighbors(
                     new ArrayList<>(frontier), relationTypes, snapshotIds);
 
-            // Process highest-priority relations first so they claim budget before structural ones
+            // Process highest-priority relations first so they claim budget before lower ones.
+            // Priority comes from the intent's relationTypes order when supplied, else the global table.
             neighbors.sort(Comparator.comparingInt(n ->
-                    RELATION_PRIORITY.getOrDefault(n.getRelationType(), 99)));
+                    priority.getOrDefault(n.getRelationType(), Integer.MAX_VALUE)));
 
             Set<String> nextFrontier = new LinkedHashSet<>();
             for (NeighborRow row : neighbors) {
