@@ -21,11 +21,14 @@ public interface AssetRetrievalEmbeddingMapper {
      * Scoring and ranking are done server-side; no in-JVM vector math needed.
      * Scope filter (facets_json JSONB containment) is pushed down to SQL.
      * Pass an empty {@code scopeJsonParams} list to skip scope filtering.
+     * When {@code sectionPrefixes} is non-empty, additionally restricts to units whose source
+     * raw segment's top-level section title is in the set (section hard filter); empty = skip.
      */
     List<EmbeddingRow> selectTopKByVector(
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("queryVector") String queryVector,
             @Param("dim") int dim,
             @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("topK") int topK);
 }

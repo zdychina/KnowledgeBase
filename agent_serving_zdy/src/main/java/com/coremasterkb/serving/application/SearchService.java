@@ -186,6 +186,7 @@ public class SearchService {
         ContextPack pack = null;
         float[] queryEmbedding = null;
         Set<String> navigatedSections = Set.of();
+        List<String> sectionHardFilter = List.of();
         try {
             trace.startStage("resolve_scope");
             try {
@@ -202,10 +203,14 @@ public class SearchService {
             // 3.4. Tree navigation: infer the relevant chapters for the query entities
             // (rule-based, one aggregation query). Empty ⇒ full-base search.
             trace.startStage("tree_navigation");
-            Set<String> navSections = treeNavigator.inferSections(understanding.entities(), scope.snapshotIds());
-            navigatedSections = (navSections != null) ? navSections : Set.of();
-            trace.endStage("tree_navigation", "sections=" + navigatedSections.size());
-            log.info("[tree-nav] sections={}", navigatedSections);
+            TreeNavigation nav = treeNavigator.inferSections(understanding.entities(), scope.snapshotIds());
+            if (nav == null) nav = TreeNavigation.empty();
+            navigatedSections = nav.softSections();            // soft weighting for the assembler
+            sectionHardFilter = nav.hardFilter() ? nav.hardPrefixes() : List.of();  // retrieval-time narrowing
+            trace.endStage("tree_navigation",
+                    "soft=" + navigatedSections.size() + ", hard=" + sectionHardFilter.size());
+            log.info("[tree-nav] soft={}, hardFilter={}, hard={}",
+                    navigatedSections, nav.hardFilter(), sectionHardFilter);
 
             // 3.5. Multi-Query Expansion: original + up to 2 LLM variants
             trace.startStage("multi_query_expand");
@@ -279,7 +284,7 @@ public class SearchService {
                         ? understanding
                         : buildVariantUnderstanding(understanding, variant);
                 OrchestratorResult varResult = orchestrator.execute(
-                        varUnderstanding, routePlan, varEmb, scope.snapshotIds());
+                        varUnderstanding, routePlan, varEmb, scope.snapshotIds(), sectionHardFilter);
                 rawCandidates.addAll(varResult.candidates());
                 allRouteTraces.addAll(varResult.routeTraces());
             }
@@ -289,7 +294,7 @@ public class SearchService {
                 QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(understanding, subQuery);
                 float[] subEmb = variantEmbeddings.get(subQuery.text());
                 OrchestratorResult subResult = orchestrator.execute(
-                        subUnderstanding, routePlan, subEmb, scope.snapshotIds());
+                        subUnderstanding, routePlan, subEmb, scope.snapshotIds(), sectionHardFilter);
                 rawCandidates.addAll(subResult.candidates());
                 allRouteTraces.addAll(subResult.routeTraces());
             }
@@ -379,6 +384,7 @@ public class SearchService {
             debugInfo.put("fusion_method", routePlan.fusion().method());
             debugInfo.put("query_embedding_dim", queryEmbedding != null ? queryEmbedding.length : 0);
             debugInfo.put("navigated_sections", navigatedSections);
+            debugInfo.put("section_hard_filter", sectionHardFilter);
             if (!allRouteTraces.isEmpty()) {
                 debugInfo.put("route_traces", routeTracesToList(allRouteTraces));
             }

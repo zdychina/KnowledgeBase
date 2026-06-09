@@ -1,6 +1,7 @@
 package com.coremasterkb.serving.application;
 
 import com.coremasterkb.serving.domain.EntityRef;
+import com.coremasterkb.serving.domain.TreeNavigation;
 import com.coremasterkb.serving.mapper.AssetRawSegmentMapper;
 import com.coremasterkb.serving.mapper.result.SectionPathCountRow;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -36,10 +37,19 @@ public class TreeNavigator {
     private static final Logger log = LoggerFactory.getLogger(TreeNavigator.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** A chapter must hold at least this share of the entity's hits to count as relevant. */
+    /** A chapter must hold at least this share of the entity's hits to count as relevant (soft weighting). */
     private static final double DOMINANCE_THRESHOLD = 0.15;
     /** Cap on the number of navigated chapters. */
     private static final int MAX_PREFIXES = 3;
+
+    // --- Hard-filter confidence gate (PageIndex-style "locate then retrieve") ---
+    // Hard filtering narrows the retrieval SQL itself, so a wrong inference would hard-miss.
+    // We only enable it when the signal is strongly concentrated AND backed by enough samples.
+    // (Constants for now, like DOMINANCE_THRESHOLD; can move to domain.yaml later, cf. intent_strategy.)
+    /** The dominant chapter must hold at least this share of hits to justify a hard filter. */
+    private static final double HARD_DOMINANCE_THRESHOLD = 0.6;
+    /** Minimum total entity hits before hard filtering is statistically meaningful. */
+    private static final int MIN_HITS_FOR_HARD = 5;
 
     private final AssetRawSegmentMapper segmentMapper;
 
@@ -48,16 +58,21 @@ public class TreeNavigator {
     }
 
     /**
-     * Infer the relevant chapter prefixes (lower-cased top-level section titles) for
-     * the query entities. Empty set ⇒ full-base search (graceful fallback).
+     * Infer the relevant chapters for the query entities.
+     *
+     * <p>Always produces {@code softSections} (chapters ≥ {@link #DOMINANCE_THRESHOLD}, capped at
+     * {@link #MAX_PREFIXES}) for ranking bias. Additionally sets {@code hardFilter}=true with
+     * {@code hardPrefixes} (chapters ≥ {@link #HARD_DOMINANCE_THRESHOLD}) when the signal is
+     * confident enough to narrow retrieval — a clearly dominant chapter backed by ≥
+     * {@link #MIN_HITS_FOR_HARD} hits. Returns {@link TreeNavigation#empty()} for full-base search.</p>
      */
-    public Set<String> inferSections(List<EntityRef> entities, List<String> snapshotIds) {
+    public TreeNavigation inferSections(List<EntityRef> entities, List<String> snapshotIds) {
         if (snapshotIds == null || snapshotIds.isEmpty()) {
-            return Set.of();
+            return TreeNavigation.empty();
         }
         List<String> names = entityNames(entities);
         if (names.isEmpty()) {
-            return Set.of();  // no explicit entity → do not narrow
+            return TreeNavigation.empty();  // no explicit entity → do not narrow
         }
 
         List<SectionPathCountRow> rows;
@@ -65,10 +80,10 @@ public class TreeNavigator {
             rows = segmentMapper.selectSectionPathsByEntities(names, snapshotIds);
         } catch (Exception e) {
             log.warn("Tree navigation query failed (non-fatal, full-base fallback): {}", e.getMessage());
-            return Set.of();
+            return TreeNavigation.empty();
         }
         if (rows == null || rows.isEmpty()) {
-            return Set.of();
+            return TreeNavigation.empty();
         }
 
         // Aggregate hit counts by top-level chapter prefix.
@@ -81,21 +96,33 @@ public class TreeNavigator {
             total += row.getCnt();
         }
         if (total == 0 || byPrefix.isEmpty()) {
-            return Set.of();
+            return TreeNavigation.empty();
         }
 
         final long t = total;
-        Set<String> prefixes = byPrefix.entrySet().stream()
+        // Soft weighting (unchanged): chapters above the soft threshold, top-N, lower-cased.
+        Set<String> softSections = byPrefix.entrySet().stream()
                 .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
                 .filter(en -> (double) en.getValue() / t >= DOMINANCE_THRESHOLD)
                 .limit(MAX_PREFIXES)
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        if (!prefixes.isEmpty()) {
-            log.info("[tree-nav] entities={} → chapters={}", names, prefixes);
+        if (softSections.isEmpty()) {
+            return TreeNavigation.empty();
         }
-        return prefixes;
+
+        // Hard-filter gate: strongly-dominant chapters (≥ HARD threshold) with enough samples.
+        List<String> hardPrefixes = byPrefix.entrySet().stream()
+                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                .filter(en -> (double) en.getValue() / t >= HARD_DOMINANCE_THRESHOLD)
+                .map(Map.Entry::getKey)
+                .toList();
+        boolean hardFilter = total >= MIN_HITS_FOR_HARD && !hardPrefixes.isEmpty();
+
+        log.info("[tree-nav] entities={} → soft={} hard={} (hardFilter={}, totalHits={})",
+                names, softSections, hardPrefixes, hardFilter, total);
+        return new TreeNavigation(softSections, hardFilter ? hardPrefixes : List.of(), hardFilter);
     }
 
     private static List<String> entityNames(List<EntityRef> entities) {

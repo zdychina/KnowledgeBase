@@ -41,7 +41,7 @@ class RetrievalOrchestratorTest {
         void nullReturnsEmpty() {
             var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(List.of(), null, null, null, null, null);
-            var result = orchestrator.execute(understanding, plan, null, null);
+            var result = orchestrator.execute(understanding, plan, null, null, List.of());
             assertThat(result.candidates()).isEmpty();
         }
 
@@ -50,7 +50,7 @@ class RetrievalOrchestratorTest {
         void emptyReturnsEmpty() {
             var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(List.of(), null, null, null, null, null);
-            var result = orchestrator.execute(understanding, plan, null, List.of());
+            var result = orchestrator.execute(understanding, plan, null, List.of(), List.of());
             assertThat(result.candidates()).isEmpty();
         }
     }
@@ -72,7 +72,7 @@ class RetrievalOrchestratorTest {
                     null, null, null, null, null
             );
 
-            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"));
+            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"), List.of());
 
             // dense should be skipped with "no_embedding" reason
             assertThat(result.routeTraces()).hasSize(2);
@@ -98,7 +98,7 @@ class RetrievalOrchestratorTest {
                     null, null, null, null, null
             );
 
-            orchestrator.execute(understanding, plan, new float[]{0.1f, 0.2f}, List.of("snap1"));
+            orchestrator.execute(understanding, plan, new float[]{0.1f, 0.2f}, List.of("snap1"), List.of());
 
             verify(denseRetriever).retrieve(any(), any(), anyInt());
         }
@@ -119,7 +119,7 @@ class RetrievalOrchestratorTest {
                     null, null, null, null, null
             );
 
-            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"));
+            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"), List.of());
             // Should not throw, but trace records the error
             assertThat(result.routeTraces()).hasSize(1);
             assertThat(result.candidates()).isEmpty();
@@ -138,7 +138,7 @@ class RetrievalOrchestratorTest {
                     null, null, null, null, null
             );
 
-            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"));
+            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"), List.of());
             assertThat(result.routeTraces()).hasSize(1);
             assertThat(result.routeTraces().get(0).skippedReason()).isEqualTo("not_registered");
         }

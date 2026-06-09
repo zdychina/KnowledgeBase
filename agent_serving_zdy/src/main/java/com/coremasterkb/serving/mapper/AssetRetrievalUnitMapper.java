@@ -14,11 +14,16 @@ public interface AssetRetrievalUnitMapper {
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("limit") int limit);
 
-    /** tsvector search with scope filter (facets_json JSONB containment). */
+    /**
+     * tsvector search with scope filter (facets_json JSONB containment) and an optional
+     * section hard filter. When {@code sectionPrefixes} is non-empty, only units whose source
+     * raw segment's top-level section title is in the set are returned (PageIndex-style narrowing).
+     */
     List<FtsResultRow> searchByFtsWithScope(
             @Param("ftsQuery") String ftsQuery,
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("limit") int limit);
 
     // ----- Level 2: pg_trgm trigram similarity -----
@@ -56,9 +61,12 @@ public interface AssetRetrievalUnitMapper {
     /**
      * Entity-exact search: returns units whose entity_refs_json contains
      * any element with a "name" field matching one of the given entityNames.
+     * When {@code sectionPrefixes} is non-empty, additionally restricts to units whose source
+     * raw segment's top-level section title is in the set (section hard filter).
      */
     List<FtsResultRow> searchByEntityExact(
             @Param("entityNames") List<String> entityNames,
             @Param("snapshotIds") List<String> snapshotIds,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("limit") int limit);
 }

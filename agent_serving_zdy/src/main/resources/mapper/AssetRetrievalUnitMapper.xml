@@ -86,6 +86,18 @@
               ru.facets_json @> #{jp}::jsonb
           </foreach>
         </if>
+        <!-- Section hard filter: top-level section title of the source raw segment must match.
+             btrim+lower mirrors TreeNavigator.prefixOf (trim + toLowerCase). -->
+        <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+          AND EXISTS (
+              SELECT 1 FROM asset_raw_segments rs
+              WHERE rs.id = ru.source_segment_id
+                AND lower(btrim(rs.section_path::jsonb -> 0 ->> 'title')) IN
+              <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                  #{p}
+              </foreach>
+          )
+        </if>
         ORDER BY fts_score DESC
         LIMIT #{limit}
     </select>
@@ -250,6 +262,17 @@
                   #{name}
               </foreach>
           )
+        <!-- Section hard filter (mirrors TreeNavigator.prefixOf: btrim + lower of path[0].title). -->
+        <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+          AND EXISTS (
+              SELECT 1 FROM asset_raw_segments rs
+              WHERE rs.id = ru.source_segment_id
+                AND lower(btrim(rs.section_path::jsonb -> 0 ->> 'title')) IN
+              <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                  #{p}
+              </foreach>
+          )
+        </if>
         ORDER BY ru.weight DESC
         LIMIT #{limit}
     </select>

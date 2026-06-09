@@ -77,7 +77,8 @@ class SearchServiceTest {
         var searchMetrics = new com.coremasterkb.serving.observability.SearchMetrics(
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         var treeNavigator = mock(TreeNavigator.class);
-        when(treeNavigator.inferSections(any(), any())).thenReturn(java.util.Set.of());
+        when(treeNavigator.inferSections(any(), any()))
+                .thenReturn(com.coremasterkb.serving.domain.TreeNavigation.empty());
 
         searchService = new SearchService(
                 quEngine, router, orchestrator, rerankPipeline,
@@ -108,7 +109,7 @@ class SearchServiceTest {
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
             when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-            when(orchestrator.execute(any(), any(), any(), any())).thenReturn(orchResult);
+            when(orchestrator.execute(any(), any(), any(), any(), any())).thenReturn(orchResult);
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(rerankResult);
             when(assembler.assemble(anyString(), any(), any(), any(), any(), any())).thenReturn(expectedPack);
 
@@ -120,7 +121,7 @@ class SearchServiceTest {
             assertThat(result).isNotNull();
             verify(quEngine).understand("SMF配置", null, null);
             verify(router).route(understanding, null);
-            verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")));
+            verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")), any());
             verify(rerankPipeline).rerank(any(), eq(routePlan), eq(understanding));
             verify(assembler).assemble(eq("SMF配置"), eq(understanding), any(), any(), eq(routePlan), any());
         }
@@ -140,7 +141,7 @@ class SearchServiceTest {
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
             when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-            when(orchestrator.execute(any(), any(), any(), any())).thenReturn(OrchestratorResult.empty());
+            when(orchestrator.execute(any(), any(), any(), any(), any())).thenReturn(OrchestratorResult.empty());
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(new RerankResult(List.of(), List.of()));
             when(assembler.assemble(anyString(), any(), any(), any(), any(), any()))
                     .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()));
