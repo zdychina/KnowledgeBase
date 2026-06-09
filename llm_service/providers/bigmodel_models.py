@@ -126,9 +126,13 @@ class BigModelProvider:
     # keep a single rerank call within the provider's input length limit.
     _RERANK_DOC_MAX_CHARS = 4096
 
-    # Maximum documents per single rerank API call. Larger input sets are split
-    # into multiple batches and dispatched in parallel.
+    # Maximum documents per single rerank API call.
     _RERANK_BATCH_SIZE = 128
+
+    # Maximum total characters (query + docs) per single rerank API call.
+    # Provider rejects with code 1214 ("query+document超长") above ~165KB;
+    # 28000 is a conservative cap validated by prior production runs.
+    _RERANK_BATCH_CHARS = 28000
 
     async def rerank(
         self,
@@ -151,11 +155,14 @@ class BigModelProvider:
             for d in documents
         ]
 
-        # 2) Split into fixed-size batches (no per-doc truncation here).
-        batches = [
-            truncated[i : i + self._RERANK_BATCH_SIZE]
-            for i in range(0, len(truncated), self._RERANK_BATCH_SIZE)
-        ] or [list(truncated)]
+        # 2) Split into batches that respect BOTH per-batch doc-count cap AND
+        #    per-batch total-chars cap. Either limit being exceeded opens a new batch.
+        batches = self._split_batches(
+            truncated,
+            max_count=self._RERANK_BATCH_SIZE,
+            max_chars=self._RERANK_BATCH_CHARS,
+            query_len=len(query or ""),
+        )
 
         # 3) Single batch — direct call, API index is valid because batch == input.
         if len(batches) == 1:
@@ -236,6 +243,41 @@ class BigModelProvider:
             "return_documents": True,
         }
         return await self._post(self._rerank_url, self._rerank_api_key, "rerank", payload)
+
+    @staticmethod
+    def _split_batches(
+        docs: list[str],
+        *,
+        max_count: int,
+        max_chars: int,
+        query_len: int,
+    ) -> list[list[str]]:
+        """Split docs into batches so each batch fits BOTH doc-count and char budget.
+
+        - A batch is closed when adding the next doc would exceed ``max_count``
+          documents OR ``max_chars - query_len`` total characters.
+        - No per-doc truncation happens here (callers must truncate upstream).
+        - A single doc larger than the per-batch char budget is placed in its own
+          batch; the provider may reject it, but other docs are unaffected.
+        """
+        budget_for_docs = max(max_chars - query_len, 8000)
+
+        batches: list[list[str]] = []
+        current: list[str] = []
+        current_len = 0
+        for d in docs:
+            dlen = len(d) if d else 0
+            if current and (
+                len(current) >= max_count or current_len + dlen > budget_for_docs
+            ):
+                batches.append(current)
+                current = []
+                current_len = 0
+            current.append(d)
+            current_len += dlen
+        if current:
+            batches.append(current)
+        return batches or [list(docs)]
 
     @staticmethod
     def _rebuild_indices(
