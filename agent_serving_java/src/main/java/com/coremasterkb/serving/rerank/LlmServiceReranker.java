@@ -22,7 +22,6 @@ public class LlmServiceReranker implements Reranker {
 
     private static final Logger log = LoggerFactory.getLogger(LlmServiceReranker.class);
     private static final int MAX_RERANK_DOCS = 200;
-    private static final int MAX_DOC_CHARS = 1000;
 
     private final LlmClient llmClient;
     private final int topN;
@@ -149,7 +148,9 @@ public class LlmServiceReranker implements Reranker {
             String doc = (title != null && !title.isEmpty())
                     ? title + ": " + text
                     : text;
-            documents.add(truncate(doc, MAX_DOC_CHARS));
+            // No per-document truncation: llm_service batches by total length budget.
+            // Oversized single documents are isolated into their own batch there.
+            documents.add(doc);
         }
         return documents;
     }
@@ -165,10 +166,5 @@ public class LlmServiceReranker implements Reranker {
     private static String stringFromMetadata(RetrievalCandidate c, String key) {
         Object val = c.metadata().get(key);
         return val instanceof String s ? s : "";
-    }
-
-    private static String truncate(String s, int maxLen) {
-        if (s == null) return "";
-        return s.length() <= maxLen ? s : s.substring(0, maxLen);
     }
 }

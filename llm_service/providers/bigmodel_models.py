@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 
 from llm_service.providers.model_base import ModelProviderError
@@ -120,6 +122,14 @@ class BigModelProvider:
             "usage": data.get("usage"),
         }
 
+    # Per-document character cap. Documents longer than this are truncated to
+    # keep a single rerank call within the provider's input length limit.
+    _RERANK_DOC_MAX_CHARS = 4096
+
+    # Maximum documents per single rerank API call. Larger input sets are split
+    # into multiple batches and dispatched in parallel.
+    _RERANK_BATCH_SIZE = 128
+
     async def rerank(
         self,
         query: str,
@@ -128,31 +138,127 @@ class BigModelProvider:
         model: str | None = None,
         top_n: int | None = None,
     ) -> dict:
+        used_model = model or self._rerank_model
+        effective_top_n = top_n if top_n is not None else len(documents)
+
+        # 1) Truncate each document to _RERANK_DOC_MAX_CHARS.
+        #    We keep a sidecar of original (untruncated) texts for index mapping,
+        #    because the API echoes back truncated text we sent, not the original.
+        originals = list(documents)
+        truncated = [
+            (d if (d is None or len(d) <= self._RERANK_DOC_MAX_CHARS)
+             else d[: self._RERANK_DOC_MAX_CHARS])
+            for d in documents
+        ]
+
+        # 2) Split into fixed-size batches (no per-doc truncation here).
+        batches = [
+            truncated[i : i + self._RERANK_BATCH_SIZE]
+            for i in range(0, len(truncated), self._RERANK_BATCH_SIZE)
+        ] or [list(truncated)]
+
+        # 3) Single batch — direct call, API index is valid because batch == input.
+        if len(batches) == 1:
+            data = await self._rerank_call(
+                query, batches[0], used_model, top_n=effective_top_n
+            )
+            results = self._rebuild_indices(
+                data.get("results", []), truncated, ignore_api_index=False
+            )
+            # Restore original document text in the result items.
+            for r in results:
+                idx = r.get("index", -1)
+                if 0 <= idx < len(originals):
+                    r["document"] = {"text": originals[idx]}
+            return {
+                "model": used_model,
+                "results": results,
+                "usage": data.get("usage"),
+            }
+
+        # 4) Multi-batch — dispatch all batches concurrently.
+        coros = [
+            self._rerank_call(query, batch, used_model, top_n=len(batch))
+            for batch in batches
+        ]
+        batch_responses = await asyncio.gather(*coros, return_exceptions=True)
+
+        all_results: list[dict] = []
+        total_usage: dict[str, int | float] = {}
+        usage_seen = False
+        for resp in batch_responses:
+            if isinstance(resp, Exception):
+                # Surface the first provider error; whole rerank fails upstream.
+                raise resp
+            all_results.extend(resp.get("results", []))
+            usage = resp.get("usage")
+            if isinstance(usage, dict):
+                usage_seen = True
+                for k, v in usage.items():
+                    if isinstance(v, (int, float)):
+                        total_usage[k] = total_usage.get(k, 0) + v
+
+        # 5) Merge by score across batches, take top_n.
+        all_results.sort(
+            key=lambda x: float(x.get("relevance_score", 0.0)), reverse=True
+        )
+        all_results = all_results[:effective_top_n]
+
+        # 6) Batch-local indices are not globally valid → force text-match against
+        #    the truncated list (which is what the API saw). Then map back to originals.
+        all_results = self._rebuild_indices(
+            all_results, truncated, ignore_api_index=True
+        )
+        for r in all_results:
+            idx = r.get("index", -1)
+            if 0 <= idx < len(originals):
+                r["document"] = {"text": originals[idx]}
+
+        return {
+            "model": used_model,
+            "results": all_results,
+            "usage": total_usage if usage_seen else None,
+        }
+
+    async def _rerank_call(
+        self,
+        query: str,
+        documents: list[str],
+        model: str,
+        *,
+        top_n: int,
+    ) -> dict:
         payload = {
-            "model": model or self._rerank_model,
+            "model": model,
             "query": query,
             "documents": documents,
-            "top_n": top_n if top_n is not None else len(documents),
+            "top_n": top_n,
             "return_documents": True,
         }
-        data = await self._post(
-            self._rerank_url,
-            self._rerank_api_key,
-            "rerank",
-            payload,
-        )
-        results = data.get("results", [])
-        # rerank-pro omits "index" — reconstruct from document content
+        return await self._post(self._rerank_url, self._rerank_api_key, "rerank", payload)
+
+    @staticmethod
+    def _rebuild_indices(
+        results: list[dict],
+        all_documents: list[str],
+        *,
+        ignore_api_index: bool,
+    ) -> list[dict]:
+        """Reconstruct global document index from document text.
+
+        rerank-pro omits "index"; we map result.document text back to the original
+        documents list. When ignore_api_index=True (multi-batch merge), any local
+        index returned by the API is discarded because it is batch-local.
+        """
         doc_to_idx: dict[str, list[int]] = {}
-        for i, d in enumerate(documents):
+        for i, d in enumerate(all_documents):
             doc_to_idx.setdefault(d, []).append(i)
         used_indices: set[int] = set()
         for item in results:
-            if "index" in item:
+            if not ignore_api_index and "index" in item:
                 used_indices.add(item["index"])
                 continue
-            _doc = item.get("document")
-            doc_text = extract_doc_text(_doc)
+            doc_text = extract_doc_text(item.get("document"))
             candidates = doc_to_idx.get(doc_text, [])
             # Pick first unused index to handle duplicate documents
             for ci in candidates:
@@ -162,8 +268,4 @@ class BigModelProvider:
                     break
             else:
                 item["index"] = -1
-        return {
-            "model": payload["model"],
-            "results": results,
-            "usage": data.get("usage"),
-        }
+        return results
