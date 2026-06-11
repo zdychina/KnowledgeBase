@@ -11,7 +11,10 @@ import java.util.Map;
  * @param fusion    fusion configuration; defaults to new FusionConfig(null, 60)
  * @param rerank    rerank configuration; defaults to new RerankConfig(null, null)
  * @param assembly  assembly configuration; defaults to AssemblyConfig.defaults()
- * @param expansion expansion configuration; defaults to ExpansionConfig.defaults()
+ * @param expansion expansion configuration; defaults to ExpansionConfig.defaults().
+ *                  NOTE: currently unused at runtime — expansion is driven by AssemblyConfig fields
+ *                  (relationExpansion, maxRelationDepth, relationTypes, maxExpanded).
+ *                  Retained in the record for forward-compatibility with domain profile configs.
  */
 public record RetrievalRoutePlan(
         List<RouteConfig> routes,

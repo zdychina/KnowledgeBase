@@ -52,6 +52,8 @@ public class SearchService {
     private final SearchMetrics metrics;
     private final TreeNavigator treeNavigator;
     private final String defaultDomain;
+    // Virtual-thread-per-task executor: no pool state to manage, no shutdown required.
+    // Each CompletableFuture.supplyAsync spawns a new virtual thread that is cleaned up by the JVM.
     private final Executor pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     public SearchService(
