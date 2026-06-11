@@ -35,25 +35,27 @@ class RetrievalRouterTest {
         }
 
         @Test
-        @DisplayName("command_usage gives higher weight to lexical")
-        void commandUsageWeights() {
-            var understanding = commandUsageUnderstanding();
+        @DisplayName("medium complexity routes include lexical_bm25 with weight 1.0")
+        void mediumComplexityDefaultWeights() {
+            var understanding = generalUnderstanding();
             var plan = router.route(understanding, null);
             var lexical = plan.routes().stream()
                     .filter(r -> "lexical_bm25".equals(r.name())).findFirst();
             assertThat(lexical).isPresent();
-            assertThat(lexical.get().weight()).isGreaterThan(1.0);
+            assertThat(lexical.get().weight()).isEqualTo(1.0);
         }
 
         @Test
-        @DisplayName("concept_lookup gives higher weight to dense")
-        void conceptLookupWeights() {
-            var understanding = conceptLookupUnderstanding();
+        @DisplayName("simple complexity gives higher weight to entity_exact")
+        void simpleComplexityEntityExactWeight() {
+            var understanding = new QueryUnderstanding(
+                    "ADD SMFPARTNER", "command_usage", List.of(), List.of(),
+                    Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", "simple");
             var plan = router.route(understanding, null);
-            var dense = plan.routes().stream()
-                    .filter(r -> "dense_vector".equals(r.name())).findFirst();
-            assertThat(dense).isPresent();
-            assertThat(dense.get().weight()).isGreaterThan(1.0);
+            var entityExact = plan.routes().stream()
+                    .filter(r -> "entity_exact".equals(r.name())).findFirst();
+            assertThat(entityExact).isPresent();
+            assertThat(entityExact.get().weight()).isGreaterThan(1.0);
         }
     }
 
@@ -80,7 +82,7 @@ class RetrievalRouterTest {
         void comparisonIntentCascadeRerank() {
             var understanding = new QueryUnderstanding(
                     "UDG和UNC的区别", "comparison", List.of(), List.of(), Map.of(), List.of(),
-                    new EvidenceNeed(List.of(), List.of(), true, false), List.of(), "rule"
+                    new EvidenceNeed(List.of(), List.of(), true, false), List.of(), "rule", null
             );
             var plan = router.route(understanding, null);
             assertThat(plan.rerank().method()).isEqualTo("cascade");
@@ -101,7 +103,7 @@ class RetrievalRouterTest {
         var understanding = new QueryUnderstanding(
                 "SMF配置", "general", List.of(), List.of(),
                 Map.of("network_elements", List.of("SMF")), List.of("SMF", "配置"),
-                EvidenceNeed.empty(), List.of(), "rule"
+                EvidenceNeed.empty(), List.of(), "rule", null
         );
         var plan = router.route(understanding, null);
         assertThat(plan.filters()).containsKey("network_elements");
@@ -110,16 +112,16 @@ class RetrievalRouterTest {
     // Helpers
     private QueryUnderstanding generalUnderstanding() {
         return new QueryUnderstanding("你好", "general", List.of(), List.of(),
-                Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule");
+                Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", null);
     }
 
     private QueryUnderstanding commandUsageUnderstanding() {
         return new QueryUnderstanding("ADD SMFPARTNER 命令怎么写", "command_usage", List.of(),
-                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule");
+                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", null);
     }
 
     private QueryUnderstanding conceptLookupUnderstanding() {
         return new QueryUnderstanding("AMF是什么", "concept_lookup", List.of(),
-                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule");
+                List.of(), Map.of(), List.of(), EvidenceNeed.empty(), List.of(), "rule", null);
     }
 }

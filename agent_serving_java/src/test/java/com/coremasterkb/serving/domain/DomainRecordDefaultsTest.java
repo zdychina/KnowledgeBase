@@ -120,7 +120,7 @@ class DomainRecordDefaultsTest {
         @Test
         @DisplayName("null fields default correctly")
         void nullFieldsDefaultCorrectly() {
-            var qu = new QueryUnderstanding("q", null, null, null, null, null, null, null, null);
+            var qu = new QueryUnderstanding("q", null, null, null, null, null, null, null, null, null);
             assertThat(qu.intent()).isEqualTo("general");
             assertThat(qu.subQueries()).isEmpty();
             assertThat(qu.entities()).isEmpty();
@@ -265,7 +265,7 @@ class DomainRecordDefaultsTest {
         @Test
         @DisplayName("null fields default correctly")
         void nullFieldsDefaultCorrectly() {
-            var query = new RetrievalQuery("q", null, null, null, null, null, null);
+            var query = new RetrievalQuery("q", null, null, null, null, null, null, null);
             assertThat(query.keywords()).isEmpty();
             assertThat(query.entities()).isEmpty();
             assertThat(query.subQueries()).isEmpty();

@@ -36,7 +36,7 @@ class ContextAssemblerTest {
         @DisplayName("empty candidates produces no_result issue")
         void emptyProducesNoResultIssue() {
             var understanding = new QueryUnderstanding("xyzzy123", "general", null, null, null, null,
-                    EvidenceNeed.empty(), null, "rule");
+                    EvidenceNeed.empty(), null, "rule", null);
             var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
             var plan = new RetrievalRoutePlan(null, null, null, null, null, null);
 
@@ -57,7 +57,7 @@ class ContextAssemblerTest {
         @DisplayName("all low scores produces low_confidence issue")
         void lowScoreProducesLowConfidenceIssue() {
             var understanding = new QueryUnderstanding("模糊查询", "general", null, null, null, null,
-                    EvidenceNeed.empty(), null, "rule");
+                    EvidenceNeed.empty(), null, "rule", null);
             var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
             var plan = new RetrievalRoutePlan(null, null, null, null,
                     new AssemblyConfig(false, false, 10, 10, 2, List.of()), null);
@@ -82,7 +82,7 @@ class ContextAssemblerTest {
         @DisplayName("candidates produce seed items")
         void candidatesProduceSeedItems() {
             var understanding = new QueryUnderstanding("SMF配置", "concept_lookup", null, null, null, null,
-                    EvidenceNeed.empty(), null, "rule");
+                    EvidenceNeed.empty(), null, "rule", null);
             var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
             var plan = new RetrievalRoutePlan(null, null, null, null,
                     new AssemblyConfig(false, false, 10, 10, 2, List.of()), null);
@@ -105,7 +105,7 @@ class ContextAssemblerTest {
         @DisplayName("contextQuery populated from understanding")
         void contextQueryPopulated() {
             var understanding = new QueryUnderstanding("SMF配置", "concept_lookup",
-                    null, null, null, null, EvidenceNeed.empty(), null, "rule");
+                    null, null, null, null, EvidenceNeed.empty(), null, "rule", null);
             var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
             var plan = new RetrievalRoutePlan(null, null, null, null,
                     new AssemblyConfig(false, false, 10, 10, 2, List.of()), null);

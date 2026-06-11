@@ -199,6 +199,8 @@ public class QueryUnderstandingEngine {
         String rawIntent = String.valueOf(parsed.getOrDefault("intent", "general"));
         String normalizedIntent = normalizeIntent(rawIntent);
 
+        EvidenceNeed evidenceNeed = new EvidenceNeed(preferredRoles, preferredBlocks, needsComparison, needsCitation);
+
         return new QueryUnderstanding(
                 query,
                 normalizedIntent,
@@ -206,9 +208,10 @@ public class QueryUnderstandingEngine {
                 entities,
                 scope,
                 keywords,
-                new EvidenceNeed(preferredRoles, preferredBlocks, needsComparison, needsCitation),
+                evidenceNeed,
                 ambiguities,
-                "llm"
+                "llm",
+                deriveComplexity(normalizedIntent, entities, subQueries, evidenceNeed)
         );
     }
 
@@ -254,16 +257,20 @@ public class QueryUnderstandingEngine {
         String intent = detectIntent(query, entities);
         List<String> keywords = extractKeywords(query, cmdRe);
 
+        String normalizedIntent = normalizeIntent(intent);
+        EvidenceNeed evidenceNeed = new EvidenceNeed(INTENT_ROLE_MAP.getOrDefault(intent, List.of()), List.of(), false, false);
+
         return new QueryUnderstanding(
                 query,
-                normalizeIntent(intent),
+                normalizedIntent,
                 List.of(),
                 entities,
                 scope,
                 keywords,
-                new EvidenceNeed(INTENT_ROLE_MAP.getOrDefault(intent, List.of()), List.of(), false, false),
+                evidenceNeed,
                 List.of(),
-                "rule"
+                "rule",
+                deriveComplexity(normalizedIntent, entities, List.of(), evidenceNeed)
         );
     }
 
@@ -432,6 +439,30 @@ public class QueryUnderstandingEngine {
         return (cp >= 0x4E00 && cp <= 0x9FFF)
                 || (cp >= 0x3400 && cp <= 0x4DBF)
                 || (cp >= 0x2E80 && cp <= 0x2EFF);
+    }
+
+    // =========================================================================
+    // Complexity derivation
+    // =========================================================================
+
+    /**
+     * Derives the adaptive retrieval complexity tier from structural QU signals.
+     */
+    static String deriveComplexity(
+            String intent,
+            List<EntityRef> entities,
+            List<SubQuery> subQueries,
+            EvidenceNeed evidenceNeed) {
+        if ("comparison".equals(intent) || "troubleshooting".equals(intent)) return "complex";
+        if (subQueries != null && !subQueries.isEmpty()) return "complex";
+        if (evidenceNeed != null && evidenceNeed.needsComparison()) return "complex";
+        if ("command_usage".equals(intent)
+                && entities != null
+                && entities.stream().anyMatch(e -> "command".equals(e.type()))) {
+            return "simple";
+        }
+        if ("navigational".equals(intent)) return "simple";
+        return "medium";
     }
 
     // =========================================================================

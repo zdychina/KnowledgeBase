@@ -25,7 +25,7 @@ class EvidenceRoleClassifierTest {
 
     private final QueryUnderstanding understanding = new QueryUnderstanding(
             "SMF配置", "concept_lookup", List.of(), List.of(), Map.of(), List.of(),
-            EvidenceNeed.empty(), List.of(), "rule"
+            EvidenceNeed.empty(), List.of(), "rule", null
     );
 
     @Nested
