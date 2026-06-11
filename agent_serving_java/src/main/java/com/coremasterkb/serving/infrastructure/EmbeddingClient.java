@@ -68,13 +68,31 @@ public class EmbeddingClient {
     @SuppressWarnings("unchecked")
     private static String extractRawOutput(Map<String, Object> response) {
         Map<String, Object> unwrapped = LlmClient.unwrapResponse(response);
+
+        // Format 1: {result: {raw_output: "..."}} (internal task format)
         Object resultObj = unwrapped.getOrDefault("result", unwrapped);
         if (resultObj instanceof Map<?, ?> inner) {
             Object rawOutput = inner.get("raw_output");
-            if (rawOutput instanceof String s) {
+            if (rawOutput instanceof String s && !s.isBlank()) {
                 return s.strip();
             }
         }
+
+        // Format 2: OpenAI chat completion format {choices: [{message: {content: "..."}}]}
+        Object choicesObj = unwrapped.get("choices");
+        if (choicesObj instanceof List<?> choices && !choices.isEmpty()) {
+            Object first = choices.get(0);
+            if (first instanceof Map<?, ?> choice) {
+                Object msgObj = choice.get("message");
+                if (msgObj instanceof Map<?, ?> msg) {
+                    Object content = msg.get("content");
+                    if (content instanceof String s && !s.isBlank()) {
+                        return s.strip();
+                    }
+                }
+            }
+        }
+
         return null;
     }
 }
