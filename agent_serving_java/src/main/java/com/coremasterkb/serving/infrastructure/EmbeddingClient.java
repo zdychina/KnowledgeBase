@@ -61,8 +61,9 @@ public class EmbeddingClient {
 
     @SuppressWarnings("unchecked")
     private static String extractRawOutput(Map<String, Object> response) {
-        Object innerObj = response.getOrDefault("result", response);
-        if (innerObj instanceof Map<?, ?> inner) {
+        Map<String, Object> unwrapped = LlmClient.unwrapResponse(response);
+        Object resultObj = unwrapped.getOrDefault("result", unwrapped);
+        if (resultObj instanceof Map<?, ?> inner) {
             Object rawOutput = inner.get("raw_output");
             if (rawOutput instanceof String s) {
                 return s.strip();

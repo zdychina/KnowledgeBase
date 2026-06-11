@@ -66,8 +66,9 @@ public class MultiQueryExpander {
 
     @SuppressWarnings("unchecked")
     private static List<String> extractVariants(Map<String, Object> response) {
-        Object innerObj = response.getOrDefault("result", response);
-        if (innerObj instanceof Map<?, ?> inner) {
+        Map<String, Object> unwrapped = LlmClient.unwrapResponse(response);
+        Object resultObj = unwrapped.getOrDefault("result", unwrapped);
+        if (resultObj instanceof Map<?, ?> inner) {
             Object parsed = inner.get("parsed_output");
             if (parsed instanceof Map<?, ?> parsedMap) {
                 Object variantsObj = parsedMap.get("variants");
