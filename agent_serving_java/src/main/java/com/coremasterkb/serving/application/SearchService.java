@@ -21,7 +21,6 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
 /**
@@ -168,7 +167,7 @@ public class SearchService {
         List<RetrievalCandidate> ranked = List.of();
         ContextPack pack = null;
         float[] queryEmbedding = null;
-        OrchestratorResult orchResult = null;
+        List<RouteTrace> debugRouteTraces = List.of();
         try {
             trace.startStage("resolve_scope");
             try {
@@ -241,6 +240,8 @@ public class SearchService {
             trace.endStage("retrieve",
                     "candidates=" + rawCandidates.size() + ", variants=" + queryVariants.size());
 
+            debugRouteTraces = List.copyOf(allRouteTraces);
+
             // Observability: per-route candidate counts
             for (RouteTrace rt : allRouteTraces) {
                 if (rt.attempted()) {
@@ -298,8 +299,8 @@ public class SearchService {
             debugInfo.put("candidate_count", ranked.size());
             debugInfo.put("fusion_method", routePlan.fusion().method());
             debugInfo.put("query_embedding_dim", queryEmbedding != null ? queryEmbedding.length : 0);
-            if (orchResult != null) {
-                debugInfo.put("route_traces", routeTracesToList(orchResult.routeTraces()));
+            if (!debugRouteTraces.isEmpty()) {
+                debugInfo.put("route_traces", routeTracesToList(debugRouteTraces));
             }
 
             // Return new pack with debug info added
