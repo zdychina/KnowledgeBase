@@ -222,8 +222,17 @@ public class SearchService {
                 QueryUnderstanding varUnderstanding = variant.equals(request.query())
                         ? understanding
                         : buildVariantUnderstanding(understanding, variant);
+                // Generate per-variant embedding for dense route accuracy
+                float[] variantEmbedding = queryEmbedding;
+                if (!variant.equals(request.query()) && denseEnabled && embeddingClient.isConfigured()) {
+                    try {
+                        variantEmbedding = embeddingClient.embed(variant);
+                    } catch (Exception e) {
+                        log.warn("Variant embedding failed, using original: {}", e.getMessage());
+                    }
+                }
                 OrchestratorResult varResult = orchestrator.execute(
-                        varUnderstanding, routePlan, queryEmbedding, scope.snapshotIds(), sectionHardFilter);
+                        varUnderstanding, routePlan, variantEmbedding, scope.snapshotIds(), sectionHardFilter);
                 rawCandidates.addAll(varResult.candidates());
                 allRouteTraces.addAll(varResult.routeTraces());
             }
