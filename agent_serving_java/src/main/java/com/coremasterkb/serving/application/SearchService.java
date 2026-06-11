@@ -295,6 +295,7 @@ public class SearchService {
 
         } finally {
             DomainContext.clear();
+            llmClient.clearKnowledgeDomain();
         }
 
         // 10. Build debug info if requested

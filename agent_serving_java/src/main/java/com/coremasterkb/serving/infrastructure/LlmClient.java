@@ -30,7 +30,7 @@ public class LlmClient {
 
     private final RestTemplate restTemplate;
     private final String baseUrl;
-    private volatile String knowledgeDomain;
+    private final ThreadLocal<String> domainHolder = new ThreadLocal<>();
 
     public LlmClient(RestTemplate restTemplate, String baseUrl) {
         this.restTemplate = restTemplate;
@@ -39,7 +39,16 @@ public class LlmClient {
 
     /** Set the knowledge domain for billing and audit in llm_service. */
     public void setKnowledgeDomain(String domain) {
-        this.knowledgeDomain = domain;
+        this.domainHolder.set(domain);
+    }
+
+    /** Clear the thread-local domain (call in finally block). */
+    public void clearKnowledgeDomain() {
+        this.domainHolder.remove();
+    }
+
+    private String getKnowledgeDomain() {
+        return this.domainHolder.get();
     }
 
     // =========================================================================
@@ -64,8 +73,8 @@ public class LlmClient {
         payload.put("template_key", templateKey);
         payload.put("input", input);
         payload.put("caller_service", "serving");
-        if (knowledgeDomain != null && !knowledgeDomain.isBlank()) {
-            payload.put("knowledge_domain", knowledgeDomain);
+        if (getKnowledgeDomain() != null && !getKnowledgeDomain().isBlank()) {
+            payload.put("knowledge_domain", getKnowledgeDomain());
         }
 
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
@@ -88,8 +97,8 @@ public class LlmClient {
         Map<String, Object> payload = new HashMap<>();
         payload.put("input", texts);
         payload.put("caller_service", "serving");
-        if (knowledgeDomain != null && !knowledgeDomain.isBlank()) {
-            payload.put("knowledge_domain", knowledgeDomain);
+        if (getKnowledgeDomain() != null && !getKnowledgeDomain().isBlank()) {
+            payload.put("knowledge_domain", getKnowledgeDomain());
         }
 
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
@@ -114,8 +123,8 @@ public class LlmClient {
         payload.put("documents", documents);
         if (topN != null) payload.put("top_n", topN);
         payload.put("caller_service", "serving");
-        if (knowledgeDomain != null && !knowledgeDomain.isBlank()) {
-            payload.put("knowledge_domain", knowledgeDomain);
+        if (getKnowledgeDomain() != null && !getKnowledgeDomain().isBlank()) {
+            payload.put("knowledge_domain", getKnowledgeDomain());
         }
 
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
