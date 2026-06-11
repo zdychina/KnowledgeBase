@@ -19,6 +19,7 @@ public interface AssetRetrievalUnitMapper {
             @Param("ftsQuery") String ftsQuery,
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("limit") int limit);
 
     // ----- Level 2: pg_trgm trigram similarity -----
@@ -34,6 +35,7 @@ public interface AssetRetrievalUnitMapper {
             @Param("queryText") String queryText,
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("limit") int limit);
 
     // ----- Level 3: LIKE fallback -----
@@ -49,6 +51,7 @@ public interface AssetRetrievalUnitMapper {
             @Param("likeTerms") List<String> likeTerms,
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("limit") int limit);
 
     // ----- Entity exact -----
@@ -63,5 +66,6 @@ public interface AssetRetrievalUnitMapper {
             @Param("entityNames") List<String> entityNames,
             @Param("snapshotIds") List<String> snapshotIds,
             @Param("entityContainmentParams") List<String> entityContainmentParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("limit") int limit);
 }

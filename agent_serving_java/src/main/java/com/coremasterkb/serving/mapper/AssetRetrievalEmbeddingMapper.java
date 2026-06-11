@@ -27,5 +27,6 @@ public interface AssetRetrievalEmbeddingMapper {
             @Param("queryVector") String queryVector,
             @Param("dim") int dim,
             @Param("scopeJsonParams") List<String> scopeJsonParams,
+            @Param("sectionPrefixes") List<String> sectionPrefixes,
             @Param("topK") int topK);
 }

@@ -86,6 +86,16 @@
               ru.facets_json @> #{jp}::jsonb
           </foreach>
         </if>
+        <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+        AND EXISTS (
+            SELECT 1 FROM asset_raw_segments rs
+            WHERE rs.id = ru.source_segment_id
+              AND lower(btrim(rs.section_path::jsonb -&gt; 0 -&gt;&gt; 'title')) IN
+            <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                #{p}
+            </foreach>
+        )
+        </if>
         ORDER BY fts_score DESC
         LIMIT #{limit}
     </select>
@@ -146,6 +156,16 @@
           <foreach collection="scopeJsonParams" item="jp" separator=" AND ">
               ru.facets_json @> #{jp}::jsonb
           </foreach>
+        </if>
+        <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+        AND EXISTS (
+            SELECT 1 FROM asset_raw_segments rs
+            WHERE rs.id = ru.source_segment_id
+              AND lower(btrim(rs.section_path::jsonb -&gt; 0 -&gt;&gt; 'title')) IN
+            <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                #{p}
+            </foreach>
+        )
         </if>
         ORDER BY fts_score DESC
         LIMIT #{limit}
@@ -214,6 +234,16 @@
               ru.facets_json @> #{jp}::jsonb
           </foreach>
         </if>
+        <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+        AND EXISTS (
+            SELECT 1 FROM asset_raw_segments rs
+            WHERE rs.id = ru.source_segment_id
+              AND lower(btrim(rs.section_path::jsonb -&gt; 0 -&gt;&gt; 'title')) IN
+            <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                #{p}
+            </foreach>
+        )
+        </if>
         LIMIT #{limit}
     </select>
 
@@ -258,6 +288,16 @@
               WHERE e->>'name' IN
               <foreach collection="entityNames" item="name" open="(" separator="," close=")">
                   #{name}
+              </foreach>
+          )
+          </if>
+          <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+          AND EXISTS (
+              SELECT 1 FROM asset_raw_segments rs
+              WHERE rs.id = ru.source_segment_id
+                AND lower(btrim(rs.section_path::jsonb -&gt; 0 -&gt;&gt; 'title')) IN
+              <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                  #{p}
               </foreach>
           )
           </if>

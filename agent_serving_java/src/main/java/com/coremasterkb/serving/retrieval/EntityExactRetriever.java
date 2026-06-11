@@ -61,6 +61,9 @@ public class EntityExactRetriever implements Retriever {
             return Collections.emptyList();
         }
 
+        List<String> sectionPrefixes = query.sectionPrefixes();
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
+
         // Build JSONB containment params for @> operator (GIN-indexable)
         // Format: [{"name":"SMF"}] — each entity name becomes a containment check
         List<String> containmentParams = entityNames.stream()
@@ -68,7 +71,14 @@ public class EntityExactRetriever implements Retriever {
                 .toList();
 
         List<FtsResultRow> rows = retrievalUnitMapper.searchByEntityExact(
-                entityNames, snapshotIds, containmentParams, topK);
+                entityNames, snapshotIds, containmentParams,
+                hasSection ? sectionPrefixes : List.of(), topK);
+
+        if (rows.isEmpty() && hasSection) {
+            log.info("Section filter eliminated all entity-exact results, retrying without section filter");
+            rows = retrievalUnitMapper.searchByEntityExact(
+                    entityNames, snapshotIds, containmentParams, List.of(), topK);
+        }
 
         return rows.stream()
                 .map(row -> toCandidate(row, EXACT_MATCH_SCORE))

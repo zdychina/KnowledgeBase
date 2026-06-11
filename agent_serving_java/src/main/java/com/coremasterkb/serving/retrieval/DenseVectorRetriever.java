@@ -42,14 +42,26 @@ public class DenseVectorRetriever implements Retriever {
 
         String vectorStr = formatVector(queryVec);
         List<String> scopeParams = FtsRetriever.buildScopeJsonParams(query.scope());
+        List<String> sectionPrefixes = query.sectionPrefixes();
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
+        // Level 1: scope + section hard filter
         List<EmbeddingRow> rows = embeddingMapper.selectTopKByVector(
-                snapshotIds, vectorStr, queryVec.length, scopeParams, topK);
+                snapshotIds, vectorStr, queryVec.length, scopeParams,
+                hasSection ? sectionPrefixes : List.of(), topK);
 
+        // Level 2: drop section filter, keep scope
+        if (rows.isEmpty() && hasSection) {
+            log.info("Section filter eliminated all dense results, retrying without section filter");
+            rows = embeddingMapper.selectTopKByVector(
+                    snapshotIds, vectorStr, queryVec.length, scopeParams, List.of(), topK);
+        }
+
+        // Level 3: drop scope too
         if (rows.isEmpty() && !scopeParams.isEmpty()) {
             log.info("Scope filter eliminated all dense results, retrying without scope");
             rows = embeddingMapper.selectTopKByVector(
-                    snapshotIds, vectorStr, queryVec.length, List.of(), topK);
+                    snapshotIds, vectorStr, queryVec.length, List.of(), List.of(), topK);
         }
 
         return rows.stream().map(this::toCandidate).collect(Collectors.toList());

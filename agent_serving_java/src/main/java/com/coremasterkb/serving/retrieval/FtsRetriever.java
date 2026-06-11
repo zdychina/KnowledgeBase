@@ -77,24 +77,25 @@ public class FtsRetriever implements Retriever {
                 .collect(Collectors.joining(" OR "));
 
         int recallLimit = topK * 5;
+        List<String> sectionPrefixes = query.sectionPrefixes();
 
         // Level 1: tsvector full-text search
         List<RetrievalCandidate> candidates = tryTsvector(
-                ftsQuery, snapshotIds, recallLimit, query.scope());
+                ftsQuery, snapshotIds, recallLimit, query.scope(), sectionPrefixes);
         if (!candidates.isEmpty()) {
             return candidates;
         }
 
         // Level 2: pg_trgm trigram similarity fallback
         log.debug("tsvector returned no results, falling back to trigram for query={}", ftsQuery);
-        candidates = tryTrigram(rawQuery, tokens, snapshotIds, recallLimit, query.scope());
+        candidates = tryTrigram(rawQuery, tokens, snapshotIds, recallLimit, query.scope(), sectionPrefixes);
         if (!candidates.isEmpty()) {
             return candidates;
         }
 
         // Level 3: LIKE fallback
         log.debug("trigram returned no results, falling back to LIKE for query={}", ftsQuery);
-        return tryLike(tokens, snapshotIds, recallLimit, query.scope());
+        return tryLike(tokens, snapshotIds, recallLimit, query.scope(), sectionPrefixes);
     }
 
     // -------------------------------------------------------------------------
@@ -102,14 +103,25 @@ public class FtsRetriever implements Retriever {
     // -------------------------------------------------------------------------
 
     private List<RetrievalCandidate> tryTsvector(
-            String ftsQuery, List<String> snapshotIds, int limit, Map<String, Object> scope) {
+            String ftsQuery, List<String> snapshotIds, int limit,
+            Map<String, Object> scope, List<String> sectionPrefixes) {
 
-        // With scope
         List<String> scopeJsonParams = buildScopeJsonParams(scope);
-        List<FtsResultRow> rows = retrievalUnitMapper.searchByFtsWithScope(
-                ftsQuery, snapshotIds, scopeJsonParams, limit);
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
-        // Retry without scope if scope eliminated all results
+        // With scope + section
+        List<FtsResultRow> rows = retrievalUnitMapper.searchByFtsWithScope(
+                ftsQuery, snapshotIds, scopeJsonParams,
+                hasSection ? sectionPrefixes : List.of(), limit);
+
+        // Drop section filter, keep scope
+        if (rows.isEmpty() && hasSection) {
+            log.info("Section filter eliminated all BM25 results, retrying without section filter");
+            rows = retrievalUnitMapper.searchByFtsWithScope(
+                    ftsQuery, snapshotIds, scopeJsonParams, List.of(), limit);
+        }
+
+        // Drop scope too
         if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
             log.info("Scope filter eliminated all BM25 results, retrying without scope");
             rows = retrievalUnitMapper.searchByFts(ftsQuery, snapshotIds, limit);
@@ -126,14 +138,23 @@ public class FtsRetriever implements Retriever {
 
     private List<RetrievalCandidate> tryTrigram(
             String rawQuery, List<String> tokens,
-            List<String> snapshotIds, int limit, Map<String, Object> scope) {
+            List<String> snapshotIds, int limit, Map<String, Object> scope,
+            List<String> sectionPrefixes) {
 
         String queryText = String.join(" ", tokens);
         List<String> scopeJsonParams = buildScopeJsonParams(scope);
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
         try {
             List<FtsResultRow> rows = retrievalUnitMapper.searchByTrigramWithScope(
-                    queryText, snapshotIds, scopeJsonParams, limit);
+                    queryText, snapshotIds, scopeJsonParams,
+                    hasSection ? sectionPrefixes : List.of(), limit);
+
+            if (rows.isEmpty() && hasSection) {
+                log.info("Section filter eliminated all trigram results, retrying without section filter");
+                rows = retrievalUnitMapper.searchByTrigramWithScope(
+                        queryText, snapshotIds, scopeJsonParams, List.of(), limit);
+            }
 
             if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
                 log.info("Scope filter eliminated all trigram results, retrying without scope");
@@ -156,15 +177,23 @@ public class FtsRetriever implements Retriever {
 
     private List<RetrievalCandidate> tryLike(
             List<String> tokens, List<String> snapshotIds,
-            int limit, Map<String, Object> scope) {
+            int limit, Map<String, Object> scope, List<String> sectionPrefixes) {
 
         List<String> scopeJsonParams = buildScopeJsonParams(scope);
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
         List<String> likeTerms = tokens.stream()
                 .map(t -> "%" + t + "%")
                 .toList();
 
         List<FtsResultRow> rows = retrievalUnitMapper.searchByLikeWithScope(
-                likeTerms, snapshotIds, scopeJsonParams, limit);
+                likeTerms, snapshotIds, scopeJsonParams,
+                hasSection ? sectionPrefixes : List.of(), limit);
+
+        if (rows.isEmpty() && hasSection) {
+            log.info("Section filter eliminated all LIKE results, retrying without section filter");
+            rows = retrievalUnitMapper.searchByLikeWithScope(
+                    likeTerms, snapshotIds, scopeJsonParams, List.of(), limit);
+        }
 
         if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
             log.info("Scope filter eliminated all LIKE results, retrying without scope");
