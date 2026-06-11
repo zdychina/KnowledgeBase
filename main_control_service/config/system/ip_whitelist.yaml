@@ -1,0 +1,14 @@
+# IP 白名单配置
+# enabled: true 表示启用白名单，false 表示不限制访问
+# allowed_ips: 允许访问的真实客户端 IP（支持 CIDR 格式，如 192.168.1.0/24）
+# trusted_proxies: 可信反向代理 IP（如 Nginx），从这些 IP 来的请求会读取 X-Forwarded-For 获取真实客户端 IP
+# 修改后调用 POST /api/v1/admin/reload-ip-whitelist 热更新
+
+enabled: false
+allowed_ips:
+  - "127.0.0.1"
+  # - "::1"
+  # - "192.168.1.0/24"    # 允许整个子网
+trusted_proxies:
+  - "127.0.0.1"           # Nginx 在同一台机器，转发来源是 127.0.0.1
+  # - "::1"

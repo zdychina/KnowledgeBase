@@ -7,7 +7,7 @@ domains:
     database:
       host: 121.89.90.178
       port: 5432
-      dbname: coremasterkb
+      dbname: kb_db
       user: kb_user
       password: nis123qwe
       sslmode: disable

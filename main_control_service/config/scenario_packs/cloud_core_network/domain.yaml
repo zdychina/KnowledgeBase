@@ -98,10 +98,16 @@ mining:
       - navigation
       - toc
       - metadata
+    # Segmentation thresholds (v2.0)
+    min_chunk_tokens: 128
+    max_chunk_tokens: 512
+    cross_section_merge: true
+    min_enrich_tokens: 30
+    structural_context_mode: breadcrumb
 
   # LLM templates
   llm_templates:
-    - template_key: mining-question-gen
+    - template_key: mining-question-generation
       template_version: "4"
       purpose: "从段落内容生成假设性检索问题"
       system_prompt: "你是通信网络知识库的检索优化助手。你判断段落是否值得生成问题，如果是则生成高质量检索问题。"
