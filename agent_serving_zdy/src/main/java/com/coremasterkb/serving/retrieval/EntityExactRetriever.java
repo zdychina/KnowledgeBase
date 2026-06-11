@@ -61,8 +61,16 @@ public class EntityExactRetriever implements Retriever {
             return Collections.emptyList();
         }
 
+        List<String> sectionPrefixes = query.sectionPrefixes();
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
+
+        // With section hard filter; retry without it if it eliminated all matches.
         List<FtsResultRow> rows = retrievalUnitMapper.searchByEntityExact(
-                entityNames, snapshotIds, topK);
+                entityNames, snapshotIds, hasSection ? sectionPrefixes : List.of(), topK);
+        if (rows.isEmpty() && hasSection) {
+            log.info("Section filter eliminated all entity-exact results, retrying without section filter");
+            rows = retrievalUnitMapper.searchByEntityExact(entityNames, snapshotIds, List.of(), topK);
+        }
 
         return rows.stream()
                 .map(row -> toCandidate(row, EXACT_MATCH_SCORE))

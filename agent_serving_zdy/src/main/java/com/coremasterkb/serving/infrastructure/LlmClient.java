@@ -72,10 +72,10 @@ public class LlmClient {
         }
 
         Map<String, Object> payload = new HashMap<>();
+        payload.put("caller_service", "serving");
         payload.put("pipeline_stage", pipelineStage);
         payload.put("template_key", templateKey);
         payload.put("input", input);
-        payload.put("caller_domain", "serving");
 
         ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
                 baseUrl + "/api/v1/execute",
@@ -95,6 +95,7 @@ public class LlmClient {
         }
 
         Map<String, Object> payload = new HashMap<>();
+        payload.put("caller_service", "serving");
         payload.put("input", texts);
         if (model != null) payload.put("model", model);
         if (dimensions != null) payload.put("dimensions", dimensions);
@@ -117,6 +118,7 @@ public class LlmClient {
         }
 
         Map<String, Object> payload = new HashMap<>();
+        payload.put("caller_service", "serving");
         payload.put("query", query);
         payload.put("documents", documents);
         if (model != null) payload.put("model", model);

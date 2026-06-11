@@ -101,10 +101,13 @@ public class DomainPackReader {
             @SuppressWarnings("unchecked")
             Map<String, Object> queryUnderstanding =
                     (Map<String, Object>) serving.getOrDefault("query_understanding", Map.of());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> intentStrategy =
+                    (Map<String, Object>) serving.getOrDefault("intent_strategy", Map.of());
 
             return new ServingDomainProfile(
                     domainId, entityTypes, strongEntityTypes, routePolicy,
-                    extractorRules, evalQuestions, queryUnderstanding
+                    extractorRules, evalQuestions, queryUnderstanding, intentStrategy
             );
         }
     }

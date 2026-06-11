@@ -46,19 +46,23 @@ public class RetrievalOrchestrator {
      * @param routePlan       route configuration plan
      * @param queryEmbedding  pre-computed query embedding; may be null
      * @param snapshotIds     snapshot IDs in scope; if empty, returns empty result
+     * @param sectionPrefixes tree-navigation hard-filter chapters; empty = no section narrowing.
+     *                        Injected here (not by callers) so multi-query variants and sub-queries
+     *                        all inherit the same filter.
      * @return orchestrator result with candidates and route traces
      */
     public OrchestratorResult execute(
             QueryUnderstanding understanding,
             RetrievalRoutePlan routePlan,
             float[] queryEmbedding,
-            List<String> snapshotIds) {
+            List<String> snapshotIds,
+            List<String> sectionPrefixes) {
 
         if (snapshotIds == null || snapshotIds.isEmpty()) {
             return OrchestratorResult.empty();
         }
 
-        // 1. Build RetrievalQuery from understanding + embedding
+        // 1. Build RetrievalQuery from understanding + embedding (+ section hard filter)
         var retrievalQuery = new RetrievalQuery(
                 understanding.originalQuery(),
                 understanding.keywords(),
@@ -66,7 +70,8 @@ public class RetrievalOrchestrator {
                 queryEmbedding,
                 understanding.subQueries().stream().map(SubQuery::text).toList(),
                 understanding.intent(),
-                understanding.scope()
+                understanding.scope(),
+                sectionPrefixes
         );
 
         // 2. Build route config map (only enabled routes)

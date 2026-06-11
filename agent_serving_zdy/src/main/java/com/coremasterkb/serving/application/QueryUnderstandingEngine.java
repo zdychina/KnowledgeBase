@@ -113,17 +113,36 @@ public class QueryUnderstandingEngine {
 
     /**
      * Understand a user query: LLM path first, rule fallback on failure.
+     *
+     * @param complexityHint optional frontend override ("simple"|"medium"|"complex"); null = auto-derive
      */
-    public QueryUnderstanding understand(String query, ServingDomainProfile profile) {
+    public QueryUnderstanding understand(String query, ServingDomainProfile profile, String complexityHint) {
+        QueryUnderstanding result = null;
+
         // LLM path
         if (llmClient != null && llmClient.isAvailable()) {
-            QueryUnderstanding result = tryLlmUnderstand(query);
-            if (result != null) {
-                return result;
-            }
+            result = tryLlmUnderstand(query);
         }
-        // Rule fallback
-        return ruleUnderstand(query, profile);
+        if (result == null) {
+            result = ruleUnderstand(query, profile);
+        }
+
+        // Apply complexity hint: override auto-derived value if frontend supplied one
+        if (complexityHint != null && !complexityHint.isBlank()) {
+            result = new QueryUnderstanding(
+                    result.originalQuery(), result.intent(), result.subQueries(),
+                    result.entities(), result.scope(), result.keywords(),
+                    result.evidenceNeed(), result.ambiguities(), result.source(),
+                    complexityHint
+            );
+            log.debug("complexity overridden by hint: {}", complexityHint);
+        }
+        return result;
+    }
+
+    /** Convenience overload used internally (no hint). */
+    public QueryUnderstanding understand(String query, ServingDomainProfile profile) {
+        return understand(query, profile, null);
     }
 
     // =========================================================================
@@ -172,10 +191,20 @@ public class QueryUnderstandingEngine {
         List<SubQuery> subQueries = new ArrayList<>();
         List<Map<String, Object>> rawSubQueries = (List<Map<String, Object>>) parsed.getOrDefault("sub_queries", List.of());
         for (var sq : rawSubQueries) {
+            List<EntityRef> sqEntities = new ArrayList<>();
+            List<Map<String, Object>> rawSqEntities =
+                    (List<Map<String, Object>>) sq.getOrDefault("entities", List.of());
+            for (var e : rawSqEntities) {
+                String name = String.valueOf(e.getOrDefault("name", ""));
+                sqEntities.add(new EntityRef(
+                        String.valueOf(e.getOrDefault("type", "unknown")),
+                        name,
+                        String.valueOf(e.getOrDefault("normalized_name", name))));
+            }
             subQueries.add(new SubQuery(
                     String.valueOf(sq.getOrDefault("text", "")),
                     String.valueOf(sq.getOrDefault("intent", "general")),
-                    null
+                    sqEntities.isEmpty() ? null : sqEntities
             ));
         }
 
@@ -199,6 +228,7 @@ public class QueryUnderstandingEngine {
         String rawIntent = String.valueOf(parsed.getOrDefault("intent", "general"));
         String normalizedIntent = normalizeIntent(rawIntent);
 
+        EvidenceNeed evidenceNeed = new EvidenceNeed(preferredRoles, preferredBlocks, needsComparison, needsCitation);
         return new QueryUnderstanding(
                 query,
                 normalizedIntent,
@@ -206,9 +236,10 @@ public class QueryUnderstandingEngine {
                 entities,
                 scope,
                 keywords,
-                new EvidenceNeed(preferredRoles, preferredBlocks, needsComparison, needsCitation),
+                evidenceNeed,
                 ambiguities,
-                "llm"
+                "llm",
+                deriveComplexity(normalizedIntent, entities, subQueries, evidenceNeed)
         );
     }
 
@@ -254,16 +285,19 @@ public class QueryUnderstandingEngine {
         String intent = detectIntent(query, entities);
         List<String> keywords = extractKeywords(query, cmdRe);
 
+        EvidenceNeed evidenceNeed = new EvidenceNeed(INTENT_ROLE_MAP.getOrDefault(intent, List.of()), List.of(), false, false);
+        String normalizedIntent = normalizeIntent(intent);
         return new QueryUnderstanding(
                 query,
-                normalizeIntent(intent),
+                normalizedIntent,
                 List.of(),
                 entities,
                 scope,
                 keywords,
-                new EvidenceNeed(INTENT_ROLE_MAP.getOrDefault(intent, List.of()), List.of(), false, false),
+                evidenceNeed,
                 List.of(),
-                "rule"
+                "rule",
+                deriveComplexity(normalizedIntent, entities, List.of(), evidenceNeed)
         );
     }
 
@@ -432,6 +466,42 @@ public class QueryUnderstandingEngine {
         return (cp >= 0x4E00 && cp <= 0x9FFF)
                 || (cp >= 0x3400 && cp <= 0x4DBF)
                 || (cp >= 0x2E80 && cp <= 0x2EFF);
+    }
+
+    // =========================================================================
+    // Complexity derivation
+    // =========================================================================
+
+    /**
+     * Derives the adaptive retrieval complexity tier from structural QU signals.
+     * <ul>
+     *   <li><b>simple</b> – entity exact match can resolve the query alone
+     *       (command_usage with a command entity, or navigational)</li>
+     *   <li><b>complex</b> – reasoning, comparison, or multi-hop inference required
+     *       (comparison/troubleshooting intent, sub-query decomposition, or explicit needsComparison)</li>
+     *   <li><b>medium</b> – everything else; semantic retrieval needed</li>
+     * </ul>
+     */
+    static String deriveComplexity(
+            String intent,
+            List<EntityRef> entities,
+            List<SubQuery> subQueries,
+            EvidenceNeed evidenceNeed) {
+
+        // complex: needs reasoning, comparison, or multi-step retrieval
+        if ("comparison".equals(intent) || "troubleshooting".equals(intent)) return "complex";
+        if (subQueries != null && !subQueries.isEmpty()) return "complex";
+        if (evidenceNeed != null && evidenceNeed.needsComparison()) return "complex";
+
+        // simple: a command entity or navigation — entity_exact match is sufficient
+        if ("command_usage".equals(intent)
+                && entities != null
+                && entities.stream().anyMatch(e -> "command".equals(e.type()))) {
+            return "simple";
+        }
+        if ("navigational".equals(intent)) return "simple";
+
+        return "medium";
     }
 
     // =========================================================================

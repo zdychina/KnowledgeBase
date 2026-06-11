@@ -35,13 +35,23 @@ public class EvidenceRoleClassifier {
 
     private String determineRole(ContextItem item, QueryUnderstanding understanding) {
         double score = item.score();
+        String discourse = item.metadata() != null
+                ? String.valueOf(item.metadata().getOrDefault("discourse_role", "standalone"))
+                : "standalone";
 
-        if ("seed".equals(item.relationToSeed())) {
+        // Seed items: combine relevance score with RST discourse role.
+        // satellite = supporting span → never a direct answer; nucleus/standalone
+        // can be a direct answer when relevance is high.
+        if ("seed".equals(item.role())) {
+            if ("satellite".equals(discourse)) {
+                return score >= MEDIUM_SCORE_THRESHOLD ? "support" : "background";
+            }
             if (score >= HIGH_SCORE_THRESHOLD) return "direct_answer";
             if (score >= MEDIUM_SCORE_THRESHOLD) return "support";
             return "background";
         }
 
+        // Expansion items carry the RST relation that linked them to a seed.
         if (item.relationToSeed() != null && !item.relationToSeed().isEmpty()) {
             String rel = item.relationToSeed();
             if ("contrasts_with".equals(rel)) return "contrast";
@@ -49,6 +59,8 @@ public class EvidenceRoleClassifier {
             return "background";
         }
 
+        // Context/source items: satellite → background, else score-based.
+        if ("satellite".equals(discourse)) return "background";
         if (score >= MEDIUM_SCORE_THRESHOLD) return "support";
         return "background";
     }

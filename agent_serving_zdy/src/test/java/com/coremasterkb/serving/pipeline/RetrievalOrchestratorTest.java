@@ -39,18 +39,18 @@ class RetrievalOrchestratorTest {
         @Test
         @DisplayName("null snapshotIds returns empty result")
         void nullReturnsEmpty() {
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(List.of(), null, null, null, null, null);
-            var result = orchestrator.execute(understanding, plan, null, null);
+            var result = orchestrator.execute(understanding, plan, null, null, List.of());
             assertThat(result.candidates()).isEmpty();
         }
 
         @Test
         @DisplayName("empty snapshotIds returns empty result")
         void emptyReturnsEmpty() {
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(List.of(), null, null, null, null, null);
-            var result = orchestrator.execute(understanding, plan, null, List.of());
+            var result = orchestrator.execute(understanding, plan, null, List.of(), List.of());
             assertThat(result.candidates()).isEmpty();
         }
     }
@@ -63,7 +63,7 @@ class RetrievalOrchestratorTest {
         void denseSkippedNoEmbedding() {
             when(bm25Retriever.retrieve(any(), any(), anyInt())).thenReturn(List.of());
 
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(
                             new RouteConfig("lexical_bm25", true, 1.0, 50),
@@ -72,7 +72,7 @@ class RetrievalOrchestratorTest {
                     null, null, null, null, null
             );
 
-            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"));
+            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"), List.of());
 
             // dense should be skipped with "no_embedding" reason
             assertThat(result.routeTraces()).hasSize(2);
@@ -89,7 +89,7 @@ class RetrievalOrchestratorTest {
             when(bm25Retriever.retrieve(any(), any(), anyInt())).thenReturn(List.of());
             when(denseRetriever.retrieve(any(), any(), anyInt())).thenReturn(List.of());
 
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(
                             new RouteConfig("lexical_bm25", true, 1.0, 50),
@@ -98,7 +98,7 @@ class RetrievalOrchestratorTest {
                     null, null, null, null, null
             );
 
-            orchestrator.execute(understanding, plan, new float[]{0.1f, 0.2f}, List.of("snap1"));
+            orchestrator.execute(understanding, plan, new float[]{0.1f, 0.2f}, List.of("snap1"), List.of());
 
             verify(denseRetriever).retrieve(any(), any(), anyInt());
         }
@@ -113,13 +113,13 @@ class RetrievalOrchestratorTest {
             when(bm25Retriever.retrieve(any(), any(), anyInt()))
                     .thenThrow(new RuntimeException("DB error"));
 
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     null, null, null, null, null
             );
 
-            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"));
+            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"), List.of());
             // Should not throw, but trace records the error
             assertThat(result.routeTraces()).hasSize(1);
             assertThat(result.candidates()).isEmpty();
@@ -132,13 +132,13 @@ class RetrievalOrchestratorTest {
         @Test
         @DisplayName("unregistered route traced as not_registered")
         void unregisteredTraced() {
-            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule");
+            var understanding = new QueryUnderstanding("q", "general", null, null, null, null, null, null, "rule", null);
             var plan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("unknown_route", true, 1.0, 50)),
                     null, null, null, null, null
             );
 
-            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"));
+            var result = orchestrator.execute(understanding, plan, null, List.of("snap1"), List.of());
             assertThat(result.routeTraces()).hasSize(1);
             assertThat(result.routeTraces().get(0).skippedReason()).isEqualTo("not_registered");
         }

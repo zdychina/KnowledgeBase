@@ -1,5 +1,6 @@
 package com.coremasterkb.serving.application;
 
+import com.coremasterkb.serving.config.ServingProperties;
 import com.coremasterkb.serving.domain.*;
 import com.coremasterkb.serving.domainpack.DomainContext;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
@@ -36,6 +37,9 @@ class SearchServiceTest {
     private DomainPoolManager domainPoolManager;
     private EmbeddingClient embeddingClient;
     private com.coremasterkb.serving.repository.AssetRepository assetRepo;
+    private MultiQueryExpander multiQueryExpander;
+    private SemanticCacheService semanticCache;
+    private SessionStore sessionStore;
     private SearchService searchService;
 
     @BeforeEach
@@ -50,17 +54,37 @@ class SearchServiceTest {
         domainPoolManager = mock(DomainPoolManager.class);
         embeddingClient = mock(EmbeddingClient.class);
         assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
+        multiQueryExpander = mock(MultiQueryExpander.class);
+        semanticCache = mock(SemanticCacheService.class);
+        sessionStore = mock(SessionStore.class);
 
         when(domainRegistry.getDefaultChannel(anyString())).thenReturn("prod");
         when(domainRegistry.findEntry(anyString())).thenReturn(java.util.Optional.empty());
         when(domainPoolManager.getDataSource(anyString())).thenReturn(mock(javax.sql.DataSource.class));
         when(assetRepo.resolveActiveScope(anyString(), anyString()))
                 .thenReturn(new ActiveScope("rel1", "b1", List.of("snap1"), Map.of()));
+        // Multi-query expander returns just the original query by default (no LLM in unit tests)
+        when(multiQueryExpander.expand(anyString()))
+                .thenAnswer(inv -> List.of(inv.getArgument(0, String.class)));
+        // Semantic cache misses by default
+        when(semanticCache.lookup(anyString(), any())).thenReturn(null);
+        // Session store returns empty history by default
+        when(sessionStore.getPriorQueries(anyString())).thenReturn(List.of());
+
+        ServingProperties properties = new ServingProperties(
+                null, null, "cloud_core_network", null, null, null);
+
+        var searchMetrics = new com.coremasterkb.serving.observability.SearchMetrics(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        var treeNavigator = mock(TreeNavigator.class);
+        when(treeNavigator.inferSections(any(), any()))
+                .thenReturn(com.coremasterkb.serving.domain.TreeNavigation.empty());
 
         searchService = new SearchService(
                 quEngine, router, orchestrator, rerankPipeline,
                 assembler, domainPackReader, domainRegistry, domainPoolManager,
-                embeddingClient, assetRepo);
+                embeddingClient, assetRepo, multiQueryExpander, semanticCache, sessionStore,
+                searchMetrics, treeNavigator, properties);
     }
 
     @Nested
@@ -71,7 +95,7 @@ class SearchServiceTest {
         void allStagesCalled() {
             var understanding = new QueryUnderstanding("SMF配置", "concept_lookup",
                     List.of(), List.of(), Map.of(), List.of("SMF"),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -83,23 +107,23 @@ class SearchServiceTest {
                     List.of(), List.of(), List.of(), Map.of());
 
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-            when(orchestrator.execute(any(), any(), any(), any())).thenReturn(orchResult);
+            when(orchestrator.execute(any(), any(), any(), any(), any())).thenReturn(orchResult);
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(rerankResult);
-            when(assembler.assemble(anyString(), any(), any(), any(), any())).thenReturn(expectedPack);
+            when(assembler.assemble(anyString(), any(), any(), any(), any(), any())).thenReturn(expectedPack);
 
             var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence");
+                    "cloud_core_network", null, "evidence", null, null);
 
             var result = searchService.search(request);
 
             assertThat(result).isNotNull();
-            verify(quEngine).understand("SMF配置", null);
+            verify(quEngine).understand("SMF配置", null, null);
             verify(router).route(understanding, null);
-            verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")));
+            verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")), any());
             verify(rerankPipeline).rerank(any(), eq(routePlan), eq(understanding));
-            verify(assembler).assemble(eq("SMF配置"), eq(understanding), any(), any(), eq(routePlan));
+            verify(assembler).assemble(eq("SMF配置"), eq(understanding), any(), any(), eq(routePlan), any());
         }
 
         @Test
@@ -107,7 +131,7 @@ class SearchServiceTest {
         void debugFlagPopulatesDebugMap() {
             var understanding = new QueryUnderstanding("test", "general",
                     List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -115,15 +139,15 @@ class SearchServiceTest {
                     AssemblyConfig.defaults(), ExpansionConfig.defaults());
 
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-            when(orchestrator.execute(any(), any(), any(), any())).thenReturn(OrchestratorResult.empty());
+            when(orchestrator.execute(any(), any(), any(), any(), any())).thenReturn(OrchestratorResult.empty());
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(new RerankResult(List.of(), List.of()));
-            when(assembler.assemble(anyString(), any(), any(), any(), any()))
+            when(assembler.assemble(anyString(), any(), any(), any(), any(), any()))
                     .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()));
 
             var request = new SearchRequest("test", Map.of(), List.of(), true,
-                    "cloud_core_network", null, "evidence");
+                    "cloud_core_network", null, "evidence", null, null);
             var result = searchService.search(request);
 
             assertThat(result.debug()).containsKey("understanding");
@@ -136,7 +160,7 @@ class SearchServiceTest {
         void domainContextClearedOnException() {
             var understanding = new QueryUnderstanding("test", "general",
                     List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -144,13 +168,13 @@ class SearchServiceTest {
                     AssemblyConfig.defaults(), ExpansionConfig.defaults());
 
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
-            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(quEngine.understand(anyString(), any(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
             when(assetRepo.resolveActiveScope(anyString(), anyString()))
                     .thenThrow(new IllegalArgumentException("no_active_release"));
 
             var request = new SearchRequest("test", Map.of(), List.of(), false,
-                    "cloud_core_network", null, "evidence");
+                    "cloud_core_network", null, "evidence", null, null);
 
             assertThatThrownBy(() -> searchService.search(request))
                     .isInstanceOf(IllegalArgumentException.class);

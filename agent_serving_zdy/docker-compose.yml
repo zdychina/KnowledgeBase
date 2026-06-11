@@ -1,0 +1,18 @@
+services:
+
+  agent-serving:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    env_file:
+      - .env
+    environment:
+      DOMAIN_REGISTRY_PATH: /app/config/domain_registry.yaml
+      SCENARIO_PACKS_DIR: /app/config/scenario_packs
+    volumes:
+      # domain_registry.yaml and scenario_packs live one level up in the repo root
+      - ../domain_registry.yaml:/app/config/domain_registry.yaml:ro
+      - ../scenario_packs:/app/config/scenario_packs:ro
+    restart: unless-stopped

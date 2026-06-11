@@ -82,7 +82,7 @@ class DomainRecordWithMethodsTest {
             assertThat(defaults.sourceDrilldown()).isTrue();
             assertThat(defaults.relationExpansion()).isTrue();
             assertThat(defaults.maxItems()).isEqualTo(10);
-            assertThat(defaults.maxExpanded()).isEqualTo(10);
+            assertThat(defaults.maxExpanded()).isEqualTo(20);
             assertThat(defaults.maxRelationDepth()).isEqualTo(2);
             assertThat(defaults.relationTypes()).isNotEmpty();
         }

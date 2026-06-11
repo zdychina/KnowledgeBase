@@ -162,5 +162,67 @@ public final class ServingTemplates {
             Map.entry("_example_json", RERANKER_EXAMPLE)
     );
 
-    public static final List<Map<String, Object>> ALL = List.of(QUERY_UNDERSTANDING, RERANKER);
+    // ---- Template: serving-hyde-expansion ----
+    private static final Map<String, Object> HYDE_EXPANSION = Map.ofEntries(
+            Map.entry("template_key", "serving-hyde-expansion"),
+            Map.entry("template_version", "1"),
+            Map.entry("purpose", "生成假设性文档段落，用于 HyDE 向量检索"),
+            Map.entry("system_prompt",
+                    "你是一个技术文档生成助手。根据用户的查询，生成一段可能出现在相关技术手册中的回答段落。"
+                    + "要求：\n"
+                    + "1. 使用专业的技术文档风格\n"
+                    + "2. 段落长度 100-200 字\n"
+                    + "3. 直接输出段落内容，不要添加任何前缀或解释\n"
+                    + "4. 内容不需要完全准确，只需在语义空间接近真实文档即可"),
+            Map.entry("user_prompt_template", "查询：$query\n\n请生成一段假设性的技术文档回答："),
+            Map.entry("output_schema_json", ""),
+            Map.entry("_example_json", "")
+    );
+
+    // ---- Multi-Query Expansion output schema ----
+    private static final String MULTI_QUERY_SCHEMA = """
+            {
+              "type": "object",
+              "properties": {
+                "variants": {
+                  "type": "array",
+                  "items": {"type": "string"},
+                  "minItems": 1,
+                  "maxItems": 4
+                }
+              },
+              "required": ["variants"]
+            }""";
+
+    private static final String MULTI_QUERY_EXAMPLE = """
+            {
+              "variants": [
+                "SMF 注册失败排查方法",
+                "SMF registration failure troubleshooting steps",
+                "SMF 无法注册到 NRF 的原因"
+              ]
+            }""";
+
+    // ---- Template: serving-multi-query-expansion ----
+    private static final Map<String, Object> MULTI_QUERY_EXPANSION = Map.ofEntries(
+            Map.entry("template_key", "serving-multi-query-expansion"),
+            Map.entry("template_version", "1"),
+            Map.entry("purpose", "将用户查询改写为 2-3 个语义相近但表达不同的变体，提升检索召回率"),
+            Map.entry("system_prompt",
+                    "你是查询扩展助手。给定一个用户查询，生成 2-3 个语义相近但表达不同的查询变体。\n"
+                    + "要求：\n"
+                    + "1. 保持与原查询相同的意图和领域\n"
+                    + "2. 变体之间表达方式有差异（中英文混用、同义词替换、缩写展开等）\n"
+                    + "3. 不要重复原始查询\n\n"
+                    + "## JSON Schema\n"
+                    + "{output_schema}\n\n"
+                    + "## 示例\n"
+                    + "{example}"),
+            Map.entry("user_prompt_template", "原始查询：$query\n\n请生成查询变体："),
+            Map.entry("output_schema_json", MULTI_QUERY_SCHEMA),
+            Map.entry("_example_json", MULTI_QUERY_EXAMPLE)
+    );
+
+    public static final List<Map<String, Object>> ALL = List.of(
+            QUERY_UNDERSTANDING, RERANKER, HYDE_EXPANSION, MULTI_QUERY_EXPANSION);
 }

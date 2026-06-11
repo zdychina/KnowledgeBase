@@ -81,6 +81,17 @@
         <foreach collection="scopeJsonParams" item="scopeParam">
             AND ru.facets_json @&gt; #{scopeParam}::jsonb
         </foreach>
+        <!-- Section hard filter: source raw segment's top-level title (btrim+lower, mirrors prefixOf). -->
+        <if test="sectionPrefixes != null and sectionPrefixes.size() > 0">
+          AND EXISTS (
+              SELECT 1 FROM asset_raw_segments rs
+              WHERE rs.id = ru.source_segment_id
+                AND lower(btrim(rs.section_path::jsonb -&gt; 0 -&gt;&gt; 'title')) IN
+              <foreach collection="sectionPrefixes" item="p" open="(" separator="," close=")">
+                  #{p}
+              </foreach>
+          )
+        </if>
         ORDER BY re.embedding_vector &lt;=&gt; #{queryVector}::vector
         LIMIT #{topK}
     </select>

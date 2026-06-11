@@ -80,7 +80,7 @@ public class FtsRetriever implements Retriever {
 
         // Level 1: tsvector full-text search
         List<RetrievalCandidate> candidates = tryTsvector(
-                ftsQuery, snapshotIds, recallLimit, query.scope());
+                ftsQuery, snapshotIds, recallLimit, query.scope(), query.sectionPrefixes());
         if (!candidates.isEmpty()) {
             return candidates;
         }
@@ -102,14 +102,25 @@ public class FtsRetriever implements Retriever {
     // -------------------------------------------------------------------------
 
     private List<RetrievalCandidate> tryTsvector(
-            String ftsQuery, List<String> snapshotIds, int limit, Map<String, Object> scope) {
+            String ftsQuery, List<String> snapshotIds, int limit,
+            Map<String, Object> scope, List<String> sectionPrefixes) {
 
-        // With scope
         List<String> scopeJsonParams = buildScopeJsonParams(scope);
-        List<FtsResultRow> rows = retrievalUnitMapper.searchByFtsWithScope(
-                ftsQuery, snapshotIds, scopeJsonParams, limit);
+        boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
-        // Retry without scope if scope eliminated all results
+        // Level 1a: scope + section hard filter
+        List<FtsResultRow> rows = retrievalUnitMapper.searchByFtsWithScope(
+                ftsQuery, snapshotIds, scopeJsonParams,
+                hasSection ? sectionPrefixes : List.of(), limit);
+
+        // Level 1b: drop the (heuristic) section filter first, keep the user-specified scope
+        if (rows.isEmpty() && hasSection) {
+            log.info("Section filter eliminated all BM25 results, retrying without section filter");
+            rows = retrievalUnitMapper.searchByFtsWithScope(
+                    ftsQuery, snapshotIds, scopeJsonParams, List.of(), limit);
+        }
+
+        // Level 1c: drop scope too — final no-filter fallback
         if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
             log.info("Scope filter eliminated all BM25 results, retrying without scope");
             rows = retrievalUnitMapper.searchByFts(ftsQuery, snapshotIds, limit);

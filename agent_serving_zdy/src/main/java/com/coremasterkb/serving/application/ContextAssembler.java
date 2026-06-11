@@ -30,9 +30,14 @@ public class ContextAssembler {
     private static final Logger log = LoggerFactory.getLogger(ContextAssembler.class);
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    // Context compression budget: 3000 tokens × ~4 chars/token
+    private static final int MAX_TOTAL_TOKENS = 3000;
+    private static final int MAX_TOTAL_CHARS = MAX_TOTAL_TOKENS * 4;
+
     // Issue type constants (match Python)
-    private static final String ISSUE_NO_RESULT = "no_result";
-    private static final String ISSUE_LOW_CONFIDENCE = "low_confidence";
+    private static final String ISSUE_NO_RESULT            = "no_result";
+    private static final String ISSUE_LOW_CONFIDENCE       = "low_confidence";
+    private static final String ISSUE_CONFLICTING_EVIDENCE = "conflicting_evidence";
 
     // Kind/role constants
     private static final String KIND_RETRIEVAL_UNIT = "retrieval_unit";
@@ -40,6 +45,38 @@ public class ContextAssembler {
     private static final String ROLE_SEED = "seed";
     private static final String ROLE_CONTEXT = "context";
     private static final String ROLE_SUPPORT = "support";
+
+    // RST discourse roles, written by Mining into asset_raw_segments.metadata_json.
+    private static final String DISCOURSE_NUCLEUS = "nucleus";
+    private static final String DISCOURSE_SATELLITE = "satellite";
+    private static final String DISCOURSE_STANDALONE = "standalone";
+
+    /**
+     * Phase 2 – RST relation weights used as initial scores for expanded items.
+     * Mirrors the priority order in GraphExpander: higher weight = higher score = more context budget.
+     */
+    private static final Map<String, Double> RST_RELATION_WEIGHTS = Map.ofEntries(
+            Map.entry("elaborates",           1.5),
+            Map.entry("conditions",           1.4),
+            Map.entry("backgrounds",          1.3),
+            Map.entry("enables",              1.2),
+            Map.entry("results_in",           1.1),
+            Map.entry("sequences",            1.0),
+            Map.entry("contrasts_with",       0.9),
+            Map.entry("causes",               0.8),
+            Map.entry("parallels",            0.7),
+            Map.entry("evidences",            1.35),
+            Map.entry("exemplifies",          1.25),
+            Map.entry("purposes",             1.15),
+            Map.entry("justifies",            1.10),
+            Map.entry("summarizes",           1.05),
+            Map.entry("concedes",             0.85),
+            Map.entry("section_header_of",    0.6),
+            Map.entry("same_section",         0.5),
+            Map.entry("previous",             0.4),
+            Map.entry("next",                 0.4),
+            Map.entry("same_parent_section",  0.3)
+    );
 
     // RST relation type -> evidence role mapping for expansion
     private static final Map<String, String> RST_ROLE_MAP = Map.ofEntries(
@@ -49,6 +86,12 @@ public class ContextAssembler {
             Map.entry("results_in", "support"),
             Map.entry("backgrounds", "background"),
             Map.entry("enables", "support"),
+            Map.entry("evidences", "support"),
+            Map.entry("exemplifies", "support"),
+            Map.entry("purposes", "support"),
+            Map.entry("justifies", "support"),
+            Map.entry("summarizes", "support"),
+            Map.entry("concedes", "contrast"),
             Map.entry("parallels", "context"),
             Map.entry("contrasts_with", "contrast"),
             Map.entry("previous", "context"),
@@ -83,15 +126,29 @@ public class ContextAssembler {
             ActiveScope scope,
             List<RetrievalCandidate> candidates,
             RetrievalRoutePlan routePlan) {
+        return assemble(query, understanding, scope, candidates, routePlan, Set.of());
+    }
 
+    /**
+     * Full assembly with tree-navigation hints: seeds whose source segment falls in a
+     * navigated chapter ({@code navigatedSections} = lower-cased section_path prefixes)
+     * are ranked ahead, then nucleus-first within each tier. An empty navigatedSections
+     * applies no section bias (full-base behavior).
+     */
+    public ContextPack assemble(
+            String query,
+            QueryUnderstanding understanding,
+            ActiveScope scope,
+            List<RetrievalCandidate> candidates,
+            RetrievalRoutePlan routePlan,
+            Set<String> navigatedSections) {
+
+        if (navigatedSections == null) navigatedSections = Set.of();
         if (candidates == null) candidates = List.of();
         if (scope == null) scope = new ActiveScope("", "", List.of(), Map.of());
         if (routePlan == null) routePlan = new RetrievalRoutePlan(List.of(), Map.of(), null, null, null, null);
 
-        // 1. Build seed items from retrieval candidates
-        List<ContextItem> seedItems = buildSeedItems(candidates, understanding);
-
-        // 2. Resolve source segment IDs from candidates
+        // 1. Resolve source segment IDs from candidates
         List<String> allSourceSegmentIds = new ArrayList<>();
         for (var candidate : candidates) {
             allSourceSegmentIds.addAll(resolveCandidateSources(candidate));
@@ -106,7 +163,7 @@ public class ContextAssembler {
             }
         }
 
-        // 3. Fetch source segments
+        // 2. Fetch source segments
         List<SegmentWithMetaRow> sourceSegments;
         if (!uniqueSegIds.isEmpty() && scope.snapshotIds() != null && !scope.snapshotIds().isEmpty()) {
             sourceSegments = repo.resolveSegmentsByIds(uniqueSegIds, scope.snapshotIds());
@@ -119,6 +176,15 @@ public class ContextAssembler {
                 sourceSegMap.put(seg.getId(), seg);
             }
         }
+
+        // RST discourse role (nucleus/satellite/standalone) per segment id, read from
+        // asset_raw_segments.metadata_json (written by Mining). Empty when un-mined.
+        Map<String, String> segDiscourseRole = buildDiscourseRoleMap(sourceSegments);
+        Map<String, String> segSectionPrefix = buildSectionPrefixMap(sourceSegments);
+
+        // 3. Build seed items (tree-nav section bias, then discourse nucleus-first)
+        List<ContextItem> seedItems = buildSeedItems(
+                candidates, understanding, segDiscourseRole, segSectionPrefix, navigatedSections);
         List<ContextItem> sourceItems = buildSourceItems(sourceSegments);
 
         // 4. Graph expansion if enabled
@@ -207,6 +273,11 @@ public class ContextAssembler {
             allItems = allItems.subList(0, maxItems);
         }
 
+        // Phase 3: context compression — keep total text under MAX_TOTAL_CHARS (≈3000 tokens)
+        List<String> ckw = understanding != null ? understanding.keywords() : List.of();
+        String cq = understanding != null ? understanding.originalQuery() : query;
+        allItems = compressItems(new ArrayList<>(allItems), ckw, cq);
+
         // Filter relations: only keep edges where both endpoints exist in final items
         Set<String> itemIds = new HashSet<>();
         for (var item : allItems) {
@@ -242,6 +313,20 @@ public class ContextAssembler {
                     null, releaseId, buildId, snapshotCount);
         }
 
+        // Phase 3: Conflict detection — scan final item set for contrasts_with expansions
+        List<ContextItem> contrastingItems = allItems.stream()
+                .filter(item -> Boolean.TRUE.equals(item.metadata().get("is_contrasting")))
+                .toList();
+        if (!contrastingItems.isEmpty()) {
+            issues.add(new Issue(
+                    ISSUE_CONFLICTING_EVIDENCE,
+                    "检测到矛盾信息：以下内容与主要检索结果存在对比关系，请注意辨别",
+                    Map.of("conflicting_count", contrastingItems.size(),
+                           "conflicting_ids", contrastingItems.stream().map(ContextItem::id).toList())
+            ));
+            log.info("[assemble] conflict detected: {} contrasting items", contrastingItems.size());
+        }
+
         // 10. Build evidence groups and suggestions
         List<EvidenceGroup> evidenceGroups = buildEvidenceGroups(allItems, filteredRelations);
         List<String> suggestions = buildSuggestions(issues);
@@ -264,7 +349,10 @@ public class ContextAssembler {
 
     private List<ContextItem> buildSeedItems(
             List<RetrievalCandidate> candidates,
-            QueryUnderstanding understanding) {
+            QueryUnderstanding understanding,
+            Map<String, String> segDiscourseRole,
+            Map<String, String> segSectionPrefix,
+            Set<String> navigatedSections) {
         List<ContextItem> items = new ArrayList<>();
         for (var c : candidates) {
             Map<String, Object> citation = buildCitation(c);
@@ -273,6 +361,15 @@ public class ContextAssembler {
             if (c.scoreChain() != null && c.scoreChain().routeSources() != null) {
                 routeSources = c.scoreChain().routeSources();
             }
+
+            // Attach the discourse role + navigated-chapter membership of the seed's
+            // underlying segment(s) for classification and reordering.
+            Map<String, Object> metadata = new LinkedHashMap<>(c.metadata());
+            metadata.put("discourse_role", resolveSeedDiscourseRole(c, segDiscourseRole));
+            String sectionPrefix = resolveSeedSectionPrefix(c, segSectionPrefix);
+            metadata.put("section_path_prefix", sectionPrefix != null ? sectionPrefix : "");
+            metadata.put("in_navigated_section",
+                    sectionPrefix != null && navigatedSections.contains(sectionPrefix));
 
             items.add(new ContextItem(
                     c.retrievalUnitId(),
@@ -286,14 +383,112 @@ public class ContextAssembler {
                     null,
                     null,
                     safeJsonParse(getMetadataString(c.metadata(), "source_refs_json", "{}")),
-                    c.metadata(),
+                    metadata,
                     routeSources,
                     c.scoreChain(),
                     "",
                     citation
             ));
         }
+        // Composite stable ordering: navigated-chapter seeds first (tree navigation),
+        // then nucleus-first within each tier (discourse). Relevance (rerank) order is
+        // preserved within equal keys. Both signals are no-ops when absent — so
+        // un-navigated / un-mined data keeps the original order.
+        items.sort(Comparator
+                .comparingInt((ContextItem it) -> sectionTier(it, navigatedSections))
+                .thenComparingInt(it -> discourseTier(
+                        getMetadataString(it.metadata(), "discourse_role", DISCOURSE_STANDALONE))));
         return items;
+    }
+
+    /** Tier for tree-navigation ordering: in-navigated-chapter(0) before others(1). */
+    private static int sectionTier(ContextItem it, Set<String> navigatedSections) {
+        if (navigatedSections == null || navigatedSections.isEmpty()) {
+            return 0;  // no navigation → no section bias
+        }
+        return Boolean.TRUE.equals(it.metadata().get("in_navigated_section")) ? 0 : 1;
+    }
+
+    /** Build {segmentId -&gt; lower-cased top-level section title} from source segments. */
+    private Map<String, String> buildSectionPrefixMap(List<SegmentWithMetaRow> segments) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (var seg : segments) {
+            if (seg.getId() != null) {
+                String prefix = TreeNavigator.prefixOf(seg.getSectionPath());
+                if (prefix != null) {
+                    map.put(seg.getId(), prefix);
+                }
+            }
+        }
+        return map;
+    }
+
+    /** Section prefix of a seed's first resolvable source segment; null if none. */
+    private String resolveSeedSectionPrefix(RetrievalCandidate c, Map<String, String> segSectionPrefix) {
+        if (segSectionPrefix.isEmpty()) {
+            return null;
+        }
+        for (String segId : resolveCandidateSources(c)) {
+            String prefix = segSectionPrefix.get(segId);
+            if (prefix != null) {
+                return prefix;
+            }
+        }
+        return null;
+    }
+
+    /** Tier for discourse-aware ordering: nucleus(0) &lt; standalone(1) &lt; satellite(2). */
+    private static int discourseTier(String role) {
+        if (DISCOURSE_NUCLEUS.equals(role)) return 0;
+        if (DISCOURSE_SATELLITE.equals(role)) return 2;
+        return 1;
+    }
+
+    /** Build {segmentId -&gt; discourse_role} from segment metadata_json. */
+    private Map<String, String> buildDiscourseRoleMap(List<SegmentWithMetaRow> segments) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (var seg : segments) {
+            if (seg.getId() != null) {
+                map.put(seg.getId(), discourseRoleOf(seg.getMetadataJson()));
+            }
+        }
+        return map;
+    }
+
+    /** Extract discourse_role from a segment metadata_json string; "standalone" if absent/unparseable. */
+    private static String discourseRoleOf(String metadataJson) {
+        if (metadataJson == null || metadataJson.isBlank()) {
+            return DISCOURSE_STANDALONE;
+        }
+        try {
+            Map<String, Object> m = MAPPER.readValue(metadataJson, new TypeReference<LinkedHashMap<String, Object>>() {});
+            Object r = m.get("discourse_role");
+            return r != null && !r.toString().isBlank() ? r.toString() : DISCOURSE_STANDALONE;
+        } catch (Exception e) {
+            return DISCOURSE_STANDALONE;
+        }
+    }
+
+    /**
+     * Resolve a seed's discourse role from its underlying segment(s).
+     * Nucleus wins if any source segment is a nucleus; otherwise satellite only if
+     * a source segment is a satellite; else standalone.
+     */
+    private String resolveSeedDiscourseRole(RetrievalCandidate c, Map<String, String> segDiscourseRole) {
+        if (segDiscourseRole.isEmpty()) {
+            return DISCOURSE_STANDALONE;
+        }
+        boolean sawSatellite = false;
+        for (String segId : resolveCandidateSources(c)) {
+            String role = segDiscourseRole.get(segId);
+            if (DISCOURSE_NUCLEUS.equals(role)) {
+                return DISCOURSE_NUCLEUS;
+            }
+            if (DISCOURSE_SATELLITE.equals(role)) {
+                sawSatellite = true;
+            }
+        }
+        return sawSatellite ? DISCOURSE_SATELLITE : DISCOURSE_STANDALONE;
     }
 
     private Map<String, Object> buildCitation(RetrievalCandidate candidate) {
@@ -357,6 +552,8 @@ public class ContextAssembler {
     private List<ContextItem> buildSourceItems(List<SegmentWithMetaRow> segments) {
         List<ContextItem> items = new ArrayList<>();
         for (var seg : segments) {
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
@@ -369,7 +566,7 @@ public class ContextAssembler {
                     seg.getDocumentId(),
                     null,
                     Map.of(),
-                    Map.of(),
+                    metadata,
                     List.of(),
                     null,
                     "",
@@ -383,28 +580,41 @@ public class ContextAssembler {
         List<ContextItem> items = new ArrayList<>();
         for (var exp : expansions) {
             SegmentWithMetaRow seg = exp.segment();
-            // For expanded items, use a default relation type since ExpandedSegmentRow doesn't carry it
-            String evidenceRole = "background";
+            String relType = exp.relationType() != null ? exp.relationType() : "";
+
+            // Phase 2: evidence role and score from RST relation type
+            String evidenceRole = RST_ROLE_MAP.getOrDefault(relType, "background");
+            double score = RST_RELATION_WEIGHTS.getOrDefault(relType, 0.3);
+
+            // Phase 3: tag contrasting items so conflict detection can find them later
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
+            if ("contrasts_with".equals(relType)) {
+                meta.put("is_contrasting", true);
+                meta.put("contrasts_with_seed", exp.sourceSegmentId());
+            }
 
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
                     ROLE_SUPPORT,
                     seg.getRawText() != null ? seg.getRawText() : "",
-                    0.0,
+                    score,
                     seg.getSnapshotTitle(),
                     seg.getBlockType() != null ? seg.getBlockType() : "unknown",
                     seg.getSemanticRole() != null ? seg.getSemanticRole() : "unknown",
                     seg.getDocumentId(),
-                    "expansion",
+                    relType,
                     Map.of(),
-                    Map.of(),
+                    meta,
                     List.of(),
                     null,
                     evidenceRole,
                     Map.of()
             ));
         }
+        // Higher RST-weight relations appear first, giving them priority in the context budget
+        items.sort(Comparator.comparingDouble(ContextItem::score).reversed());
         return items;
     }
 
@@ -465,6 +675,8 @@ public class ContextAssembler {
                 suggestions.add("尝试使用更通用的关键词");
             } else if (ISSUE_LOW_CONFIDENCE.equals(issue.type())) {
                 suggestions.add("尝试更精确的描述或添加产品/版本约束");
+            } else if (ISSUE_CONFLICTING_EVIDENCE.equals(issue.type())) {
+                suggestions.add("检索到矛盾信息，建议参考多方文档进行综合判断");
             }
         }
         return suggestions;
@@ -501,6 +713,157 @@ public class ContextAssembler {
             groups.add(new EvidenceGroup(entry.getKey(), entry.getValue(), groupRelIds));
         }
         return groups;
+    }
+
+    // =========================================================================
+    // Context compression
+    // =========================================================================
+
+    /**
+     * Compresses items to stay within MAX_TOTAL_CHARS (≈ 3000 tokens).
+     * Seeds receive 60 % of the budget via hard truncation (already relevance-ranked).
+     * Context/support items receive the remaining 40 % via extractive summarization:
+     * sentences are scored by character-bigram overlap with the query, and only the
+     * most-relevant sentences are kept up to each item's per-item budget.
+     */
+    private static List<ContextItem> compressItems(
+            List<ContextItem> items, List<String> queryKeywords, String queryText) {
+        int totalChars = items.stream()
+                .mapToInt(i -> i.text() != null ? i.text().length() : 0)
+                .sum();
+        if (totalChars <= MAX_TOTAL_CHARS) {
+            return items;
+        }
+
+        List<ContextItem> seeds = new ArrayList<>();
+        List<ContextItem> others = new ArrayList<>();
+        for (ContextItem item : items) {
+            if (ROLE_SEED.equals(item.role())) seeds.add(item);
+            else others.add(item);
+        }
+
+        int seedBudget  = (int) (MAX_TOTAL_CHARS * 0.6);
+        int otherBudget = MAX_TOTAL_CHARS - seedBudget;
+
+        List<ContextItem> compressed = new ArrayList<>(items.size());
+        if (!seeds.isEmpty()) {
+            int perSeed = Math.max(200, seedBudget / seeds.size());
+            for (ContextItem item : seeds) compressed.add(truncateText(item, perSeed));
+        }
+        if (!others.isEmpty()) {
+            Set<String> queryBigrams = buildQueryBigrams(queryKeywords, queryText);
+            int perOther = Math.max(100, otherBudget / others.size());
+            for (ContextItem item : others) compressed.add(extractiveSummarize(item, perOther, queryBigrams));
+        }
+        return compressed;
+    }
+
+    /**
+     * Selects the most query-relevant sentences from {@code item.text()} up to {@code maxChars}.
+     * Falls back to hard truncation when the text has only one sentence or no query context.
+     * Selected sentences are returned in their original order to preserve readability.
+     */
+    private static ContextItem extractiveSummarize(ContextItem item, int maxChars, Set<String> queryBigrams) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+
+        List<String> sentences = splitSentences(text);
+        if (sentences.size() <= 1 || queryBigrams.isEmpty()) {
+            return truncateText(item, maxChars);
+        }
+
+        record Sent(int idx, String text, double score) {}
+        List<Sent> scored = new ArrayList<>();
+        for (int i = 0; i < sentences.size(); i++) {
+            String s = sentences.get(i);
+            if (!s.isEmpty()) {
+                scored.add(new Sent(i, s, bigramOverlapScore(s, queryBigrams)));
+            }
+        }
+
+        // Greedy: highest-scored first, stop when budget is full
+        scored.sort(Comparator.comparingDouble(Sent::score).reversed());
+        List<Sent> selected = new ArrayList<>();
+        int used = 0;
+        for (Sent s : scored) {
+            int needed = s.text().length() + (selected.isEmpty() ? 0 : 1); // +1 for separator
+            if (used + needed <= maxChars) {
+                selected.add(s);
+                used += needed;
+            }
+        }
+        if (selected.isEmpty()) {
+            // Budget too tight for any full sentence — truncate the highest-scored one
+            Sent top = scored.get(0);
+            String truncated = top.text().substring(0, Math.min(top.text().length(), maxChars));
+            selected.add(new Sent(top.idx(), truncated, top.score()));
+        }
+
+        // Restore original sentence order
+        selected.sort(Comparator.comparingInt(Sent::idx));
+        String summarized = String.join(" ", selected.stream().map(Sent::text).toList());
+
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), summarized,
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
+    }
+
+    private static ContextItem truncateText(ContextItem item, int maxChars) {
+        String text = item.text();
+        if (text == null || text.length() <= maxChars) return item;
+        return new ContextItem(
+                item.id(), item.kind(), item.role(), text.substring(0, maxChars) + "…",
+                item.score(), item.title(), item.blockType(), item.semanticRole(),
+                item.sourceId(), item.relationToSeed(), item.sourceRefs(),
+                item.metadata(), item.routeSources(), item.scoreChain(),
+                item.evidenceRole(), item.citation()
+        );
+    }
+
+    /** Splits text on Chinese/English sentence-ending punctuation and newlines. */
+    private static List<String> splitSentences(String text) {
+        String[] parts = text.split("(?<=[。！？!?])\\s*|\\n+");
+        List<String> result = new ArrayList<>();
+        for (String part : parts) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) result.add(trimmed);
+        }
+        return result;
+    }
+
+    /** Builds a character-bigram set from the combined query text and keyword list. */
+    private static Set<String> buildQueryBigrams(List<String> keywords, String queryText) {
+        StringBuilder combined = new StringBuilder();
+        if (queryText != null) combined.append(queryText);
+        if (keywords != null) {
+            for (String kw : keywords) combined.append(' ').append(kw);
+        }
+        return charBigrams(combined.toString().trim());
+    }
+
+    /** Returns the proportion of query bigrams that appear in the sentence (0.0–1.0). */
+    private static double bigramOverlapScore(String sentence, Set<String> queryBigrams) {
+        if (queryBigrams.isEmpty()) return 1.0;
+        Set<String> sentBigrams = charBigrams(sentence);
+        if (sentBigrams.isEmpty()) return 0.0;
+        int matches = 0;
+        for (String bg : sentBigrams) {
+            if (queryBigrams.contains(bg)) matches++;
+        }
+        return (double) matches / queryBigrams.size();
+    }
+
+    private static Set<String> charBigrams(String text) {
+        if (text == null || text.length() < 2) return Set.of();
+        Set<String> bigrams = new HashSet<>();
+        for (int i = 0; i < text.length() - 1; i++) {
+            bigrams.add(text.substring(i, i + 2));
+        }
+        return bigrams;
     }
 
     // =========================================================================

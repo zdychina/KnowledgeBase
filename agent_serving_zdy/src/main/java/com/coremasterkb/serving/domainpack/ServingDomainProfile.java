@@ -9,7 +9,8 @@ public record ServingDomainProfile(
     Map<String, Map<String, Map<String, Double>>> routePolicy,
     List<Map<String, Object>> extractorRules,
     List<Map<String, Object>> evalQuestions,
-    Map<String, Object> queryUnderstanding
+    Map<String, Object> queryUnderstanding,
+    Map<String, Object> intentStrategy
 ) {
     public ServingDomainProfile {
         if (entityTypes == null) entityTypes = Set.of();
@@ -18,10 +19,21 @@ public record ServingDomainProfile(
         if (extractorRules == null) extractorRules = List.of();
         if (evalQuestions == null) evalQuestions = List.of();
         if (queryUnderstanding == null) queryUnderstanding = Map.of();
+        if (intentStrategy == null) intentStrategy = Map.of();
     }
 
     public Map<String, Map<String, Double>> getRoutePolicyForIntent(String intent) {
         return routePolicy.getOrDefault(intent, routePolicy.getOrDefault("default", Map.of()));
+    }
+
+    /**
+     * Per-intent strategy overrides (graph_expand / rerank) from
+     * {@code serving.intent_strategy.<intent>}. Empty when unset.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> intentStrategyFor(String intent) {
+        Object v = intentStrategy.get(intent);
+        return v instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
     }
 
     /**
@@ -60,7 +72,7 @@ public record ServingDomainProfile(
 
         return new ServingDomainProfile(
             domainId, Set.of(), Set.of(), Collections.unmodifiableMap(fullPolicy),
-            List.of(), List.of(), Map.of()
+            List.of(), List.of(), Map.of(), Map.of()
         );
     }
 }
