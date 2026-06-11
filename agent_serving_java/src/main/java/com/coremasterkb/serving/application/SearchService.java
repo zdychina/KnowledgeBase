@@ -140,16 +140,29 @@ public class SearchService {
 
         // 3. Query Understanding + Embedding in parallel
         //    Embedding is started optimistically — result is only used if dense route is enabled.
+        //    NOTE: Virtual threads cannot inherit ThreadLocal from the parent thread.
+        //    We must explicitly set knowledge_domain in each async lambda.
+        final String threadDomain = effectiveDomain;
         trace.startStage("query_understanding");
         CompletableFuture<QueryUnderstanding> understandingFuture = CompletableFuture.supplyAsync(
-                () -> quEngine.understand(request.query(), profile), pipelineExecutor);
+                () -> {
+                    llmClient.setKnowledgeDomain(threadDomain);
+                    try {
+                        return quEngine.understand(request.query(), profile);
+                    } finally {
+                        llmClient.clearKnowledgeDomain();
+                    }
+                }, pipelineExecutor);
         CompletableFuture<float[]> embeddingFuture = embeddingClient.isConfigured()
                 ? CompletableFuture.supplyAsync(() -> {
+            llmClient.setKnowledgeDomain(threadDomain);
             try {
                 return embeddingClient.embedHyDE(request.query());
             } catch (Exception e) {
                 log.warn("Query embedding failed: {}", e.getMessage());
                 return null;
+            } finally {
+                llmClient.clearKnowledgeDomain();
             }
         }, pipelineExecutor)
                 : CompletableFuture.completedFuture(null);

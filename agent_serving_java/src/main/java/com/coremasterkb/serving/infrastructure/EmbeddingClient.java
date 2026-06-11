@@ -10,6 +10,7 @@ import java.util.*;
  */
 public class EmbeddingClient {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(EmbeddingClient.class);
     private final LlmClient llmClient;
 
     public EmbeddingClient(LlmClient llmClient) {
@@ -48,13 +49,18 @@ public class EmbeddingClient {
 
             String hypotheticalDoc = extractRawOutput(result);
             if (hypotheticalDoc != null && !hypotheticalDoc.isBlank()) {
+                log.info("[HyDE] generated hypothetical doc ({} chars), embedding...", hypotheticalDoc.length());
                 float[] hydeEmbedding = embed(hypotheticalDoc);
                 if (hydeEmbedding != null) {
                     return hydeEmbedding;
                 }
+                log.warn("[HyDE] embedding of hypothetical doc returned null, falling back to query");
+            } else {
+                log.warn("[HyDE] extractRawOutput returned blank, response keys: {}",
+                        result != null ? result.keySet() : "null");
             }
         } catch (Exception e) {
-            // fallback to direct query embedding
+            log.warn("[HyDE] failed, falling back to direct embed: {}", e.getMessage());
         }
         return embed(query);
     }
