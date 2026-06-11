@@ -173,10 +173,10 @@ public class SearchService {
         // (throws domain_database_unavailable if the pool cannot connect)
         domainPoolManager.getDataSource(effectiveDomain);
 
-        String dbEnvVar = domainRegistry.findEntry(effectiveDomain)
-                .map(e -> e.databaseUrlEnv() != null ? e.databaseUrlEnv() : "default(shared)")
+        String dbInfo = domainRegistry.findEntry(effectiveDomain)
+                .map(e -> e.database() != null && e.database().isUsable() ? "dedicated" : "default(shared)")
                 .orElse("default(shared)");
-        log.info("[search] routing domain={} channel={} db={}", effectiveDomain, channel, dbEnvVar);
+        log.info("[search] routing domain={} channel={} db={}", effectiveDomain, channel, dbInfo);
 
         // All DB operations on this thread now route to the domain's pool
         DomainContext.set(effectiveDomain);
@@ -511,8 +511,9 @@ public class SearchService {
         map.put("channel", channel);
         domainRegistry.findEntry(domain).ifPresentOrElse(
                 entry -> {
-                    map.put("database", entry.databaseUrlEnv() != null ? entry.databaseUrlEnv() : "n/a");
-                    map.put("scenario_pack", entry.scenarioPack());
+                    map.put("database", entry.database() != null && entry.database().isUsable()
+                            ? "dedicated" : "default(shared)");
+                    map.put("scenario_pack", domain);
                 },
                 () -> {
                     map.put("database", "n/a");

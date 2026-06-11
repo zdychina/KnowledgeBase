@@ -9,11 +9,19 @@ public record ServingProperties(
     String defaultDomain,
     LlmConfig llm,
     EmbeddingConfig embedding,
-    RerankConfig rerank
+    RerankConfig rerank,
+    MainControl mainControl
 ) {
     public record LlmConfig(String baseUrl) {
         public LlmConfig {
             if (baseUrl == null) baseUrl = "";
+        }
+    }
+
+    /** Config source: main_control's base URL (e.g. http://localhost:8910). */
+    public record MainControl(String baseUrl) {
+        public MainControl {
+            if (baseUrl == null || baseUrl.isBlank()) baseUrl = "http://localhost:8910";
         }
     }
 
@@ -36,5 +44,6 @@ public record ServingProperties(
         if (llm == null) llm = new LlmConfig("");
         if (embedding == null) embedding = new EmbeddingConfig("", 1024);
         if (rerank == null) rerank = new RerankConfig("rerank-pro");
+        if (mainControl == null) mainControl = new MainControl("http://localhost:8910");
     }
 }

@@ -17,6 +17,17 @@ from markdown_it import MarkdownIt
 from knowledge_mining.mining.contracts.models import ContentBlock, SectionNode
 
 
+_MD_LINK_RE = re.compile(r'\[([^\]]*)\]\([^)]*\)')
+
+
+def _clean_heading_text(text: str) -> str:
+    """Strip markdown link syntax from heading text.
+
+    ``[适用NF](#ZH-CN_TOPIC_...)`` → ``适用NF``
+    """
+    return _MD_LINK_RE.sub(r'\1', text).strip()
+
+
 def parse_structure(content: str) -> SectionNode:
     """Parse Markdown content into a SectionNode tree."""
     md = MarkdownIt().enable("table")
@@ -40,7 +51,7 @@ def _tokens_to_blocks(tokens: list) -> list[ContentBlock]:
             if i < len(tokens) and tokens[i].type == "inline":
                 line_end = tokens[i + 1].map[0] if (i + 1) < len(tokens) and tokens[i + 1].map else line_start
                 blocks.append(ContentBlock(
-                    block_type="heading", text=tokens[i].content,
+                    block_type="heading", text=_clean_heading_text(tokens[i].content),
                     level=level, line_start=line_start, line_end=line_end,
                 ))
             i += 1  # heading_close

@@ -249,6 +249,13 @@ class TestIngestion:
 
 
 class TestStructure:
+    def test_heading_text_cleans_markdown_links(self):
+        from knowledge_mining.mining.infra.structure import parse_structure
+        md = '## [适用NF](#ZH-CN_TOPIC_123)\n\nContent here.\n'
+        tree = parse_structure(md)
+        # Single top-level heading gets promoted to root
+        assert tree.title == "适用NF"
+
     def test_parse_heading_tree(self, md_content):
         from knowledge_mining.mining.infra.structure import parse_structure
         tree = parse_structure(md_content)
@@ -271,8 +278,13 @@ class TestSegmentation:
         from knowledge_mining.mining.stages.segment import segment_document
         tree = parse_structure(md_content)
         segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
+        # Headings are metadata (section_title/section_path), not independent segments
         headings = [s for s in segments if s.block_type == "heading"]
-        assert len(headings) >= 4
+        assert len(headings) == 0
+        # But heading info is preserved on content segments via section_title
+        titles = [s.section_title for s in segments if s.section_title]
+        # After cross-section orphan absorption, small sections may merge
+        assert len(titles) >= 3
 
     def test_segment_hashes(self, md_content):
         from knowledge_mining.mining.infra.structure import parse_structure
@@ -282,6 +294,115 @@ class TestSegmentation:
         for seg in segments:
             assert seg.content_hash, f"Missing content_hash for {seg.raw_text[:30]}"
             assert seg.normalized_hash, f"Missing normalized_hash"
+
+    def test_structural_context_injection(self, md_content):
+        """structural_context breadcrumb should be in metadata_json."""
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        tree = parse_structure(md_content)
+        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"))
+        # Default mode is breadcrumb — all segments should have it
+        for seg in segments:
+            ctx = seg.metadata_json.get("structural_context", "")
+            assert ctx, f"Missing structural_context for segment: {seg.raw_text[:40]}"
+            # Should contain document title "Test Command"
+            assert "Test Command" in ctx
+            # Should not duplicate: "Test Command > Test Command" is wrong
+            assert "Test Command > Test Command" not in ctx
+
+    def test_structural_context_off(self, md_content):
+        """When structural_context_mode=off, no breadcrumb should be injected."""
+        from knowledge_mining.mining.infra.structure import parse_structure
+        from knowledge_mining.mining.stages.segment import segment_document
+        from knowledge_mining.mining.infra.domain_pack import DomainProfile, RetrievalPolicy
+        tree = parse_structure(md_content)
+        policy = RetrievalPolicy(structural_context_mode="off")
+        profile = DomainProfile(
+            domain_id="test", display_name="Test",
+            entity_types=frozenset(), strong_entity_types=frozenset(),
+            role_keyword_rules=(), heading_role_keywords=(),
+            extractor_rules=(), llm_templates=(),
+            semantic_roles=frozenset(), document_types=frozenset(),
+            retrieval_policy=policy, eval_questions=(),
+        )
+        segments = segment_document(tree, DocumentProfile(document_key="doc:/test.md"),
+                                    domain_profile=profile)
+        for seg in segments:
+            assert "structural_context" not in seg.metadata_json
+
+    def test_orphan_absorption_cross_section(self):
+        """Cross-section orphan segments should merge into parent section."""
+        from knowledge_mining.mining.stages.segment import _absorb_orphan_segments
+        from knowledge_mining.mining.infra.text_utils import token_count
+
+        parent_path = [{"title": "Parent", "level": 1}]
+        child_path = [{"title": "Parent", "level": 1}, {"title": "Child", "level": 2}]
+
+        # Large parent segment + tiny orphan in child section
+        big_text = "This is a substantial paragraph about the parent section. " * 10
+        big_tc = token_count(big_text)
+
+        segments = [
+            RawSegmentData(
+                document_key="doc:/test.md", segment_index=0,
+                block_type="paragraph", semantic_role="concept",
+                section_path=parent_path, section_title="Parent",
+                raw_text=big_text,
+                normalized_text=big_text.lower(), content_hash="h1", normalized_hash="nh1",
+                token_count=big_tc, structure_json={}, source_offsets_json={},
+                entity_refs_json=[], metadata_json={},
+            ),
+            RawSegmentData(
+                document_key="doc:/test.md", segment_index=1,
+                block_type="paragraph", semantic_role="unknown",
+                section_path=child_path, section_title="Child",
+                raw_text="UPF",
+                normalized_text="upf", content_hash="h2", normalized_hash="nh2",
+                token_count=1, structure_json={}, source_offsets_json={},
+                entity_refs_json=[], metadata_json={},
+            ),
+        ]
+
+        result = _absorb_orphan_segments(segments, min_tokens=128, max_tokens=512)
+        # Orphan should be absorbed into parent
+        assert len(result) == 1, f"Expected 1 segment after absorption, got {len(result)}"
+        assert "UPF" in result[0].raw_text
+        assert result[0].metadata_json.get("merged_from_orphan") is True
+
+    def test_orphan_not_absorbed_when_parent_full(self):
+        """Orphan should NOT merge if parent is already at max_tokens."""
+        from knowledge_mining.mining.stages.segment import _absorb_orphan_segments
+        from knowledge_mining.mining.infra.text_utils import token_count
+
+        parent_path = [{"title": "Parent", "level": 1}]
+        child_path = [{"title": "Parent", "level": 1}, {"title": "Child", "level": 2}]
+
+        # Parent is already 512 tokens — max is 512
+        big_text = "word " * 600
+        big_tc = token_count(big_text)
+
+        segments = [
+            RawSegmentData(
+                document_key="doc:/test.md", segment_index=0,
+                block_type="paragraph", semantic_role="concept",
+                section_path=parent_path, section_title="Parent",
+                raw_text=big_text, normalized_text="n", content_hash="h1",
+                normalized_hash="nh1", token_count=big_tc, structure_json={},
+                source_offsets_json={}, entity_refs_json=[], metadata_json={},
+            ),
+            RawSegmentData(
+                document_key="doc:/test.md", segment_index=1,
+                block_type="paragraph", semantic_role="unknown",
+                section_path=child_path, section_title="Child",
+                raw_text="UPF", normalized_text="upf", content_hash="h2",
+                normalized_hash="nh2", token_count=1, structure_json={},
+                source_offsets_json={}, entity_refs_json=[], metadata_json={},
+            ),
+        ]
+
+        result = _absorb_orphan_segments(segments, min_tokens=128, max_tokens=512)
+        # Orphan should remain — parent is too large
+        assert len(result) == 2
 
 
 # REMOVED: TestExtractors - rule-based components deleted (RuleBasedEntityExtractor, DefaultRoleClassifier)

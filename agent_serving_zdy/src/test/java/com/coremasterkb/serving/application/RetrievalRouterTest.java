@@ -155,7 +155,7 @@ class RetrievalRouterTest {
             Map<String, Object> strategy = Map.of(
                     "troubleshooting", Map.of("graph_expand", ge, "rerank", "llm"));
             var profile = new ServingDomainProfile(
-                    "d", Set.of(), Set.of(), Map.of(), List.of(), List.of(), Map.of(), strategy);
+                    "d", Map.of(), List.of(), Map.of(), strategy);
 
             var plan = router.route(intentU("troubleshooting"), profile);
             assertThat(plan.assembly().relationTypes()).containsExactly("custom_rel");

@@ -72,7 +72,7 @@ class SearchServiceTest {
         when(sessionStore.getPriorQueries(anyString())).thenReturn(List.of());
 
         ServingProperties properties = new ServingProperties(
-                null, null, "cloud_core_network", null, null, null);
+                null, null, "cloud_core_network", null, null, null, null);
 
         var searchMetrics = new com.coremasterkb.serving.observability.SearchMetrics(
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry());

@@ -276,6 +276,11 @@ def build_retrieval_units(
         seg_key = f"{seg.document_key}#{seg.segment_index}"
         source_seg_id = (seg_ids or {}).get(seg_key)
 
+        # Skip navigation segments (TOC, directory listings) — no retrieval value
+        assessment = seg.metadata_json.get("content_assessment", {})
+        if assessment.get("is_navigation"):
+            continue
+
         # 1. raw_text unit — enriched with section context + optional LLM context
         llm_context = context_map.get(seg_key, "")
         ctx_task_id = ctxer_task_ids.get(seg_key)
@@ -283,7 +288,6 @@ def build_retrieval_units(
 
         # 2. entity_card units — only if policy enables it
         if profile.retrieval_policy.entity_card != "off":
-            assessment = seg.metadata_json.get("content_assessment", {})
             segment_card_count = 0
             for ref in seg.entity_refs_json:
                 entity_type = ref.get("type", "")
@@ -333,25 +337,29 @@ def _make_raw_text_unit(
     3. Original raw_text
     All tokenized for FTS5 search.
     """
-    # Build enriched search text
-    search_parts: list[str] = []
+    # Build context parts — same parts used for BOTH embedding text and search text
+    # (Anthropic Contextual Retrieval pattern: prepend context before embedding AND BM25)
+    context_parts: list[str] = []
 
-    # Add section context if it adds information not in raw_text
-    section_titles = [
-        p.get("title", "") for p in seg.section_path if p.get("title")
-    ]
-    extra_titles = [t for t in section_titles if t and t not in seg.raw_text]
-    if extra_titles:
-        search_parts.append(" > ".join(extra_titles))
+    # Add structural breadcrumb from segment metadata (free context, no LLM)
+    structural_context = seg.metadata_json.get("structural_context", "")
+    if structural_context and structural_context not in seg.raw_text:
+        context_parts.append(structural_context)
+    else:
+        # Fallback: add section titles not already in raw_text
+        section_titles = [
+            p.get("title", "") for p in seg.section_path if p.get("title")
+        ]
+        extra_titles = [t for t in section_titles if t and t not in seg.raw_text]
+        if extra_titles:
+            context_parts.append(" > ".join(extra_titles))
 
     # Add LLM-generated context (Anthropic pattern: brief context prepended)
     if llm_context:
-        search_parts.append(llm_context)
+        context_parts.append(llm_context)
 
-    # Add original text
-    search_parts.append(seg.raw_text)
-
-    enriched_search = "\n".join(search_parts)
+    # Compose contextualized text: context + raw_text (used for embedding)
+    contextualized_text = "\n".join(context_parts + [seg.raw_text]) if context_parts else seg.raw_text
 
     # Build llm_result_refs_json for provenance
     llm_refs: dict[str, Any] = {}
@@ -376,8 +384,8 @@ def _make_raw_text_unit(
             "segment_index": seg.segment_index,
         },
         title=seg.section_title,
-        text=seg.raw_text,
-        search_text=tokenize_for_search(enriched_search),
+        text=contextualized_text,
+        search_text=tokenize_for_search(contextualized_text),
         block_type=seg.block_type,
         semantic_role=seg.semantic_role,
         facets_json=_build_facets(seg),

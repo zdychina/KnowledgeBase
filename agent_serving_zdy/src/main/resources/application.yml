@@ -1,5 +1,5 @@
 server:
-  port: 8082
+  port: ${SERVER_PORT:8081}
 
 spring:
   config:
@@ -19,6 +19,10 @@ mybatis:
   type-aliases-package: com.coremasterkb.serving.entity
 
 serving:
+  # Config source — Serving pulls per-domain config from main_control over HTTP.
+  main-control:
+    base-url: ${SERVING_MAIN_CONTROL_BASEURL:http://localhost:8910}
+  # Local-file fallback (used only when main_control is unreachable, e.g. IntelliJ/tests).
   scenario-packs-dir: ${SCENARIO_PACKS_DIR:../scenario_packs}
   domain-registry-path: ${DOMAIN_REGISTRY_PATH:../domain_registry.yaml}
   default-domain: ${COREMASTERKB_DOMAIN:${DEFAULT_DOMAIN:cloud_core_network}}

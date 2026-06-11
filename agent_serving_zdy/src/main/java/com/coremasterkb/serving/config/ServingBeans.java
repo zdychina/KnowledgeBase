@@ -6,6 +6,7 @@ import com.coremasterkb.serving.domainpack.DomainPoolManager;
 import com.coremasterkb.serving.domainpack.DomainRoutingDataSource;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
+import com.coremasterkb.serving.infrastructure.MainControlClient;
 import com.coremasterkb.serving.mapper.AssetRawSegmentMapper;
 import com.coremasterkb.serving.mapper.AssetRawSegmentRelationMapper;
 import com.coremasterkb.serving.mapper.AssetRetrievalEmbeddingMapper;
@@ -119,6 +120,11 @@ public class ServingBeans {
     @Bean
     public EmbeddingClient embeddingClient(LlmClient llmClient, ServingProperties properties) {
         return new EmbeddingClient(llmClient, properties.embedding().model(), properties.embedding().dimensions());
+    }
+
+    @Bean
+    public MainControlClient mainControlClient(RestTemplate restTemplate, ServingProperties properties) {
+        return new MainControlClient(restTemplate, properties.mainControl().baseUrl());
     }
 
     // -------------------------------------------------------------------------

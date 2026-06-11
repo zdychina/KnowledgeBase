@@ -638,13 +638,29 @@ class MiningRuntimeDB(_DB):
     # -- mining runs --
 
     def insert_run(self, data: MiningRunData) -> str:
+        """Upsert a run row.
+
+        The API layer pre-inserts a minimal run row (status='running',
+        total_documents=0) so the UI can list the task instantly. When the
+        background thread reaches this point after ingest_directory(), the
+        row already exists — ON CONFLICT updates only the fields known after
+        ingest (source_batch_id, total_documents, metadata_json), preserving
+        the pre-inserted started_at/status.
+
+        Standalone callers (demo, tests) that don't pre-insert hit the normal
+        INSERT path.
+        """
         self._execute(
             """INSERT INTO mining_runs
                    (id, source_batch_id, input_path, domain, channel, status, build_id,
                     total_documents, new_count, updated_count, skipped_count,
                     failed_count, committed_count, started_at, finished_at,
                     error_summary, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (id) DO UPDATE SET
+                   source_batch_id = EXCLUDED.source_batch_id,
+                   total_documents = EXCLUDED.total_documents,
+                   metadata_json = EXCLUDED.metadata_json""",
             (
                 data.id, data.source_batch_id, data.input_path, data.domain, data.channel,
                 data.status, data.build_id,

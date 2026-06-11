@@ -41,6 +41,18 @@ def _check_cancelled(runtime_db: "MiningRuntimeDB", run_id: str) -> None:
         raise MiningCancelled()
 
 
+def _is_cancelled(runtime_db: "MiningRuntimeDB", run_id: str) -> bool:
+    """Non-raising cancel check for StreamingPipeline's per-item callback.
+
+    Returns True if mining_runs.status == 'cancelled' so the pipeline stops
+    submitting further documents. In-flight items continue to completion.
+    """
+    row = runtime_db._fetchone(
+        "SELECT status FROM mining_runs WHERE id = %s", (run_id,)
+    )
+    return bool(row and row["status"] == "cancelled")
+
+
 from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
 from knowledge_mining.mining.infra.pg_config import MiningDbConfig, conninfo_from_env
 from knowledge_mining.mining.infra.pg_schema import ensure_schema
@@ -119,6 +131,7 @@ def run(
     domain: str | None = None,
     domain_pack: str | None = None,
     channel: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute the mining pipeline.
 
@@ -133,6 +146,9 @@ def run(
         domain_pack: (Deprecated) Use domain instead.
         channel: Release channel. None = from registry default_channel.
         max_workers: Max concurrent workers for streaming pipeline. None = from env.
+        run_id: External run_id (from API pre-insert). If provided, the run row
+                already exists in mining_runs and insert_run will upsert.
+                None = generate a fresh one (standalone/demo/test callers).
 
     Returns:
         Summary dict with run_id, counts, and status.
@@ -180,8 +196,12 @@ def run(
     # Open databases (PostgreSQL) — per-domain conninfo if available
     asset_db, runtime_db = _create_dbs(db_config, conninfo=conninfo)
 
-    # Pre-generate run_id so we can fail_run on global exception
-    run_id = uuid.uuid4().hex
+    # Use externally-provided run_id (from API pre-insert) or generate one.
+    # The API layer pre-inserts the run row so the UI sees it instantly;
+    # standalone callers (demo, tests) skip pre-insert and rely on the
+    # upsert in MiningRuntimeDB.insert_run.
+    if run_id is None:
+        run_id = uuid.uuid4().hex
 
     # LLM integration: create question generator if URL provided
     llm_services = _init_llm(llm_base_url, profile, knowledge_domain=profile.domain_id)
@@ -538,7 +558,12 @@ def _run_pipeline(
             ("db_write",         lambda ctx: db_write_stage(ctx, config),        1),
         ]
 
-        pipeline = StreamingPipeline(stages, run_id=run_id, tracker=tracker)
+        pipeline = StreamingPipeline(
+            stages,
+            run_id=run_id,
+            tracker=tracker,
+            cancel_check=lambda: _is_cancelled(runtime_db, run_id),
+        )
         ctxs = pipeline.process_all([item["ctx"] for item in work_items])
 
     # -- Aggregate results from pipeline (Phase 1c is now inside db_write_stage) --
@@ -564,6 +589,7 @@ def _run_pipeline(
             skipped_count += 1
 
     # Phase 2: Build & Publish (unless phase1_only)
+    _check_cancelled(runtime_db, run_id)
     build_id = None
     release_id = None
     has_failures = failed_count > 0
@@ -615,6 +641,27 @@ def _run_pipeline(
 
     # Determine final run status (use SQL-valid values only)
     # All docs failed -> "failed"; some failed -> "completed" with has_failures metadata
+    # If cancelled mid-flight, preserve the 'cancelled' status set by the UI/API.
+    if _is_cancelled(runtime_db, run_id):
+        logger.info(
+            "Run %s was cancelled; preserving status='cancelled' "
+            "(committed=%d, failed=%d, skipped=%d)",
+            run_id, committed_count, failed_count, skipped_count,
+        )
+        runtime_db.commit()
+        return {
+            "run_id": run_id,
+            "status": "cancelled",
+            "total_documents": len(docs),
+            "committed_count": committed_count,
+            "new_count": new_count,
+            "updated_count": updated_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "build_id": None,
+            "release_id": None,
+        }
+
     run_status = "completed"
     run_metadata = None
     if failed_count > 0 and committed_count == 0:

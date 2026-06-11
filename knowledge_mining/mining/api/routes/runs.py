@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from knowledge_mining.mining.infra.pg_config import MiningDbConfig
@@ -46,7 +51,12 @@ class CancelRunResponse(BaseModel):
 
 @router.post("", response_model=RunResponse, status_code=202)
 async def create_run(body: CreateRunRequest, request: Request) -> dict:
-    """Submit a mining run (async, returns immediately)."""
+    """Submit a mining run (async, returns immediately).
+
+    Pre-inserts the mining_runs row so the UI can list the task instantly,
+    without waiting for the background thread to finish pool/LLM/ingest setup.
+    The thread later upserts source_batch_id/total_documents/metadata.
+    """
     pool = request.app.state.pg_pool
     db_config: MiningDbConfig = request.app.state.db_config
 
@@ -61,6 +71,24 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
     if not _run_lock.acquire(blocking=False):
         raise HTTPException(409, "A mining run is already in progress. Please wait for it to complete.")
 
+    # Pre-generate run_id and pre-insert a minimal run row so the UI sees the
+    # task instantly. The background thread upserts the ingest results later
+    # (MiningRuntimeDB.insert_run uses ON CONFLICT DO UPDATE).
+    run_id = uuid.uuid4().hex
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        async with pool.connection() as conn:
+            await conn.execute(
+                """INSERT INTO mining_runs
+                       (id, source_batch_id, input_path, domain, channel, status,
+                        total_documents, started_at, metadata_json)
+                   VALUES (%s, NULL, %s, %s, NULL, 'running', 0, %s, '{}'::jsonb)""",
+                (run_id, body.input_path, resolved_domain, started_at),
+            )
+    except Exception:
+        _run_lock.release()
+        raise
+
     def _run_in_thread():
         try:
             from knowledge_mining.mining.jobs.run import run as mining_run
@@ -72,35 +100,21 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
                 llm_base_url=llm_base_url,
                 max_workers=body.max_workers,
                 domain=resolved_domain,
+                run_id=run_id,
             )
         except Exception as e:
             logger.error("Mining run failed: %s", e, exc_info=True)
         finally:
             _run_lock.release()
 
-    # Pre-create run to get run_id — but the actual run() creates its own.
-    # We start the thread and query the run table after.
     thread = threading.Thread(target=_run_in_thread, daemon=True)
     thread.start()
 
-    # Poll for the run to appear in DB (up to 10s)
-    import asyncio
-    for _ in range(20):
-        await asyncio.sleep(0.5)
-        async with pool.connection() as conn:
-            cur = await conn.execute(
-                "SELECT id, status, started_at FROM mining_runs "
-                "ORDER BY started_at DESC LIMIT 1"
-            )
-            row = await cur.fetchone()
-            if row:
-                return {
-                    "run_id": row["id"],
-                    "status": row["status"],
-                    "started_at": row["started_at"],
-                }
-
-    return {"run_id": "pending", "status": "starting"}
+    return {
+        "run_id": run_id,
+        "status": "running",
+        "started_at": started_at,
+    }
 
 
 @router.get("")
@@ -383,6 +397,127 @@ async def get_run_document(run_id: str, doc_id: str, request: Request) -> dict:
         result["document_name"] = dk.replace("doc:/", "", 1) if dk.startswith("doc:/") else dk
 
     return result
+
+
+_RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
+_MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def _decode_html_bytes(raw: bytes) -> str:
+    """Decode HTML bytes to UTF-8 string, handling GBK/GB2312/GB18030."""
+    if raw[:3] == b'\xef\xbb\xbf':
+        return raw[3:].decode("utf-8", errors="replace")
+    head = raw[:4000].lower()
+    charset_match = re.search(rb'charset=["\']?\s*([a-z0-9_-]+)', head)
+    if charset_match:
+        charset = charset_match.group(1).decode("ascii")
+        try:
+            return raw.decode(charset, errors="replace")
+        except (LookupError, UnicodeDecodeError):
+            pass
+    try:
+        raw.decode("utf-8")
+        return raw.decode("utf-8", errors="replace")
+    except UnicodeDecodeError:
+        return raw.decode("gbk", errors="replace")
+
+
+def _find_file_in_uploads(relative_path: str) -> Path | None:
+    """Search UPLOAD_ROOT/domain/*/relative_path for a file."""
+    from knowledge_mining.mining.infra.upload_config import UploadConfig
+    upload_root = UploadConfig().upload_root_path
+    if not relative_path or not upload_root.is_dir():
+        return None
+    for domain_dir in upload_root.iterdir():
+        if not domain_dir.is_dir():
+            continue
+        for batch_dir in domain_dir.iterdir():
+            if not batch_dir.is_dir():
+                continue
+            candidate = batch_dir / relative_path
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+@router.get("/{run_id}/documents/{doc_id}/raw-content")
+async def get_run_document_raw_content(run_id: str, doc_id: str, request: Request):
+    """Return the original file content for a run document (md/txt/html)."""
+    pool = request.app.state.pg_pool
+
+    async with pool.connection() as conn:
+        # Get document_key and run's input_path
+        cur = await conn.execute(
+            "SELECT d.document_key, r.input_path "
+            "FROM mining_run_documents d "
+            "JOIN mining_runs r ON r.id = d.run_id "
+            "WHERE d.id = %s AND d.run_id = %s",
+            [doc_id, run_id],
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(404, f"Document {doc_id} not found in run {run_id}")
+
+    document_key = row["document_key"] or ""
+    input_path = row["input_path"]
+
+    # document_key format: "doc:/relative/path/file.md" or just "relative/path/file.md"
+    if document_key.startswith("doc:/"):
+        rel_path = document_key[5:]
+    else:
+        rel_path = document_key
+
+    file_path: Path | None = None
+
+    # Strategy 1: input_path + rel_path (same-environment)
+    if input_path and rel_path:
+        base_path = Path(input_path).resolve()
+        candidate = (base_path / rel_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(base_path):
+            file_path = candidate
+
+    # Strategy 2: Search UPLOAD_ROOT for relative_path (cross-environment fallback)
+    if file_path is None and rel_path:
+        file_path = _find_file_in_uploads(rel_path)
+
+    if file_path is None:
+        raise HTTPException(404, f"Source file not found: {rel_path}")
+
+    ext = file_path.suffix.lower()
+    if ext not in _RENDERABLE_EXTS:
+        raise HTTPException(
+            400,
+            f"File type '{ext}' is not renderable. Supported: {', '.join(sorted(_RENDERABLE_EXTS))}",
+        )
+
+    file_size = file_path.stat().st_size
+    if file_size > _MAX_RAW_CONTENT_SIZE:
+        raise HTTPException(413, "File too large for inline rendering")
+
+    try:
+        content_bytes = file_path.read_bytes()
+    except OSError as exc:
+        logger.error("Failed to read file %s: %s", file_path, exc)
+        raise HTTPException(500, "Failed to read source file") from exc
+
+    if ext in (".html", ".htm"):
+        html_text = _decode_html_bytes(content_bytes)
+        return HTMLResponse(
+            content=html_text.encode("utf-8"),
+            status_code=200,
+            headers={"X-Content-Format": "html"},
+        )
+
+    content = content_bytes.decode("utf-8", errors="replace")
+
+    if ext in (".md", ".markdown"):
+        return PlainTextResponse(
+            content=content,
+            status_code=200,
+            headers={"X-Content-Format": "markdown"},
+        )
+
+    return PlainTextResponse(content=content, status_code=200)
 
 
 @router.get("/{run_id}/documents/{doc_id}/stages")

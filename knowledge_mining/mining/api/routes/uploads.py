@@ -23,7 +23,7 @@ _cfg = UploadConfig()
 _DOMAIN_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 _ACCEPTED_EXTENSIONS = [
-    ".md", ".txt", ".pdf", ".html", ".htm", ".doc", ".docx", ".zip",
+    ".md", ".txt", ".pdf", ".html", ".htm", ".doc", ".docx", ".zip", ".chm", ".hdx",
 ]
 
 

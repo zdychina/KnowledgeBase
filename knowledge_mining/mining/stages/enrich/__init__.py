@@ -57,10 +57,24 @@ class LlmEnricher:
         allowed_entity_types = profile.entity_types if profile else frozenset()
         # Use domain-specific semantic_roles when available; empty set means no filtering
         valid_roles = profile.semantic_roles if profile and profile.semantic_roles else None
+        min_enrich_tokens = (
+            profile.retrieval_policy.min_enrich_tokens
+            if profile and hasattr(profile, "retrieval_policy")
+            else 30
+        )
 
-        # Phase 1: Submit all segments
-        seg_tasks: dict[str, str] = {}
+        # Phase 0: Split into tiny (skip LLM) and substantial (send to LLM)
+        tiny_indices: set[int] = set()
         for idx, seg in enumerate(segments):
+            tc = seg.token_count if seg.token_count is not None else 0
+            if tc < min_enrich_tokens:
+                tiny_indices.add(idx)
+
+        substantial_segments = [seg for idx, seg in enumerate(segments) if idx not in tiny_indices]
+
+        # Phase 1: Submit only substantial segments
+        seg_tasks: dict[str, str] = {}
+        for sub_idx, seg in enumerate(substantial_segments):
             task_id = self._client.submit_task(
                 template_key="mining-segment-understanding",
                 input={
@@ -73,7 +87,7 @@ class LlmEnricher:
                 expected_output_type="json_object",
             )
             if task_id:
-                seg_tasks[str(idx)] = task_id
+                seg_tasks[str(sub_idx)] = task_id
 
         # Phase 2: Poll all tasks concurrently
         llm_raw: dict[str, list[dict]] = self._client.poll_all(seg_tasks)
@@ -82,13 +96,48 @@ class LlmEnricher:
             if items and isinstance(items[0], dict):
                 llm_results[int(key)] = items[0]
 
-        # Phase 3: Apply results; return original segment when LLM had no result
-        return [
-            _apply_llm_result(seg, llm_results[idx], allowed_entity_types, valid_roles)
-            if idx in llm_results
+        # Phase 3: Apply results to substantial segments
+        enriched_substantial = [
+            _apply_llm_result(seg, llm_results[sub_idx], allowed_entity_types, valid_roles)
+            if sub_idx in llm_results
             else seg
-            for idx, seg in enumerate(segments)
+            for sub_idx, seg in enumerate(substantial_segments)
         ]
+
+        # Phase 4: Merge back — tiny segments get minimal default enrichment
+        result: list[RawSegmentData] = []
+        sub_cursor = 0
+        for orig_idx, orig_seg in enumerate(segments):
+            if orig_idx in tiny_indices:
+                # Tiny segment: mark as non-substantive, keep original
+                meta = dict(orig_seg.metadata_json)
+                meta["content_assessment"] = {
+                    "is_substantive": False,
+                    "is_navigation": False,
+                    "assessment_reason": f"segment below min_enrich_tokens ({orig_seg.token_count} tokens)",
+                }
+                result.append(RawSegmentData(
+                    document_key=orig_seg.document_key,
+                    segment_index=orig_seg.segment_index,
+                    block_type=orig_seg.block_type,
+                    semantic_role="note",
+                    section_path=orig_seg.section_path,
+                    section_title=orig_seg.section_title,
+                    raw_text=orig_seg.raw_text,
+                    normalized_text=orig_seg.normalized_text,
+                    content_hash=orig_seg.content_hash,
+                    normalized_hash=orig_seg.normalized_hash,
+                    token_count=orig_seg.token_count,
+                    structure_json=orig_seg.structure_json,
+                    source_offsets_json=orig_seg.source_offsets_json,
+                    entity_refs_json=orig_seg.entity_refs_json,
+                    metadata_json=meta,
+                ))
+            else:
+                result.append(enriched_substantial[sub_cursor])
+                sub_cursor += 1
+
+        return result
 
 
 def _apply_llm_result(

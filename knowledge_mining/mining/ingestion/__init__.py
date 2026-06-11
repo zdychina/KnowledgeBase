@@ -1,7 +1,8 @@
 """Ingestion module: recursive folder scan for v1.1.
 
-Discovers md/txt/html/htm/pdf/doc/docx files plus compiled-help archives
-(.chm / .hdx) which are auto-extracted and converted to markdown on the fly.
+Discovers md/txt/html/htm/pdf/doc/docx files.
+Archives (.zip / .chm / .hdx) are extracted at upload time, so their contents
+appear as individual files in the scan directory.
 Produces RawFileData objects with raw_content_hash and normalized_content_hash.
 """
 from __future__ import annotations
@@ -12,11 +13,7 @@ from typing import Any
 
 from knowledge_mining.mining.contracts.models import BatchParams, RawFileData
 from knowledge_mining.mining.infra.hash_utils import compute_raw_hash, compute_snapshot_hash
-from knowledge_mining.mining.ingestion.preprocessing import (
-    SUPPORTED_ARCHIVE_EXTS,
-    archive_to_markdown,
-    html_to_markdown,
-)
+from knowledge_mining.mining.ingestion.preprocessing import html_to_markdown
 from knowledge_mining.mining.ingestion.pdf_preprocessing import pdf_to_text
 
 logger = logging.getLogger(__name__)
@@ -30,16 +27,12 @@ _EXTENSION_MAP: dict[str, str] = {
     ".pdf": "pdf",
     ".doc": "doc",
     ".docx": "docx",
-    # Compiled-help archives — extracted + converted to markdown during ingest.
-    ".chm": "markdown",
-    ".hdx": "markdown",
 }
 
 PARSABLE_EXTENSIONS = {".md", ".markdown", ".txt"}
 PDF_EXTENSIONS = {".pdf"}
 HTML_EXTENSIONS = {".html", ".htm"}
 DOCX_EXTENSIONS = {".doc", ".docx"}
-PREPROCESS_EXTENSIONS = SUPPORTED_ARCHIVE_EXTS  # {".chm", ".hdx"}
 
 _SKIP_NAMES = {
     "manifest.jsonl", "manifest.json",
@@ -97,26 +90,7 @@ def ingest_directory(
             raw_hash = compute_raw_hash(content_bytes)
             metadata_json: dict[str, Any] = {}
 
-            if ext in PREPROCESS_EXTENSIONS:
-                # .chm / .hdx — extract + convert to markdown on the fly.
-                try:
-                    content = archive_to_markdown(
-                        file_path,
-                        doc_title=file_path.stem,
-                    )
-                    summary["parsed_documents"] += 1
-                    summary["preprocessed_archives"] += 1
-                    metadata_json["source_format"] = ext.lstrip(".")
-                except Exception as e:
-                    logger.warning(
-                        "preprocess failed for %s: %s; registering without content",
-                        file_path, e,
-                    )
-                    content = ""
-                    summary["unparsed_documents"] += 1
-                    metadata_json["source_format"] = ext.lstrip(".")
-                    metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
-            elif ext in PDF_EXTENSIONS:
+            if ext in PDF_EXTENSIONS:
                 # .pdf — extract text via pdfminer.six on the fly.
                 try:
                     content = pdf_to_text(file_path)

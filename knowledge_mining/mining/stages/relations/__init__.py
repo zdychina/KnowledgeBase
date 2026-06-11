@@ -27,54 +27,6 @@ def _make_segment_key(seg: RawSegmentData) -> str:
     return f"{seg.document_key}#{seg.segment_index}"
 
 
-# Discourse-role inference -----------------------------------------------------
-
-DISCOURSE_ROLE_NUCLEUS = "nucleus"
-DISCOURSE_ROLE_SATELLITE = "satellite"
-DISCOURSE_ROLE_STANDALONE = "standalone"
-
-# RST relations where the target span is the satellite (supporting span) and the
-# source span is the nucleus. The source/target convention follows the
-# mining-discourse-relation template (source = base/earlier span being supported,
-# target = dependent/later span that supports it). Causal (causes/results_in) and
-# multinuclear (contrasts_with/parallels/sequences/concedes) relations carry
-# substantive content on both ends, so both endpoints are treated as nucleus.
-_SATELLITE_TARGET_RELATIONS: frozenset[str] = frozenset({
-    "elaborates", "evidences", "backgrounds", "conditions",
-    "summarizes", "justifies", "enables", "exemplifies", "purposes",
-})
-
-
-def compute_discourse_roles(relations: list[SegmentRelationData]) -> dict[str, str]:
-    """Infer each segment's RST discourse role from the relations it participates in.
-
-    Returns ``{segment_key: "nucleus" | "satellite"}``. Segment keys absent from
-    the map have no RST relations and should be treated as ``"standalone"`` by the
-    caller.
-
-    Rules:
-    - In a support-type mononuclear relation the source is the nucleus and the
-      target is the satellite.
-    - Causal/multinuclear relations mark both endpoints as nucleus.
-    - Nucleus precedence: a segment that is a nucleus in any relation is labelled
-      ``"nucleus"`` even if it is a satellite in another relation.
-    """
-    nucleus: set[str] = set()
-    satellite: set[str] = set()
-    for rel in relations:
-        if rel.relation_type in _SATELLITE_TARGET_RELATIONS:
-            nucleus.add(rel.source_segment_key)
-            satellite.add(rel.target_segment_key)
-        else:
-            nucleus.add(rel.source_segment_key)
-            nucleus.add(rel.target_segment_key)
-
-    roles: dict[str, str] = {key: DISCOURSE_ROLE_SATELLITE for key in satellite}
-    for key in nucleus:  # nucleus precedence overrides satellite
-        roles[key] = DISCOURSE_ROLE_NUCLEUS
-    return roles
-
-
 class DiscourseRelationBuilder:
     """LLM-driven discourse relation builder using RST analysis.
 

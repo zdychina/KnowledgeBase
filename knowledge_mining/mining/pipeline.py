@@ -294,10 +294,12 @@ class StreamingPipeline:
         *,
         run_id: str | None = None,
         tracker: Any | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         self._stages = stages
         self._queues: list[Queue] = [Queue() for _ in range(len(stages) + 1)]
         self._threads: list[list[Thread]] = []
+        self._cancel_check = cancel_check
 
         for i, (name, fn, n) in enumerate(stages):
             stage_threads = []
@@ -313,10 +315,19 @@ class StreamingPipeline:
             self._threads.append(stage_threads)
 
     def process_all(self, items: list[DocumentContext]) -> list[DocumentContext]:
-        """Submit all items, wait for completion, return results in input order."""
-        n = len(items)
+        """Submit all items, wait for completion, return results in input order.
+
+        If a cancel_check is set, stops submitting remaining items once it
+        returns True. Items already in flight still complete so workers and
+        queues drain cleanly.
+        """
+        submitted = 0
         for i, item in enumerate(items):
+            if self._cancel_check and self._cancel_check():
+                logger.info("Pipeline cancelled: %d/%d items submitted", submitted, len(items))
+                break
             self._queues[0].put(item.with_updates(sequence_id=i))
+            submitted += 1
 
         # Send sentinels stage-by-stage to shut down workers
         for i, stage_threads in enumerate(self._threads):
@@ -326,7 +337,7 @@ class StreamingPipeline:
                 t.join()
 
         results: list[DocumentContext] = []
-        while len(results) < n:
+        while len(results) < submitted:
             results.append(self._queues[-1].get())
         results.sort(key=lambda ctx: ctx.sequence_id)
         return results
@@ -358,7 +369,7 @@ def segment_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     seg = cfg.segmenter
     if seg is None or ctx.tree is None or ctx.profile is None:
         return ctx
-    segments = seg.segment(ctx.tree, ctx.profile)
+    segments = seg.segment(ctx.tree, ctx.profile, domain_profile=cfg.domain_profile)
     if not segments:
         return ctx.with_updates(segments=tuple(segments))
     from knowledge_mining.mining.stages.relations import build_seg_ids
@@ -442,7 +453,6 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
     On failure, calls tracker.fail_document and returns ctx with error set.
     """
     import json as _json
-    from knowledge_mining.mining.stages.relations import compute_discourse_roles
 
     asset_db = cfg.asset_db
     tracker = cfg.tracker
@@ -508,15 +518,9 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
             asset_db.commit()
 
         # --- commit_segments ---
-        # Infer RST discourse role (nucleus/satellite/standalone) from the relations
-        # built in the discourse stage, and persist it into each segment's
-        # metadata_json so Serving can prioritize nucleus content.
-        discourse_roles = compute_discourse_roles(relations)
         for seg in segments:
             seg_key = f"{seg.document_key}#{seg.segment_index}"
             seg_id = seg_id_map.get(seg_key, uuid.uuid4().hex)
-            seg_metadata = dict(seg.metadata_json)
-            seg_metadata["discourse_role"] = discourse_roles.get(seg_key, "standalone")
             asset_db.insert_raw_segment(
                 segment_id=seg_id,
                 document_snapshot_id=snapshot_id,
@@ -534,7 +538,7 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
                 structure_json=seg.structure_json,
                 source_offsets_json=seg.source_offsets_json,
                 entity_refs_json=seg.entity_refs_json,
-                metadata_json=seg_metadata,
+                metadata_json=seg.metadata_json,
             )
 
         # --- build_relations ---

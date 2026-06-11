@@ -64,7 +64,8 @@ class ExtractorRule:
 class RetrievalPolicy:
     """Retrieval unit generation policy.
 
-    Also carries discourse/relation thresholds so they are configurable per-domain.
+    Also carries discourse/relation thresholds and segmentation config
+    so they are configurable per-domain.
     """
     raw_text: str = "primary"
     generated_question: str = "auxiliary"
@@ -82,6 +83,13 @@ class RetrievalPolicy:
     # Question-worthiness thresholds
     min_questionworthy_tokens: int = 50
     not_questionworthy_roles: frozenset[str] = frozenset({"navigation", "toc", "metadata"})
+
+    # Segmentation thresholds (v2.0)
+    min_chunk_tokens: int = 128          # minimum chunk size after merge
+    max_chunk_tokens: int = 512          # maximum chunk size before split
+    cross_section_merge: bool = True     # enable cross-section orphan absorption
+    min_enrich_tokens: int = 30          # skip LLM enrich for segments below this
+    structural_context_mode: str = "breadcrumb"  # "breadcrumb" | "off"
 
 
 @dataclass(frozen=True)
@@ -216,6 +224,11 @@ def _parse_retrieval_policy(raw: dict[str, Any]) -> RetrievalPolicy:
         discourse_window_size=raw.get("discourse_window_size", 15),
         min_questionworthy_tokens=raw.get("min_questionworthy_tokens", 50),
         not_questionworthy_roles=frozenset(nqr_raw),
+        min_chunk_tokens=raw.get("min_chunk_tokens", 128),
+        max_chunk_tokens=raw.get("max_chunk_tokens", 512),
+        cross_section_merge=raw.get("cross_section_merge", True),
+        min_enrich_tokens=raw.get("min_enrich_tokens", 30),
+        structural_context_mode=raw.get("structural_context_mode", "breadcrumb"),
     )
 
 
