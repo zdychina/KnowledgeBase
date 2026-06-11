@@ -139,11 +139,50 @@ public class LlmClient {
     // Template registration
     // =========================================================================
 
+    /**
+     * Retry template registration with exponential backoff.
+     * Called from a background thread at startup — waits for llm_service to become available.
+     * Retries up to 10 times (total ~2 min), then gives up.
+     */
+    public void ensureTemplatesWithRetry(String targetUrl) {
+        int maxAttempts = 10;
+        long baseDelayMs = 3_000;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                // Probe health endpoint first
+                restTemplate.exchange(
+                        targetUrl + "/health",
+                        HttpMethod.GET,
+                        new HttpEntity<>(buildHeaders()),
+                        MAP_TYPE);
+                // Health OK — register templates
+                ensureTemplates();
+                return;
+            } catch (Exception e) {
+                long delay = baseDelayMs * (1L << Math.min(attempt - 1, 4)); // 3s, 6s, 12s, 24s, 48s, ...
+                if (attempt < maxAttempts) {
+                    log.info("LLM service not ready (attempt {}/{}), retrying in {}ms: {}",
+                            attempt, maxAttempts, delay, e.getMessage());
+                    try { Thread.sleep(delay); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Template registration interrupted");
+                        return;
+                    }
+                } else {
+                    log.error("LLM service still not available after {} attempts — template registration FAILED", maxAttempts);
+                }
+            }
+        }
+    }
+
     public void ensureTemplates() {
         for (var tpl : ServingTemplates.ALL) {
             try {
                 Map<String, Object> payload = new HashMap<>(tpl);
-                String schemaStr = (String) payload.getOrDefault("output_schema_json", "");
+                // DB column is JSON type — empty string is invalid, default to "{}"
+                String schemaStr = (String) payload.getOrDefault("output_schema_json", "{}");
+                if (schemaStr.isBlank()) schemaStr = "{}";
                 String exampleStr = (String) payload.remove("_example_json");
                 String systemPrompt = (String) payload.get("system_prompt");
                 if (systemPrompt != null) {

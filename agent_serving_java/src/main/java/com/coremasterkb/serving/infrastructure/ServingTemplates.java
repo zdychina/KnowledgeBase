@@ -175,8 +175,8 @@ public final class ServingTemplates {
                     + "3. 直接输出段落内容，不要添加任何前缀或解释\n"
                     + "4. 内容不需要完全准确，只需在语义空间接近真实文档即可"),
             Map.entry("user_prompt_template", "查询：$query\n\n请生成一段假设性的技术文档回答："),
-            Map.entry("output_schema_json", ""),
-            Map.entry("_example_json", "")
+            Map.entry("output_schema_json", "{}"),
+            Map.entry("_example_json", "{}")
     );
 
     // ---- Multi-Query Expansion output schema ----

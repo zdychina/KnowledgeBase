@@ -15,6 +15,17 @@ CREATE TABLE IF NOT EXISTS serving_query_cache (
     CONSTRAINT pk_serving_query_cache PRIMARY KEY (id)
 );
 
+-- Add release_id column if table was created by an earlier migration without it
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'serving_query_cache' AND column_name = 'release_id'
+    ) THEN
+        ALTER TABLE serving_query_cache ADD COLUMN release_id TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_sqc_embedding
     ON serving_query_cache
     USING ivfflat (query_embedding vector_cosine_ops)

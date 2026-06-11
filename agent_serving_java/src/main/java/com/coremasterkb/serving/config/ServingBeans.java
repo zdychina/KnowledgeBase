@@ -126,11 +126,15 @@ public class ServingBeans {
     public LlmClient llmClient(RestTemplate restTemplate, ServingProperties properties) {
         LlmClient client = new LlmClient(restTemplate, properties.llm().baseUrl());
         if (client.isAvailable()) {
-            try {
-                client.ensureTemplates();
-            } catch (Exception e) {
-                log.warn("Template registration failed (non-fatal): {}", e.getMessage());
-            }
+            // Background thread: wait for llm_service to be ready, then register templates.
+            // llm_service may not have started yet (supervisor launches all services concurrently),
+            // so we retry with backoff instead of failing silently.
+            String baseUrl = properties.llm().baseUrl();
+            Thread.ofVirtual().name("template-register").start(() -> {
+                client.ensureTemplatesWithRetry(baseUrl);
+            });
+        } else {
+            log.warn("LLM base-url is blank — template registration skipped");
         }
         return client;
     }
