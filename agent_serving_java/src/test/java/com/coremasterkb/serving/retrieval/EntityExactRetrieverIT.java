@@ -34,7 +34,7 @@ class EntityExactRetrieverIT extends AbstractPgIntegrationTest {
         // the test validates the query path works without error
         RetrievalQuery query = new RetrievalQuery("Test", List.of("Test"),
                 List.of(new EntityRef("concept", "Test", "Test")),
-                null, List.of(), "general", java.util.Map.of());
+                null, List.of(), "general", java.util.Map.of(), null);
 
         List<RetrievalCandidate> results = retriever.retrieve(query, activeScope.snapshotIds(), 10);
         assertThat(results).isNotNull();

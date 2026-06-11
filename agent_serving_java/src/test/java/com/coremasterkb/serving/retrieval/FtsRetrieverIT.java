@@ -31,7 +31,7 @@ class FtsRetrieverIT extends AbstractPgIntegrationTest {
     @DisplayName("FTS search for actual data term returns candidates")
     void ftsSearchReturnsCandidates() {
         RetrievalQuery query = new RetrievalQuery("Test Document", List.of("Test"),
-                List.of(), null, List.of(), "concept_lookup", java.util.Map.of());
+                List.of(), null, List.of(), "concept_lookup", java.util.Map.of(), null);
 
         List<RetrievalCandidate> results = retriever.retrieve(query, activeScope.snapshotIds(), 10);
         assumeTrue(!results.isEmpty(), "no FTS data for 'Test Document' in test DB — skipping");
@@ -41,7 +41,7 @@ class FtsRetrieverIT extends AbstractPgIntegrationTest {
     @DisplayName("FTS search for nonsense returns empty")
     void ftsSearchNonsenseReturnsEmpty() {
         RetrievalQuery query = new RetrievalQuery("xyzzy123nonexistent", List.of("xyzzy123"),
-                List.of(), null, List.of(), "general", java.util.Map.of());
+                List.of(), null, List.of(), "general", java.util.Map.of(), null);
 
         List<RetrievalCandidate> results = retriever.retrieve(query, activeScope.snapshotIds(), 10);
         assertThat(results).isEmpty();

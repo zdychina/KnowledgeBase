@@ -76,6 +76,25 @@ public class RetrievalOrchestrator {
             RetrievalRoutePlan routePlan,
             float[] queryEmbedding,
             List<String> snapshotIds) {
+        return execute(understanding, routePlan, queryEmbedding, snapshotIds, List.of());
+    }
+
+    /**
+     * Execute all enabled routes and return merged candidates with traces.
+     *
+     * @param understanding      query understanding result
+     * @param routePlan          route configuration plan
+     * @param queryEmbedding     pre-computed query embedding; may be null
+     * @param snapshotIds        snapshot IDs in scope; if empty, returns empty result
+     * @param sectionHardFilter  section prefixes for hard filter; empty = no filter
+     * @return orchestrator result with candidates and route traces
+     */
+    public OrchestratorResult execute(
+            QueryUnderstanding understanding,
+            RetrievalRoutePlan routePlan,
+            float[] queryEmbedding,
+            List<String> snapshotIds,
+            List<String> sectionHardFilter) {
 
         if (snapshotIds == null || snapshotIds.isEmpty()) {
             return OrchestratorResult.empty();
@@ -89,7 +108,8 @@ public class RetrievalOrchestrator {
                 queryEmbedding,
                 understanding.subQueries().stream().map(SubQuery::text).toList(),
                 understanding.intent(),
-                understanding.scope()
+                understanding.scope(),
+                sectionHardFilter != null ? sectionHardFilter : List.of()
         );
 
         // 2. Build route config map (only enabled routes)

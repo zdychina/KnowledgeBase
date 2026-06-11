@@ -13,6 +13,8 @@ import java.util.Map;
  * @param subQueries     sub-query texts; defaults to empty list
  * @param intent         inferred intent; defaults to "general"
  * @param scope          scope constraints; defaults to empty map
+ * @param sectionPrefixes lower-cased top-level section titles for tree-navigation hard filter;
+ *                        empty (default) = no section filtering
  */
 public record RetrievalQuery(
         String originalQuery,
@@ -21,7 +23,8 @@ public record RetrievalQuery(
         float[] queryEmbedding,
         List<String> subQueries,
         String intent,
-        Map<String, Object> scope
+        Map<String, Object> scope,
+        List<String> sectionPrefixes
 ) {
     public RetrievalQuery {
         if (keywords == null) keywords = List.of();
@@ -29,5 +32,6 @@ public record RetrievalQuery(
         if (subQueries == null) subQueries = List.of();
         if (intent == null) intent = "general";
         if (scope == null) scope = Map.of();
+        if (sectionPrefixes == null) sectionPrefixes = List.of();
     }
 }
