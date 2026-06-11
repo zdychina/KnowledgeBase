@@ -51,6 +51,33 @@ public class ContextAssembler {
     private static final String DISCOURSE_SATELLITE = "satellite";
     private static final String DISCOURSE_STANDALONE = "standalone";
 
+    /**
+     * Phase 2 – RST relation weights used as initial scores for expanded items.
+     * Mirrors the priority order in GraphExpander: higher weight = higher score = more context budget.
+     */
+    private static final Map<String, Double> RST_RELATION_WEIGHTS = Map.ofEntries(
+            Map.entry("elaborates",           1.5),
+            Map.entry("conditions",           1.4),
+            Map.entry("backgrounds",          1.3),
+            Map.entry("enables",              1.2),
+            Map.entry("results_in",           1.1),
+            Map.entry("sequences",            1.0),
+            Map.entry("contrasts_with",       0.9),
+            Map.entry("causes",               0.8),
+            Map.entry("parallels",            0.7),
+            Map.entry("evidences",            1.35),
+            Map.entry("exemplifies",          1.25),
+            Map.entry("purposes",             1.15),
+            Map.entry("justifies",            1.10),
+            Map.entry("summarizes",           1.05),
+            Map.entry("concedes",             0.85),
+            Map.entry("section_header_of",    0.6),
+            Map.entry("same_section",         0.5),
+            Map.entry("previous",             0.4),
+            Map.entry("next",                 0.4),
+            Map.entry("same_parent_section",  0.3)
+    );
+
     // RST relation type -> evidence role mapping for expansion
     private static final Map<String, String> RST_ROLE_MAP = Map.ofEntries(
             Map.entry("elaborates", "support"),
@@ -59,6 +86,12 @@ public class ContextAssembler {
             Map.entry("results_in", "support"),
             Map.entry("backgrounds", "background"),
             Map.entry("enables", "support"),
+            Map.entry("evidences", "support"),
+            Map.entry("exemplifies", "support"),
+            Map.entry("purposes", "support"),
+            Map.entry("justifies", "support"),
+            Map.entry("summarizes", "support"),
+            Map.entry("concedes", "contrast"),
             Map.entry("parallels", "context"),
             Map.entry("contrasts_with", "contrast"),
             Map.entry("previous", "context"),
@@ -138,11 +171,12 @@ public class ContextAssembler {
         }
 
         // Build section prefix map for tree-nav section bias
+        Map<String, String> segDiscourseRole = buildDiscourseRoleMap(sourceSegments);
         Map<String, String> segSectionPrefix = buildSectionPrefixMap(sourceSegments);
 
         // 3. Build seed items (tree-nav section bias, then discourse nucleus-first)
         List<ContextItem> seedItems = buildSeedItems(
-                candidates, understanding, segSectionPrefix, navigatedSections);
+                candidates, understanding, segDiscourseRole, segSectionPrefix, navigatedSections);
         List<ContextItem> sourceItems = buildSourceItems(sourceSegments);
 
         // 4. Graph expansion if enabled
@@ -272,7 +306,22 @@ public class ContextAssembler {
         }
 
         // 10. Contradiction detection — flag conflicting semantic_role values in seeds
+        //     and contrasting items from expansion (contrasts_with relations)
         detectContradictions(seedItems, issues);
+
+        // Scan for contrasting expansion items
+        List<ContextItem> contrastingItems = allItems.stream()
+                .filter(item -> Boolean.TRUE.equals(item.metadata().get("is_contrasting")))
+                .toList();
+        if (!contrastingItems.isEmpty()) {
+            issues.add(new Issue(
+                    ISSUE_CONFLICTING_EVIDENCE,
+                    "检测到矛盾信息：以下内容与主要检索结果存在对比关系，请注意辨别",
+                    Map.of("conflicting_count", contrastingItems.size(),
+                           "conflicting_ids", contrastingItems.stream().map(ContextItem::id).toList())
+            ));
+            log.info("[assemble] conflict detected: {} contrasting items", contrastingItems.size());
+        }
 
         // 11. Build evidence groups and suggestions
         List<EvidenceGroup> evidenceGroups = buildEvidenceGroups(allItems, filteredRelations);
@@ -297,6 +346,7 @@ public class ContextAssembler {
     private List<ContextItem> buildSeedItems(
             List<RetrievalCandidate> candidates,
             QueryUnderstanding understanding,
+            Map<String, String> segDiscourseRole,
             Map<String, String> segSectionPrefix,
             Set<String> navigatedSections) {
         List<ContextItem> items = new ArrayList<>();
@@ -308,9 +358,10 @@ public class ContextAssembler {
                 routeSources = c.scoreChain().routeSources();
             }
 
-            // Attach section-path membership of the seed's underlying segment(s)
-            // for classification and reordering (tree-nav section bias).
+            // Attach the discourse role + navigated-chapter membership of the seed's
+            // underlying segment(s) for classification and reordering.
             Map<String, Object> metadata = new LinkedHashMap<>(c.metadata());
+            metadata.put("discourse_role", resolveSeedDiscourseRole(c, segDiscourseRole));
             String sectionPrefix = resolveSeedSectionPrefix(c, segSectionPrefix);
             metadata.put("section_path_prefix", sectionPrefix != null ? sectionPrefix : "");
             metadata.put("in_navigated_section",
@@ -336,12 +387,13 @@ public class ContextAssembler {
             ));
         }
         // Composite stable ordering: navigated-chapter seeds first (tree navigation),
-        // then RST discourse role within each tier. Relevance (rerank) order is
-        // preserved within equal keys. Both signals are no-ops when absent.
+        // then nucleus-first within each tier (discourse). Relevance (rerank) order is
+        // preserved within equal keys. Both signals are no-ops when absent — so
+        // un-navigated / un-mined data keeps the original order.
         items.sort(Comparator
                 .comparingInt((ContextItem it) -> sectionTier(it, navigatedSections))
                 .thenComparingInt(it -> discourseTier(
-                        getMetadataString(it.metadata(), "semantic_role", DISCOURSE_STANDALONE))));
+                        getMetadataString(it.metadata(), "discourse_role", DISCOURSE_STANDALONE))));
         return items;
     }
 
@@ -358,6 +410,53 @@ public class ContextAssembler {
         if (DISCOURSE_NUCLEUS.equals(role)) return 0;
         if (DISCOURSE_SATELLITE.equals(role)) return 2;
         return 1;
+    }
+
+    /** Build {segmentId -&gt; discourse_role} from segment metadata_json. */
+    private Map<String, String> buildDiscourseRoleMap(List<SegmentWithMetaRow> segments) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (var seg : segments) {
+            if (seg.getId() != null) {
+                map.put(seg.getId(), discourseRoleOf(seg.getMetadataJson()));
+            }
+        }
+        return map;
+    }
+
+    /** Extract discourse_role from a segment metadata_json string; "standalone" if absent/unparseable. */
+    private static String discourseRoleOf(String metadataJson) {
+        if (metadataJson == null || metadataJson.isBlank()) {
+            return DISCOURSE_STANDALONE;
+        }
+        try {
+            Map<String, Object> m = MAPPER.readValue(metadataJson, new TypeReference<LinkedHashMap<String, Object>>() {});
+            Object r = m.get("discourse_role");
+            return r != null && !r.toString().isBlank() ? r.toString() : DISCOURSE_STANDALONE;
+        } catch (Exception e) {
+            return DISCOURSE_STANDALONE;
+        }
+    }
+
+    /**
+     * Resolve a seed's discourse role from its underlying segment(s).
+     * Nucleus wins if any source segment is a nucleus; otherwise satellite only if
+     * a source segment is a satellite; else standalone.
+     */
+    private String resolveSeedDiscourseRole(RetrievalCandidate c, Map<String, String> segDiscourseRole) {
+        if (segDiscourseRole.isEmpty()) {
+            return DISCOURSE_STANDALONE;
+        }
+        boolean sawSatellite = false;
+        for (String segId : resolveCandidateSources(c)) {
+            String role = segDiscourseRole.get(segId);
+            if (DISCOURSE_NUCLEUS.equals(role)) {
+                return DISCOURSE_NUCLEUS;
+            }
+            if (DISCOURSE_SATELLITE.equals(role)) {
+                sawSatellite = true;
+            }
+        }
+        return sawSatellite ? DISCOURSE_SATELLITE : DISCOURSE_STANDALONE;
     }
 
     /** Build {segmentId -> lower-cased top-level section title} from source segments. */
@@ -449,6 +548,8 @@ public class ContextAssembler {
     private List<ContextItem> buildSourceItems(List<SegmentWithMetaRow> segments) {
         List<ContextItem> items = new ArrayList<>();
         for (var seg : segments) {
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
@@ -461,7 +562,7 @@ public class ContextAssembler {
                     seg.getDocumentId(),
                     null,
                     Map.of(),
-                    Map.of(),
+                    metadata,
                     List.of(),
                     null,
                     "",
@@ -475,28 +576,41 @@ public class ContextAssembler {
         List<ContextItem> items = new ArrayList<>();
         for (var exp : expansions) {
             SegmentWithMetaRow seg = exp.segment();
-            // For expanded items, use a default relation type since ExpandedSegmentRow doesn't carry it
-            String evidenceRole = "background";
+            String relType = exp.relationType() != null ? exp.relationType() : "";
+
+            // Phase 2: evidence role and score from RST relation type
+            String evidenceRole = RST_ROLE_MAP.getOrDefault(relType, "background");
+            double score = RST_RELATION_WEIGHTS.getOrDefault(relType, 0.3);
+
+            // Phase 3: tag contrasting items so conflict detection can find them later
+            Map<String, Object> meta = new LinkedHashMap<>();
+            meta.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
+            if ("contrasts_with".equals(relType)) {
+                meta.put("is_contrasting", true);
+                meta.put("contrasts_with_seed", exp.sourceSegmentId());
+            }
 
             items.add(new ContextItem(
                     seg.getId(),
                     KIND_RAW_SEGMENT,
                     ROLE_SUPPORT,
                     seg.getRawText() != null ? seg.getRawText() : "",
-                    0.0,
+                    score,
                     seg.getSnapshotTitle(),
                     seg.getBlockType() != null ? seg.getBlockType() : "unknown",
                     seg.getSemanticRole() != null ? seg.getSemanticRole() : "unknown",
                     seg.getDocumentId(),
-                    "expansion",
+                    relType,
                     Map.of(),
-                    Map.of(),
+                    meta,
                     List.of(),
                     null,
                     evidenceRole,
                     Map.of()
             ));
         }
+        // Higher RST-weight relations appear first, giving them priority in the context budget
+        items.sort(Comparator.comparingDouble(ContextItem::score).reversed());
         return items;
     }
 

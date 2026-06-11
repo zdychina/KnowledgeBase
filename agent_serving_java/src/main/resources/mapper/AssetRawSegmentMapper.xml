@@ -17,6 +17,7 @@
         <result column="document_id"          property="documentId"/>
         <result column="document_key"         property="documentKey"/>
         <result column="relative_path"        property="relativePath"/>
+        <result column="metadata_json"        property="metadataJson"/>
     </resultMap>
 
     <select id="selectWithMeta" resultMap="segmentWithMetaResult">
@@ -28,6 +29,7 @@
                rs.section_path,
                rs.entity_refs_json,
                rs.source_offsets_json,
+               rs.metadata_json,
                ds.title        AS snapshot_title,
                d.id            AS document_id,
                d.document_key,

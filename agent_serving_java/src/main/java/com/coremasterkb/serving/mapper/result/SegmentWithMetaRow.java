@@ -13,6 +13,7 @@ public class SegmentWithMetaRow {
     private String documentId;
     private String documentKey;
     private String relativePath;
+    private String metadataJson;
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -49,4 +50,7 @@ public class SegmentWithMetaRow {
 
     public String getRelativePath() { return relativePath; }
     public void setRelativePath(String relativePath) { this.relativePath = relativePath; }
+
+    public String getMetadataJson() { return metadataJson; }
+    public void setMetadataJson(String metadataJson) { this.metadataJson = metadataJson; }
 }
