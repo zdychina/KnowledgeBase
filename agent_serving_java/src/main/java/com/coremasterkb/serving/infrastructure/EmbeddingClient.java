@@ -36,4 +36,38 @@ public class EmbeddingClient {
         }
         return null;
     }
+
+    /**
+     * HyDE: generate a hypothetical document via LLM, then embed it.
+     * Falls back to plain query embedding on any failure.
+     */
+    public float[] embedHyDE(String query) {
+        try {
+            Map<String, Object> result = llmClient.execute(
+                    "hyde", "serving-hyde-expansion", Map.of("query", query));
+
+            String hypotheticalDoc = extractRawOutput(result);
+            if (hypotheticalDoc != null && !hypotheticalDoc.isBlank()) {
+                float[] hydeEmbedding = embed(hypotheticalDoc);
+                if (hydeEmbedding != null) {
+                    return hydeEmbedding;
+                }
+            }
+        } catch (Exception e) {
+            // fallback to direct query embedding
+        }
+        return embed(query);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String extractRawOutput(Map<String, Object> response) {
+        Object innerObj = response.getOrDefault("result", response);
+        if (innerObj instanceof Map<?, ?> inner) {
+            Object rawOutput = inner.get("raw_output");
+            if (rawOutput instanceof String s) {
+                return s.strip();
+            }
+        }
+        return null;
+    }
 }
