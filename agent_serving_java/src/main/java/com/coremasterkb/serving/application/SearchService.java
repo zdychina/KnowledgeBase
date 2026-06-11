@@ -206,7 +206,7 @@ public class SearchService {
 
             // 5.5. Semantic cache lookup
             trace.startStage("semantic_cache");
-            ContextPack cachedPack = semanticCache.lookup(effectiveDomain, queryEmbedding);
+            ContextPack cachedPack = semanticCache.lookup(effectiveDomain, scope.releaseId(), queryEmbedding);
             if (cachedPack != null) {
                 trace.endStage("semantic_cache", "hit=true");
                 return cachedPack;
@@ -291,7 +291,7 @@ public class SearchService {
             }
 
             // 9.5. Store result in semantic cache (best-effort)
-            semanticCache.store(effectiveDomain, request.query(), queryEmbedding, pack);
+            semanticCache.store(effectiveDomain, scope.releaseId(), request.query(), queryEmbedding, pack);
 
         } finally {
             DomainContext.clear();

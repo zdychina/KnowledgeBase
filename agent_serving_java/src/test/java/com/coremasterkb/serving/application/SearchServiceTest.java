@@ -62,7 +62,7 @@ class SearchServiceTest {
         var multiQueryExpander = mock(MultiQueryExpander.class);
         when(multiQueryExpander.expand(anyString())).thenReturn(List.of("SMF配置"));
         var semanticCache = mock(SemanticCacheService.class);
-        when(semanticCache.lookup(anyString(), any())).thenReturn(null);
+        when(semanticCache.lookup(anyString(), anyString(), any())).thenReturn(null);
         var metrics = mock(SearchMetrics.class);
         var treeNavigator = mock(TreeNavigator.class);
         when(treeNavigator.inferSections(any(), any())).thenReturn(TreeNavigation.empty());

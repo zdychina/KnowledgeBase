@@ -7,11 +7,13 @@ public interface SemanticCacheMapper {
 
     CacheHitRow findNearest(
             @Param("domain") String domain,
+            @Param("releaseId") String releaseId,
             @Param("queryVector") String queryVector);
 
     void insert(
             @Param("id") String id,
             @Param("domain") String domain,
+            @Param("releaseId") String releaseId,
             @Param("queryText") String queryText,
             @Param("queryVector") String queryVector,
             @Param("contextPackJson") String contextPackJson);

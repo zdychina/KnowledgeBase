@@ -35,13 +35,13 @@ public class SemanticCacheService {
         this.objectMapper = objectMapper;
     }
 
-    public ContextPack lookup(String domain, float[] queryVector) {
+    public ContextPack lookup(String domain, String releaseId, float[] queryVector) {
         if (queryVector == null) {
             return null;
         }
         try {
             String vectorStr = formatVector(queryVector);
-            CacheHitRow row = cacheMapper.findNearest(domain, vectorStr);
+            CacheHitRow row = cacheMapper.findNearest(domain, releaseId, vectorStr);
             if (row == null || row.getSimilarity() < HIT_THRESHOLD) {
                 return null;
             }
@@ -54,14 +54,14 @@ public class SemanticCacheService {
         }
     }
 
-    public void store(String domain, String query, float[] queryVector, ContextPack pack) {
+    public void store(String domain, String releaseId, String query, float[] queryVector, ContextPack pack) {
         if (queryVector == null) {
             return;
         }
         try {
             String vectorStr = formatVector(queryVector);
             String packJson = objectMapper.writeValueAsString(pack);
-            cacheMapper.insert(UUID.randomUUID().toString(), domain, query, vectorStr, packJson);
+            cacheMapper.insert(UUID.randomUUID().toString(), domain, releaseId, query, vectorStr, packJson);
         } catch (Exception e) {
             log.warn("Semantic cache store failed (non-fatal): {}", e.getMessage());
         }

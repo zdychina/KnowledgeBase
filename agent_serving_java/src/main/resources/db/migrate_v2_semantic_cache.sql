@@ -4,6 +4,7 @@
 CREATE TABLE IF NOT EXISTS serving_query_cache (
     id               TEXT        NOT NULL,
     domain           TEXT        NOT NULL DEFAULT 'default',
+    release_id       TEXT        NOT NULL DEFAULT '',
     query_text       TEXT        NOT NULL,
     query_embedding  vector(1024),
     context_pack_json JSONB      NOT NULL,
@@ -21,3 +22,6 @@ CREATE INDEX IF NOT EXISTS idx_sqc_embedding
 
 CREATE INDEX IF NOT EXISTS idx_sqc_domain_expires
     ON serving_query_cache (domain, expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_sqc_domain_release_expires
+    ON serving_query_cache (domain, release_id, expires_at);

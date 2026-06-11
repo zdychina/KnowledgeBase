@@ -12,6 +12,7 @@
         FROM serving_query_cache
         WHERE
             domain = #{domain}
+            AND release_id = #{releaseId}
             AND expires_at > now()
             AND query_embedding IS NOT NULL
         ORDER BY query_embedding &lt;=&gt; #{queryVector}::vector
@@ -20,9 +21,9 @@
 
     <insert id="insert">
         INSERT INTO serving_query_cache
-            (id, domain, query_text, query_embedding, context_pack_json, hit_count, created_at, expires_at)
+            (id, domain, release_id, query_text, query_embedding, context_pack_json, hit_count, created_at, expires_at)
         VALUES
-            (#{id}, #{domain}, #{queryText}, #{queryVector}::vector, #{contextPackJson}::jsonb,
+            (#{id}, #{domain}, #{releaseId}, #{queryText}, #{queryVector}::vector, #{contextPackJson}::jsonb,
              1, now(), now() + INTERVAL '24 hours')
         ON CONFLICT (id) DO NOTHING
     </insert>
