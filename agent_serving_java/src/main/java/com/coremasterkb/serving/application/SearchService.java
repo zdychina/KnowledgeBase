@@ -9,6 +9,7 @@ import com.coremasterkb.serving.domainpack.DomainRegistry;
 import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
+import com.coremasterkb.serving.observability.SearchMetrics;
 import com.coremasterkb.serving.observability.TraceCollector;
 import com.coremasterkb.serving.pipeline.*;
 import com.coremasterkb.serving.rerank.RerankPipeline;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
@@ -46,6 +48,10 @@ public class SearchService {
     private final EmbeddingClient embeddingClient;
     private final AssetRepository assetRepository;
     private final LlmClient llmClient;
+    private final MultiQueryExpander multiQueryExpander;
+    private final SemanticCacheService semanticCache;
+    private final SearchMetrics metrics;
+    private final TreeNavigator treeNavigator;
     private final String defaultDomain;
     private final Executor pipelineExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -61,6 +67,10 @@ public class SearchService {
             EmbeddingClient embeddingClient,
             AssetRepository assetRepository,
             LlmClient llmClient,
+            MultiQueryExpander multiQueryExpander,
+            SemanticCacheService semanticCache,
+            SearchMetrics metrics,
+            TreeNavigator treeNavigator,
             ServingProperties properties) {
         this.quEngine = quEngine;
         this.router = router;
@@ -73,6 +83,10 @@ public class SearchService {
         this.embeddingClient = embeddingClient;
         this.assetRepository = assetRepository;
         this.llmClient = llmClient;
+        this.multiQueryExpander = multiQueryExpander;
+        this.semanticCache = semanticCache;
+        this.metrics = metrics;
+        this.treeNavigator = treeNavigator;
         this.defaultDomain = properties.defaultDomain();
         if (!embeddingClient.isConfigured()) {
             log.info("Embedding client not configured (LLM_SERVICE_URL blank) — dense retrieval disabled");
@@ -120,7 +134,7 @@ public class SearchService {
         CompletableFuture<float[]> embeddingFuture = embeddingClient.isConfigured()
                 ? CompletableFuture.supplyAsync(() -> {
             try {
-                return embeddingClient.embed(request.query());
+                return embeddingClient.embedHyDE(request.query());
             } catch (Exception e) {
                 log.warn("Query embedding failed: {}", e.getMessage());
                 return null;
@@ -133,6 +147,10 @@ public class SearchService {
                 "intent=" + understanding.intent()
                         + ", entities=" + understanding.entities().size()
                         + ", source=" + understanding.source());
+        log.info("[QU] intent={}, complexity={}, entities={}, source={}",
+                understanding.intent(), understanding.queryComplexity(),
+                understanding.entities().size(), understanding.source());
+        metrics.recordIntent(understanding.intent());
 
         // 4. Retrieval Router
         trace.startStage("retrieval_router");
@@ -161,6 +179,20 @@ public class SearchService {
             }
             trace.endStage("resolve_scope", "snapshots=" + scope.snapshotIds().size());
 
+            // 3.4. Tree navigation: infer relevant chapters for query entities
+            trace.startStage("tree_navigation");
+            TreeNavigation nav = treeNavigator.inferSections(understanding.entities(), scope.snapshotIds());
+            if (nav == null) nav = TreeNavigation.empty();
+            Set<String> navigatedSections = nav.softSections();
+            List<String> sectionHardFilter = nav.hardFilter() ? nav.hardPrefixes() : List.of();
+            trace.endStage("tree_navigation",
+                    "soft=" + navigatedSections.size() + ", hard=" + sectionHardFilter.size());
+
+            // 3.5. Multi-Query Expansion
+            trace.startStage("multi_query_expand");
+            List<String> queryVariants = multiQueryExpander.expand(request.query());
+            trace.endStage("multi_query_expand", "variants=" + queryVariants.size());
+
             // 5. Collect pre-computed embedding (started in parallel with understanding)
             boolean denseEnabled = routePlan.routes().stream()
                     .anyMatch(r -> "dense_vector".equals(r.name()) && r.enabled());
@@ -170,15 +202,51 @@ public class SearchService {
                 trace.endStage("embedding",
                         "dim=" + (queryEmbedding != null ? queryEmbedding.length : 0));
             } else {
-                queryEmbedding = embeddingFuture.join(); // consume future to avoid wasted thread
+                queryEmbedding = embeddingFuture.join();
             }
 
-            // 6. Retrieve from all configured routes
+            // 5.5. Semantic cache lookup
+            trace.startStage("semantic_cache");
+            ContextPack cachedPack = semanticCache.lookup(effectiveDomain, queryEmbedding);
+            if (cachedPack != null) {
+                trace.endStage("semantic_cache", "hit=true");
+                return cachedPack;
+            }
+            trace.endStage("semantic_cache", "hit=false");
+
+            // 6. Retrieve for each variant
             trace.startStage("retrieve");
-            orchResult = orchestrator.execute(
-                    understanding, routePlan, queryEmbedding, scope.snapshotIds());
-            List<RetrievalCandidate> rawCandidates = orchResult.candidates();
-            trace.endStage("retrieve", "candidates=" + rawCandidates.size());
+            List<RetrievalCandidate> rawCandidates = new ArrayList<>();
+            List<RouteTrace> allRouteTraces = new ArrayList<>();
+
+            for (String variant : queryVariants) {
+                QueryUnderstanding varUnderstanding = variant.equals(request.query())
+                        ? understanding
+                        : buildVariantUnderstanding(understanding, variant);
+                OrchestratorResult varResult = orchestrator.execute(
+                        varUnderstanding, routePlan, queryEmbedding, scope.snapshotIds(), sectionHardFilter);
+                rawCandidates.addAll(varResult.candidates());
+                allRouteTraces.addAll(varResult.routeTraces());
+            }
+
+            // 6b. Sub-query decomposition (cap at 4)
+            for (SubQuery subQuery : understanding.subQueries().stream().limit(4).toList()) {
+                QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(understanding, subQuery);
+                OrchestratorResult subResult = orchestrator.execute(
+                        subUnderstanding, routePlan, queryEmbedding, scope.snapshotIds(), sectionHardFilter);
+                rawCandidates.addAll(subResult.candidates());
+                allRouteTraces.addAll(subResult.routeTraces());
+            }
+
+            trace.endStage("retrieve",
+                    "candidates=" + rawCandidates.size() + ", variants=" + queryVariants.size());
+
+            // Observability: per-route candidate counts
+            for (RouteTrace rt : allRouteTraces) {
+                if (rt.attempted()) {
+                    metrics.recordRouteCandidates(rt.name(), rt.candidateCount());
+                }
+            }
 
             // 7. Fuse
             trace.startStage("fusion");
@@ -193,15 +261,27 @@ public class SearchService {
 
             // 8. Rerank (cascading: model -> LLM -> score)
             trace.startStage("rerank");
+            long rerankStartNanos = System.nanoTime();
             var rerankResult = rerankPipeline.rerank(fused, routePlan, understanding);
+            metrics.recordRerankDuration((System.nanoTime() - rerankStartNanos) / 1_000_000.0);
             ranked = rerankResult.candidates();
+            metrics.recordRerankFallback(resolveWinningRerankMethod(rerankResult.traces()));
             trace.endStage("rerank", "ranked=" + ranked.size());
 
             // 9. Assemble ContextPack
             trace.startStage("assembly");
             pack = assembler.assemble(
-                    request.query(), understanding, scope, ranked, routePlan);
+                    request.query(), understanding, scope, ranked, routePlan, navigatedSections);
             trace.endStage("assembly", "items=" + pack.items().size());
+
+            // Observability: empty-scope no-result
+            boolean noSeedResult = pack.items().stream().noneMatch(i -> "seed".equals(i.role()));
+            if (noSeedResult && understanding.scope().isEmpty()) {
+                metrics.recordScopeEmpty();
+            }
+
+            // 9.5. Store result in semantic cache (best-effort)
+            semanticCache.store(effectiveDomain, request.query(), queryEmbedding, pack);
 
         } finally {
             DomainContext.clear();
@@ -245,6 +325,44 @@ public class SearchService {
 
     private ActiveScope resolveActiveScope(String domain, String channel) {
         return assetRepository.resolveActiveScope(domain, channel);
+    }
+
+    private static String resolveWinningRerankMethod(List<RerankTraceStep> traces) {
+        if (traces != null) {
+            for (int i = traces.size() - 1; i >= 0; i--) {
+                if (traces.get(i).succeeded()) {
+                    return traces.get(i).provider();
+                }
+            }
+        }
+        return "score";
+    }
+
+    // =========================================================================
+    // Multi-query helpers
+    // =========================================================================
+
+    private static QueryUnderstanding buildVariantUnderstanding(
+            QueryUnderstanding original, String variantQuery) {
+        return new QueryUnderstanding(
+                variantQuery, original.intent(), original.subQueries(),
+                original.entities(), original.scope(), original.keywords(),
+                original.evidenceNeed(), original.ambiguities(), original.source(),
+                original.queryComplexity()
+        );
+    }
+
+    private static QueryUnderstanding buildSubQueryUnderstanding(
+            QueryUnderstanding parent, SubQuery subQuery) {
+        String intent = !"general".equals(subQuery.intent())
+                ? subQuery.intent() : parent.intent();
+        List<EntityRef> entities = !subQuery.entities().isEmpty()
+                ? subQuery.entities() : parent.entities();
+        return new QueryUnderstanding(
+                subQuery.text(), intent, List.of(), entities,
+                parent.scope(), parent.keywords(), parent.evidenceNeed(),
+                parent.ambiguities(), parent.source(), parent.queryComplexity()
+        );
     }
 
     // =========================================================================

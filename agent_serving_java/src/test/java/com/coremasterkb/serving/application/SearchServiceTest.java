@@ -6,6 +6,7 @@ import com.coremasterkb.serving.domainpack.DomainContext;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
 import com.coremasterkb.serving.domainpack.DomainPoolManager;
 import com.coremasterkb.serving.domainpack.DomainRegistry;
+import com.coremasterkb.serving.observability.SearchMetrics;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
 import com.coremasterkb.serving.pipeline.*;
@@ -21,8 +22,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @DisplayName("SearchService")
@@ -59,11 +59,20 @@ class SearchServiceTest {
         when(assetRepo.resolveActiveScope(anyString(), anyString()))
                 .thenReturn(new ActiveScope("rel1", "b1", List.of("snap1"), Map.of()));
 
+        var multiQueryExpander = mock(MultiQueryExpander.class);
+        when(multiQueryExpander.expand(anyString())).thenReturn(List.of("SMF配置"));
+        var semanticCache = mock(SemanticCacheService.class);
+        when(semanticCache.lookup(anyString(), any())).thenReturn(null);
+        var metrics = mock(SearchMetrics.class);
+        var treeNavigator = mock(TreeNavigator.class);
+        when(treeNavigator.inferSections(any(), any())).thenReturn(TreeNavigation.empty());
+
         searchService = new SearchService(
                 quEngine, router, orchestrator, rerankPipeline,
                 assembler, domainPackReader, domainRegistry, domainPoolManager,
                 embeddingClient, assetRepo,
                 mock(LlmClient.class),
+                multiQueryExpander, semanticCache, metrics, treeNavigator,
                 new ServingProperties(null, null, "cloud_core_network", null));
     }
 
@@ -75,7 +84,7 @@ class SearchServiceTest {
         void allStagesCalled() {
             var understanding = new QueryUnderstanding("SMF配置", "concept_lookup",
                     List.of(), List.of(), Map.of(), List.of("SMF"),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -89,9 +98,9 @@ class SearchServiceTest {
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
             when(quEngine.understand(anyString(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-            when(orchestrator.execute(any(), any(), any(), any())).thenReturn(orchResult);
+            when(orchestrator.execute(any(), any(), any(), anyList(), anyList())).thenReturn(orchResult);
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(rerankResult);
-            when(assembler.assemble(anyString(), any(), any(), any(), any())).thenReturn(expectedPack);
+            when(assembler.assemble(anyString(), any(), any(), any(), any(), any())).thenReturn(expectedPack);
 
             var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
                     "cloud_core_network", null, "evidence");
@@ -101,9 +110,9 @@ class SearchServiceTest {
             assertThat(result).isNotNull();
             verify(quEngine).understand("SMF配置", null);
             verify(router).route(understanding, null);
-            verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")));
+            verify(orchestrator).execute(eq(understanding), eq(routePlan), any(), eq(List.of("snap1")), anyList());
             verify(rerankPipeline).rerank(any(), eq(routePlan), eq(understanding));
-            verify(assembler).assemble(eq("SMF配置"), eq(understanding), any(), any(), eq(routePlan));
+            verify(assembler).assemble(eq("SMF配置"), eq(understanding), any(), any(), eq(routePlan), any());
         }
 
         @Test
@@ -111,7 +120,7 @@ class SearchServiceTest {
         void debugFlagPopulatesDebugMap() {
             var understanding = new QueryUnderstanding("test", "general",
                     List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
@@ -121,9 +130,9 @@ class SearchServiceTest {
             when(domainPackReader.getProfile(anyString())).thenReturn(null);
             when(quEngine.understand(anyString(), any())).thenReturn(understanding);
             when(router.route(any(), any())).thenReturn(routePlan);
-            when(orchestrator.execute(any(), any(), any(), any())).thenReturn(OrchestratorResult.empty());
+            when(orchestrator.execute(any(), any(), any(), anyList(), anyList())).thenReturn(OrchestratorResult.empty());
             when(rerankPipeline.rerank(any(), any(), any())).thenReturn(new RerankResult(List.of(), List.of()));
-            when(assembler.assemble(anyString(), any(), any(), any(), any()))
+            when(assembler.assemble(anyString(), any(), any(), any(), any(), any()))
                     .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), Map.of()));
 
             var request = new SearchRequest("test", Map.of(), List.of(), true,
@@ -140,7 +149,7 @@ class SearchServiceTest {
         void domainContextClearedOnException() {
             var understanding = new QueryUnderstanding("test", "general",
                     List.of(), List.of(), Map.of(), List.of(),
-                    EvidenceNeed.empty(), List.of(), "rule");
+                    EvidenceNeed.empty(), List.of(), "rule", null);
             var routePlan = new RetrievalRoutePlan(
                     List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
                     Map.of(), new FusionConfig("identity", 60),
