@@ -91,6 +91,7 @@ class SyncModelRecord:
     text_output: str | None = None
     error_type: str | None = None
     error_message: str | None = None
+    now: str = ""
 
 
 # Union type for queue items
@@ -290,7 +291,7 @@ class PersistWriter:
     async def _flush_all(self) -> None:
         """Drain everything left in the queue."""
         batch: list[PersistRecord] = []
-        while not self._queue.empty():
+        for _ in range(self._queue.maxsize + self._writer_count):
             try:
                 item = self._queue.get_nowait()
                 if item is not None:

@@ -70,6 +70,7 @@ class ModelService:
                 input_json=json.dumps(input_json, ensure_ascii=False),
                 raw_response_json=json.dumps(raw or {}, ensure_ascii=False),
                 text_output=text_output,
+                now=datetime.now(timezone.utc).isoformat(),
             ))
 
             data = sorted(raw.get("data", []), key=lambda item: item.get("index") or 0)
@@ -96,6 +97,7 @@ class ModelService:
                 latency_ms=latency, total_tokens=None,
                 input_json=json.dumps(input_json, ensure_ascii=False),
                 error_type=error_type, error_message=str(e)[:500],
+                now=datetime.now(timezone.utc).isoformat(),
             ))
             raise
 
@@ -136,6 +138,7 @@ class ModelService:
                 input_json=json.dumps(input_json, ensure_ascii=False),
                 raw_response_json=json.dumps(raw or {}, ensure_ascii=False),
                 text_output=text_output,
+                now=datetime.now(timezone.utc).isoformat(),
             ))
 
             return RerankResponse(
@@ -161,5 +164,6 @@ class ModelService:
                 latency_ms=latency, total_tokens=None,
                 input_json=json.dumps(input_json, ensure_ascii=False),
                 error_type=error_type, error_message=str(e)[:500],
+                now=datetime.now(timezone.utc).isoformat(),
             ))
             raise
