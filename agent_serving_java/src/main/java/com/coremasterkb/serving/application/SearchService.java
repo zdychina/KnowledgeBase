@@ -133,20 +133,16 @@ public class SearchService {
         List<RouteTrace> debugRouteTraces = List.of();
         Set<String> navigatedSections = Set.of();
 
-        long pipelineStartMs = System.currentTimeMillis();
-
         try {
 
         // 2. Load Domain Profile
         ServingDomainProfile profile = domainPackReader.getProfile(effectiveDomain);
 
-        // 3. Query Understanding + Embedding + Multi-Query Expansion — all in parallel
+        // 3. Query Understanding + Embedding in parallel
         //    Embedding is started optimistically — result is only used if dense route is enabled.
-        //    Multi-query expansion only needs the raw query, so it can start alongside QU.
         //    NOTE: Virtual threads cannot inherit ThreadLocal from the parent thread.
         //    We must explicitly set knowledge_domain in each async lambda.
         final String threadDomain = effectiveDomain;
-
         trace.startStage("query_understanding");
         CompletableFuture<QueryUnderstanding> understandingFuture = CompletableFuture.supplyAsync(
                 () -> {
@@ -157,12 +153,11 @@ public class SearchService {
                         llmClient.clearKnowledgeDomain();
                     }
                 }, pipelineExecutor);
-
         CompletableFuture<float[]> embeddingFuture = embeddingClient.isConfigured()
                 ? CompletableFuture.supplyAsync(() -> {
             llmClient.setKnowledgeDomain(threadDomain);
             try {
-                return embeddingClient.embed(request.query());
+                return embeddingClient.embedHyDE(request.query());
             } catch (Exception e) {
                 log.warn("Query embedding failed: {}", e.getMessage());
                 return null;
@@ -172,17 +167,7 @@ public class SearchService {
         }, pipelineExecutor)
                 : CompletableFuture.completedFuture(null);
 
-        CompletableFuture<List<String>> multiQueryFuture = CompletableFuture.supplyAsync(() -> {
-            llmClient.setKnowledgeDomain(threadDomain);
-            try {
-                return multiQueryExpander.expand(request.query());
-            } finally {
-                llmClient.clearKnowledgeDomain();
-            }
-        }, pipelineExecutor);
-
         understanding = understandingFuture.join();
-        log.info("[search] query_understanding done: {}ms", System.currentTimeMillis() - pipelineStartMs);
         trace.endStage("query_understanding",
                 "intent=" + understanding.intent()
                         + ", entities=" + understanding.entities().size()
@@ -212,7 +197,6 @@ public class SearchService {
             throw e;
         }
         trace.endStage("resolve_scope", "snapshots=" + scope.snapshotIds().size());
-        log.info("[search] scope resolved: {}ms", System.currentTimeMillis() - pipelineStartMs);
 
         // 3.4. Tree navigation: infer relevant chapters for query entities
         trace.startStage("tree_navigation");
@@ -222,13 +206,11 @@ public class SearchService {
         List<String> sectionHardFilter = nav.hardFilter() ? nav.hardPrefixes() : List.of();
         trace.endStage("tree_navigation",
                 "soft=" + navigatedSections.size() + ", hard=" + sectionHardFilter.size());
-        log.info("[search] tree_navigation done: {}ms", System.currentTimeMillis() - pipelineStartMs);
 
-        // 3.5. Multi-Query Expansion (already started in parallel with QU)
+        // 3.5. Multi-Query Expansion
         trace.startStage("multi_query_expand");
-        List<String> queryVariants = multiQueryFuture.join();
+        List<String> queryVariants = multiQueryExpander.expand(request.query());
         trace.endStage("multi_query_expand", "variants=" + queryVariants.size());
-        log.info("[search] multi_query_expand done ({} variants): {}ms", queryVariants.size(), System.currentTimeMillis() - pipelineStartMs);
 
         // 5. Collect pre-computed embedding (started in parallel with understanding)
         boolean denseEnabled = routePlan.routes().stream()
@@ -241,7 +223,6 @@ public class SearchService {
         } else {
             queryEmbedding = embeddingFuture.join();
         }
-        log.info("[search] embedding done: {}ms", System.currentTimeMillis() - pipelineStartMs);
 
         // 5.5. Semantic cache lookup
         trace.startStage("semantic_cache");
@@ -252,72 +233,41 @@ public class SearchService {
         }
         trace.endStage("semantic_cache", "hit=false");
 
-        // 6. Retrieve for each variant — parallel execution
+        // 6. Retrieve for each variant
         trace.startStage("retrieve");
-        List<RetrievalCandidate> rawCandidates = Collections.synchronizedList(new ArrayList<>());
-        List<RouteTrace> allRouteTraces = Collections.synchronizedList(new ArrayList<>());
-        List<CompletableFuture<Void>> retrievalFutures = new ArrayList<>();
-
-        // Capture effectively-final values for lambda use
-        final QueryUnderstanding finalUnderstanding = understanding;
-        final float[] finalQueryEmbedding = queryEmbedding;
-        final boolean finalDenseEnabled = denseEnabled;
-        final RetrievalRoutePlan finalRoutePlan = routePlan;
-        final List<String> finalSnapshotIds = scope.snapshotIds();
-        final List<String> finalSectionHardFilter = sectionHardFilter;
+        List<RetrievalCandidate> rawCandidates = new ArrayList<>();
+        List<RouteTrace> allRouteTraces = new ArrayList<>();
 
         for (String variant : queryVariants) {
             QueryUnderstanding varUnderstanding = variant.equals(request.query())
-                    ? finalUnderstanding
-                    : buildVariantUnderstanding(finalUnderstanding, variant);
-            boolean isOriginal = variant.equals(request.query());
-
-            CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
-                DomainContext.set(threadDomain);
-                llmClient.setKnowledgeDomain(threadDomain);
+                    ? understanding
+                    : buildVariantUnderstanding(understanding, variant);
+            // Generate per-variant embedding for dense route accuracy
+            float[] variantEmbedding = queryEmbedding;
+            if (!variant.equals(request.query()) && denseEnabled && embeddingClient.isConfigured()) {
                 try {
-                    // Reuse original query embedding for all variants — avoids 800ms per-variant
-                    // embedding call with negligible accuracy loss for dense retrieval.
-                    float[] variantEmbedding = finalQueryEmbedding;
-                    OrchestratorResult varResult = orchestrator.execute(
-                            varUnderstanding, finalRoutePlan, variantEmbedding,
-                            finalSnapshotIds, finalSectionHardFilter);
-                    rawCandidates.addAll(varResult.candidates());
-                    allRouteTraces.addAll(varResult.routeTraces());
-                } finally {
-                    llmClient.clearKnowledgeDomain();
-                    DomainContext.clear();
+                    variantEmbedding = embeddingClient.embed(variant);
+                } catch (Exception e) {
+                    log.warn("Variant embedding failed, using original: {}", e.getMessage());
                 }
-            }, pipelineExecutor);
-            retrievalFutures.add(f);
+            }
+            OrchestratorResult varResult = orchestrator.execute(
+                    varUnderstanding, routePlan, variantEmbedding, scope.snapshotIds(), sectionHardFilter);
+            rawCandidates.addAll(varResult.candidates());
+            allRouteTraces.addAll(varResult.routeTraces());
         }
 
-        // 6b. Sub-query decomposition (cap at 4) — also parallel
-        for (SubQuery subQuery : finalUnderstanding.subQueries().stream().limit(4).toList()) {
-            QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(finalUnderstanding, subQuery);
-            CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
-                DomainContext.set(threadDomain);
-                llmClient.setKnowledgeDomain(threadDomain);
-                try {
-                    OrchestratorResult subResult = orchestrator.execute(
-                            subUnderstanding, finalRoutePlan, finalQueryEmbedding,
-                            finalSnapshotIds, finalSectionHardFilter);
-                    rawCandidates.addAll(subResult.candidates());
-                    allRouteTraces.addAll(subResult.routeTraces());
-                } finally {
-                    llmClient.clearKnowledgeDomain();
-                    DomainContext.clear();
-                }
-            }, pipelineExecutor);
-            retrievalFutures.add(f);
+        // 6b. Sub-query decomposition (cap at 4)
+        for (SubQuery subQuery : understanding.subQueries().stream().limit(4).toList()) {
+            QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(understanding, subQuery);
+            OrchestratorResult subResult = orchestrator.execute(
+                    subUnderstanding, routePlan, queryEmbedding, scope.snapshotIds(), sectionHardFilter);
+            rawCandidates.addAll(subResult.candidates());
+            allRouteTraces.addAll(subResult.routeTraces());
         }
-
-        // Wait for all variant + sub-query retrievals to complete
-        CompletableFuture.allOf(retrievalFutures.toArray(CompletableFuture[]::new)).join();
 
         trace.endStage("retrieve",
                 "candidates=" + rawCandidates.size() + ", variants=" + queryVariants.size());
-        log.info("[search] retrieve done ({} candidates): {}ms", rawCandidates.size(), System.currentTimeMillis() - pipelineStartMs);
 
         debugRouteTraces = List.copyOf(allRouteTraces);
 
@@ -338,7 +288,6 @@ public class SearchService {
         List<RetrievalCandidate> fused = fusion.fuse(rawCandidates, routePlan);
         trace.endStage("fusion",
                 "fused=" + fused.size() + ", method=" + routePlan.fusion().method());
-        log.info("[search] fusion done ({} fused): {}ms", fused.size(), System.currentTimeMillis() - pipelineStartMs);
 
         // 8. Rerank (cascading: model -> LLM -> score)
         trace.startStage("rerank");
@@ -348,7 +297,6 @@ public class SearchService {
         ranked = rerankResult.candidates();
         metrics.recordRerankFallback(resolveWinningRerankMethod(rerankResult.traces()));
         trace.endStage("rerank", "ranked=" + ranked.size());
-        log.info("[search] rerank done ({} ranked): {}ms", ranked.size(), System.currentTimeMillis() - pipelineStartMs);
 
         // 9. Assemble ContextPack
         trace.startStage("assembly");

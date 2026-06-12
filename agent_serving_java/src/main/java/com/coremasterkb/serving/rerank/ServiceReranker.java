@@ -20,8 +20,8 @@ public class ServiceReranker implements Reranker {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceReranker.class);
     private static final int MAX_RERANK_DOCS = 200;
-    private static final int MAX_DOC_CHARS = 400;
-    private static final int DEFAULT_TOP_N = 30;
+    private static final int MAX_DOC_CHARS = 1000;
+    private static final int DEFAULT_TOP_N = 100;
 
     private final LlmClient llmClient;
     private final int topN;

@@ -26,7 +26,6 @@ public class RerankPipeline {
     private static final Logger log = LoggerFactory.getLogger(RerankPipeline.class);
     private static final double MIN_RERANK_SCORE = 0.01;
     private static final int DEFAULT_MAX_ITEMS = 10;
-    private static final int PRE_FILTER_LIMIT = 30;
 
     private static final Set<String> LOW_VALUE_UNIT_TYPES = Set.of("heading", "toc", "link");
     private static final double LOW_VALUE_SCORE_FACTOR = 0.5;
@@ -65,25 +64,12 @@ public class RerankPipeline {
             return new RerankResult(List.of(), List.of());
         }
 
-        // Pre-filter: sort by score and keep only top PRE_FILTER_LIMIT candidates
-        // before expensive rerank stages. This avoids sending 300+ candidates to model/LLM.
-        if (candidates.size() > PRE_FILTER_LIMIT) {
-            candidates = new ArrayList<>(candidates);
-            candidates.sort(Comparator.comparingDouble(RetrievalCandidate::score).reversed());
-            candidates = candidates.subList(0, PRE_FILTER_LIMIT);
-        }
-
         List<RerankTraceStep> traces = new ArrayList<>();
         int countBefore = candidates.size();
         List<RetrievalCandidate> result = null;
 
-        // Resolve rerank method early to gate all stages
-        String rerankMethod = resolveRerankMethod(routePlan);
-        boolean useModel = "cascade".equals(rerankMethod) || "model".equals(rerankMethod);
-        boolean useLlm   = "cascade".equals(rerankMethod) || "llm".equals(rerankMethod);
-
-        // 1. Try model-based reranker (only when method is cascade/model)
-        if (modelReranker != null && useModel) {
+        // 1. Try model-based reranker (Zhipu / Service)
+        if (modelReranker != null) {
             long t0 = System.nanoTime();
             RerankTraceStep step = new RerankTraceStep("model", true, false, "", 0, countBefore, 0);
             try {
@@ -105,27 +91,30 @@ public class RerankPipeline {
             traces.add(step);
         }
 
-        // 2. Try LLM reranker if model failed and method allows
-        if (result == null && llmReranker != null && useLlm) {
-            long t0 = System.nanoTime();
-            RerankTraceStep step = new RerankTraceStep("llm", true, false, "", 0, countBefore, 0);
-            try {
-                result = llmReranker.rerank(candidates, understanding);
-                double latencyMs = (System.nanoTime() - t0) / 1_000_000.0;
-                if (result != null) {
-                    step = new RerankTraceStep("llm", true, true, "", latencyMs, countBefore, result.size());
-                } else {
-                    step = new RerankTraceStep("llm", true, false, "llm_reranker returned empty", latencyMs, countBefore, 0);
+        // 2. Try LLM reranker if model failed and route plan allows
+        if (result == null && llmReranker != null) {
+            String method = resolveRerankMethod(routePlan);
+            if ("llm".equals(method) || "cascade".equals(method)) {
+                long t0 = System.nanoTime();
+                RerankTraceStep step = new RerankTraceStep("llm", true, false, "", 0, countBefore, 0);
+                try {
+                    result = llmReranker.rerank(candidates, understanding);
+                    double latencyMs = (System.nanoTime() - t0) / 1_000_000.0;
+                    if (result != null) {
+                        step = new RerankTraceStep("llm", true, true, "", latencyMs, countBefore, result.size());
+                    } else {
+                        step = new RerankTraceStep("llm", true, false, "llm_reranker returned empty", latencyMs, countBefore, 0);
+                        result = null;
+                    }
+                } catch (Exception e) {
+                    double latencyMs = (System.nanoTime() - t0) / 1_000_000.0;
+                    String reason = truncate(e.getMessage(), 200);
+                    step = new RerankTraceStep("llm", true, false, reason, latencyMs, countBefore, 0);
+                    log.warn("LLM reranker failed: {}", e.getMessage());
                     result = null;
                 }
-            } catch (Exception e) {
-                double latencyMs = (System.nanoTime() - t0) / 1_000_000.0;
-                String reason = truncate(e.getMessage(), 200);
-                step = new RerankTraceStep("llm", true, false, reason, latencyMs, countBefore, 0);
-                log.warn("LLM reranker failed: {}", e.getMessage());
-                result = null;
+                traces.add(step);
             }
-            traces.add(step);
         }
 
         // 3. Score-based fallback (always succeeds)

@@ -22,7 +22,7 @@ import java.util.Map;
 public class MultiQueryExpander {
 
     private static final Logger log = LoggerFactory.getLogger(MultiQueryExpander.class);
-    private static final int MAX_EXTRA_VARIANTS = 1;
+    private static final int MAX_EXTRA_VARIANTS = 2;
 
     private final LlmClient llmClient;
 
