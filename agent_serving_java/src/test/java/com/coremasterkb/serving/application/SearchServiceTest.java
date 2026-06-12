@@ -73,6 +73,7 @@ class SearchServiceTest {
                 embeddingClient, assetRepo,
                 mock(LlmClient.class),
                 multiQueryExpander, semanticCache, metrics, treeNavigator,
+                mock(com.coremasterkb.serving.mapper.AssetRetrievalUnitMapper.class),
                 new ServingProperties(null, null, "cloud_core_network", null));
     }
 

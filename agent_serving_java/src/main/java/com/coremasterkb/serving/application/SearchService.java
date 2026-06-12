@@ -9,6 +9,8 @@ import com.coremasterkb.serving.domainpack.DomainRegistry;
 import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
+import com.coremasterkb.serving.mapper.AssetRetrievalUnitMapper;
+import com.coremasterkb.serving.mapper.result.FtsResultRow;
 import com.coremasterkb.serving.observability.SearchMetrics;
 import com.coremasterkb.serving.observability.TraceCollector;
 import com.coremasterkb.serving.pipeline.*;
@@ -51,6 +53,7 @@ public class SearchService {
     private final SemanticCacheService semanticCache;
     private final SearchMetrics metrics;
     private final TreeNavigator treeNavigator;
+    private final AssetRetrievalUnitMapper retrievalUnitMapper;
     private final String defaultDomain;
     // Virtual-thread-per-task executor: no pool state to manage, no shutdown required.
     // Each CompletableFuture.supplyAsync spawns a new virtual thread that is cleaned up by the JVM.
@@ -72,6 +75,7 @@ public class SearchService {
             SemanticCacheService semanticCache,
             SearchMetrics metrics,
             TreeNavigator treeNavigator,
+            AssetRetrievalUnitMapper retrievalUnitMapper,
             ServingProperties properties) {
         this.quEngine = quEngine;
         this.router = router;
@@ -88,6 +92,7 @@ public class SearchService {
         this.semanticCache = semanticCache;
         this.metrics = metrics;
         this.treeNavigator = treeNavigator;
+        this.retrievalUnitMapper = retrievalUnitMapper;
         this.defaultDomain = properties.defaultDomain();
         if (!embeddingClient.isConfigured()) {
             log.info("Embedding client not configured (LLM_SERVICE_URL blank) — dense retrieval disabled");
@@ -284,6 +289,7 @@ public class SearchService {
         for (String variant : queryVariants) {
             CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
                 try {
+                    long vt0 = System.nanoTime();
                     QueryUnderstanding varUnderstanding = variant.equals(request.query())
                             ? finalUnderstanding
                             : buildVariantUnderstanding(finalUnderstanding, variant);
@@ -291,9 +297,14 @@ public class SearchService {
                     float[] variantEmb = variant.equals(request.query())
                             ? finalQueryEmbedding
                             : variantEmbeddingMap.getOrDefault(variant, finalQueryEmbedding);
+                    long orch0 = System.nanoTime();
                     OrchestratorResult varResult = orchestrator.execute(
                             varUnderstanding, finalRoutePlan, variantEmb,
                             finalScope.snapshotIds(), finalSectionHardFilter);
+                    long orchMs = (System.nanoTime() - orch0) / 1_000_000;
+                    log.info("[VARIANT-DIAG] variant='{}' total={}ms orch={}ms candidates={}",
+                            variant.length() > 30 ? variant.substring(0, 30) + "..." : variant,
+                            (System.nanoTime() - vt0) / 1_000_000, orchMs, varResult.candidates().size());
                     rawCandidates.addAll(varResult.candidates());
                     allRouteTraces.addAll(varResult.routeTraces());
                 } catch (Exception e) {
@@ -355,6 +366,11 @@ public class SearchService {
         metrics.recordRerankFallback(resolveWinningRerankMethod(rerankResult.traces()));
         trace.endStage("rerank", "ranked=" + ranked.size());
 
+        // 8.5. Hydrate: fetch text + JSON details for top-K survivors only
+        trace.startStage("hydrate");
+        ranked = hydrateCandidates(ranked);
+        trace.endStage("hydrate", "hydrated=" + ranked.size());
+
         // 9. Assemble ContextPack
         trace.startStage("assembly");
         pack = assembler.assemble(
@@ -405,6 +421,53 @@ public class SearchService {
 
         log.info("[search] OK items={}", result.items().size());
         return result;
+    }
+
+    // =========================================================================
+    // Hydration: fetch text + JSON for top-K candidates after rerank
+    // =========================================================================
+
+    /**
+     * Hydrate candidates with text, source_refs_json, and target_ref_json.
+     * These heavy columns were excluded from retrieval SQL to reduce data transfer
+     * (138KB → ~11KB per query). Only the top-K survivors need full data.
+     */
+    private List<RetrievalCandidate> hydrateCandidates(List<RetrievalCandidate> candidates) {
+        if (candidates.isEmpty()) return candidates;
+
+        List<String> ids = candidates.stream()
+                .map(RetrievalCandidate::retrievalUnitId)
+                .distinct()
+                .toList();
+
+        long t0 = System.nanoTime();
+        List<FtsResultRow> details = retrievalUnitMapper.fetchDetailsByIds(ids);
+        long hydrateMs = (System.nanoTime() - t0) / 1_000_000;
+
+        Map<String, FtsResultRow> detailMap = new LinkedHashMap<>();
+        for (FtsResultRow row : details) {
+            detailMap.put(row.getId(), row);
+        }
+
+        List<RetrievalCandidate> hydrated = new ArrayList<>();
+        for (var c : candidates) {
+            FtsResultRow detail = detailMap.get(c.retrievalUnitId());
+            if (detail != null) {
+                Map<String, Object> meta = new LinkedHashMap<>(c.metadata());
+                if (detail.getText() != null) meta.put("text", detail.getText());
+                if (detail.getSourceRefsJson() != null) meta.put("source_refs_json", detail.getSourceRefsJson());
+                if (detail.getTargetRefJson() != null) meta.put("target_ref_json", detail.getTargetRefJson());
+                c = new RetrievalCandidate(c.retrievalUnitId(), c.score(), c.source(), meta, c.scoreChain());
+            }
+            hydrated.add(c);
+        }
+
+        long totalChars = hydrated.stream()
+                .mapToLong(c -> c.metadata().get("text") instanceof String s ? s.length() : 0)
+                .sum();
+        log.info("[HYDRATE] hydrated {} candidates in {}ms ({}KB text fetched for {} IDs)",
+                hydrated.size(), hydrateMs, totalChars / 1024, ids.size());
+        return hydrated;
     }
 
     // =========================================================================

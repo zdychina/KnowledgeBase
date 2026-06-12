@@ -120,7 +120,7 @@ public class RetrievalOrchestrator {
             }
         }
 
-        // 3. Execute routes — parallel when executor is set, sequential otherwise
+        // 3. Execute routes — parallel when executor is available
         if (executor != null && routeConfigMap.size() > 1) {
             return executeParallel(retrievalQuery, routeConfigMap, snapshotIds);
         } else {

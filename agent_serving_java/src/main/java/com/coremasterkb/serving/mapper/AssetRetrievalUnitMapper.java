@@ -7,6 +7,13 @@ import java.util.List;
 
 public interface AssetRetrievalUnitMapper {
 
+    /**
+     * Fetch heavy columns (text, source_refs_json, target_ref_json) for specific IDs.
+     * Used for hydration after fusion + rerank to avoid transferring large text
+     * during the retrieval phase.
+     */
+    List<FtsResultRow> fetchDetailsByIds(@Param("ids") List<String> ids);
+
     // ----- Level 1: tsvector full-text search -----
 
     List<FtsResultRow> searchByFts(

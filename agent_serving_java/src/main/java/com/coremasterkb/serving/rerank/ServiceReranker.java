@@ -96,9 +96,12 @@ public class ServiceReranker implements Reranker {
         for (RetrievalCandidate c : candidates) {
             String text = stringFromMetadata(c, "text");
             String title = stringFromMetadata(c, "title");
-            String doc = (title != null && !title.isEmpty())
-                    ? title + ": " + text
-                    : text;
+            String doc;
+            if (text != null && !text.isEmpty()) {
+                doc = (title != null && !title.isEmpty()) ? title + ": " + text : text;
+            } else {
+                doc = (title != null && !title.isEmpty()) ? title : "";
+            }
             documents.add(truncate(doc, MAX_DOC_CHARS));
         }
 

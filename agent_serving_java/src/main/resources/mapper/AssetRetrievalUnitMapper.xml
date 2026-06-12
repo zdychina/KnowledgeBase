@@ -20,6 +20,14 @@
         <result column="fts_score"            property="ftsScore"/>
     </resultMap>
 
+    <resultMap id="detailsMap"
+               type="com.coremasterkb.serving.mapper.result.FtsResultRow">
+        <result column="id"                   property="id"/>
+        <result column="text"                 property="text"/>
+        <result column="source_refs_json"     property="sourceRefsJson"/>
+        <result column="target_ref_json"      property="targetRefJson"/>
+    </resultMap>
+
     <!--
         PostgreSQL full-text search using websearch_to_tsquery.
         ftsQuery format: "token1 OR token2 OR token3"
@@ -28,22 +36,22 @@
     <select id="searchByFts" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                ts_rank(
-                   to_tsvector('simple', ru.search_text),
+                   ru.search_vector,
                    websearch_to_tsquery('simple', #{ftsQuery})
                ) AS fts_score
         FROM asset_retrieval_units ru
-        WHERE to_tsvector('simple', ru.search_text) @@ websearch_to_tsquery('simple', #{ftsQuery})
+        WHERE ru.search_vector @@ websearch_to_tsquery('simple', #{ftsQuery})
           AND ru.document_snapshot_id IN
         <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
             #{sid}
@@ -60,22 +68,22 @@
     <select id="searchByFtsWithScope" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                ts_rank(
-                   to_tsvector('simple', ru.search_text),
+                   ru.search_vector,
                    websearch_to_tsquery('simple', #{ftsQuery})
                ) AS fts_score
         FROM asset_retrieval_units ru
-        WHERE to_tsvector('simple', ru.search_text) @@ websearch_to_tsquery('simple', #{ftsQuery})
+        WHERE ru.search_vector @@ websearch_to_tsquery('simple', #{ftsQuery})
           AND ru.document_snapshot_id IN
         <foreach collection="snapshotIds" item="sid" open="(" separator="," close=")">
             #{sid}
@@ -107,14 +115,14 @@
     <select id="searchByTrigram" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                similarity(ru.text, #{queryText}) AS fts_score
@@ -134,14 +142,14 @@
     <select id="searchByTrigramWithScope" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                similarity(ru.text, #{queryText}) AS fts_score
@@ -177,14 +185,14 @@
     <select id="searchByLike" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                0.0 AS fts_score
@@ -207,14 +215,14 @@
     <select id="searchByLikeWithScope" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                0.0 AS fts_score
@@ -257,14 +265,14 @@
     <select id="searchByEntityExact" resultMap="ftsResultMap">
         SELECT ru.id,
                ru.document_snapshot_id,
-               ru.text,
+               NULL::text AS text,
                ru.title,
                ru.block_type,
                ru.semantic_role,
-               ru.source_refs_json,
+               NULL::text AS source_refs_json,
                ru.facets_json,
                ru.target_type,
-               ru.target_ref_json,
+               NULL::text AS target_ref_json,
                ru.unit_type,
                ru.source_segment_id,
                0.95 AS fts_score
@@ -303,6 +311,23 @@
           </if>
         ORDER BY ru.weight DESC
         LIMIT #{limit}
+    </select>
+
+    <!--
+        Hydration query: fetch heavy columns (text, source_refs_json, target_ref_json)
+        only for the top-K survivors after fusion + rerank.
+        Called once per search request with a small number of IDs (typically 10-30).
+    -->
+    <select id="fetchDetailsByIds" resultMap="detailsMap">
+        SELECT ru.id,
+               ru.text,
+               ru.source_refs_json,
+               ru.target_ref_json
+        FROM asset_retrieval_units ru
+        WHERE ru.id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
     </select>
 
 </mapper>

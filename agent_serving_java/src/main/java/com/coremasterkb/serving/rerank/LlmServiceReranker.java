@@ -145,9 +145,12 @@ public class LlmServiceReranker implements Reranker {
         for (RetrievalCandidate c : candidates) {
             String text = stringFromMetadata(c, "text");
             String title = stringFromMetadata(c, "title");
-            String doc = (title != null && !title.isEmpty())
-                    ? title + ": " + text
-                    : text;
+            String doc;
+            if (text != null && !text.isEmpty()) {
+                doc = (title != null && !title.isEmpty()) ? title + ": " + text : text;
+            } else {
+                doc = (title != null && !title.isEmpty()) ? title : "";
+            }
             // No per-document truncation: llm_service batches by total length budget.
             // Oversized single documents are isolated into their own batch there.
             documents.add(doc);
