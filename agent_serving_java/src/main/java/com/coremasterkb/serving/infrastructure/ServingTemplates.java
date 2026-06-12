@@ -162,21 +162,35 @@ public final class ServingTemplates {
             Map.entry("_example_json", RERANKER_EXAMPLE)
     );
 
+    // ---- HyDE output schema ----
+    private static final String HYDE_SCHEMA = """
+            {
+              "type": "object",
+              "properties": {
+                "hypothetical_doc": {"type": "string"}
+              },
+              "required": ["hypothetical_doc"]
+            }""";
+
+    private static final String HYDE_EXAMPLE = """
+            {"hypothetical_doc": "AMF注册流程包括以下步骤：1. UE通过RAN发送Registration Request；2. AMF选择鉴权方法并触发鉴权流程；3. 鉴权成功后AMF向UDM获取签约数据；4. AMF注册到UDM并建立UE上下文；5. 返回Registration Accept给UE。"}""";
+
     // ---- Template: serving-hyde-expansion ----
     private static final Map<String, Object> HYDE_EXPANSION = Map.ofEntries(
             Map.entry("template_key", "serving-hyde-expansion"),
-            Map.entry("template_version", "1"),
+            Map.entry("template_version", "2"),
             Map.entry("purpose", "生成假设性文档段落，用于 HyDE 向量检索"),
             Map.entry("system_prompt",
                     "你是一个技术文档生成助手。根据用户的查询，生成一段可能出现在相关技术手册中的回答段落。"
                     + "要求：\n"
                     + "1. 使用专业的技术文档风格\n"
                     + "2. 段落长度 100-200 字\n"
-                    + "3. 直接输出段落内容，不要添加任何前缀或解释\n"
-                    + "4. 内容不需要完全准确，只需在语义空间接近真实文档即可"),
-            Map.entry("user_prompt_template", "查询：$query\n\n请生成一段假设性的技术文档回答："),
-            Map.entry("output_schema_json", "{}"),
-            Map.entry("_example_json", "{}")
+                    + "3. 输出 JSON 格式，字段 hypothetical_doc 包含生成的段落\n"
+                    + "4. 内容不需要完全准确，只需在语义空间接近真实文档即可\n\n"
+                    + "## JSON Schema\n{output_schema}\n\n## 示例\n{example}"),
+            Map.entry("user_prompt_template", "查询：$query\n\n请生成假设性文档："),
+            Map.entry("output_schema_json", HYDE_SCHEMA),
+            Map.entry("_example_json", HYDE_EXAMPLE)
     );
 
     // ---- Multi-Query Expansion output schema ----

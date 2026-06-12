@@ -46,9 +46,13 @@ public class DenseVectorRetriever implements Retriever {
         boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
         // Level 1: scope + section hard filter
+        long t0 = System.nanoTime();
         List<EmbeddingRow> rows = embeddingMapper.selectTopKByVector(
                 snapshotIds, vectorStr, queryVec.length, scopeParams,
                 hasSection ? sectionPrefixes : List.of(), topK);
+        long mapperMs = (System.nanoTime() - t0) / 1_000_000;
+        log.info("[DENSE-DIAG] selectTopKByVector returned {} rows in {}ms (scopeParams={}, sections={})",
+                rows.size(), mapperMs, scopeParams.size(), hasSection ? sectionPrefixes.size() : 0);
 
         // Level 2: drop section filter, keep scope
         if (rows.isEmpty() && hasSection) {
