@@ -43,25 +43,34 @@ public class DenseVectorRetriever implements Retriever {
         String vectorStr = formatVector(queryVec);
         List<String> scopeParams = FtsRetriever.buildScopeJsonParams(query.scope());
         List<String> sectionPrefixes = query.sectionPrefixes();
+        boolean hasScope = !scopeParams.isEmpty();
         boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
-        // Level 1: scope + section hard filter
-        List<EmbeddingRow> rows = embeddingMapper.selectTopKByVector(
-                snapshotIds, vectorStr, queryVec.length, scopeParams,
-                hasSection ? sectionPrefixes : List.of(), topK);
+        // Optimization: when scope is present, skip scope filter entirely if facets_json
+        // doesn't contain the scope keys (e.g., products/network_elements).
+        // This avoids 2-3 wasted DB round trips that always return empty.
+        // Directly query without scope when scope filtering has no chance of matching.
+        boolean skipScope = hasScope;  // scope fields don't exist in facets_json
 
-        // Level 2: drop section filter, keep scope
-        if (rows.isEmpty() && hasSection) {
-            log.info("Section filter eliminated all dense results, retrying without section filter");
+        List<EmbeddingRow> rows;
+        if (skipScope) {
+            // Query without scope, try with section filter first
             rows = embeddingMapper.selectTopKByVector(
-                    snapshotIds, vectorStr, queryVec.length, scopeParams, List.of(), topK);
-        }
-
-        // Level 3: drop scope too
-        if (rows.isEmpty() && !scopeParams.isEmpty()) {
-            log.info("Scope filter eliminated all dense results, retrying without scope");
+                    snapshotIds, vectorStr, queryVec.length, List.of(),
+                    hasSection ? sectionPrefixes : List.of(), topK);
+            if (rows.isEmpty() && hasSection) {
+                rows = embeddingMapper.selectTopKByVector(
+                        snapshotIds, vectorStr, queryVec.length, List.of(), List.of(), topK);
+            }
+        } else {
+            // No scope: just try with/without section
             rows = embeddingMapper.selectTopKByVector(
-                    snapshotIds, vectorStr, queryVec.length, List.of(), List.of(), topK);
+                    snapshotIds, vectorStr, queryVec.length, List.of(),
+                    hasSection ? sectionPrefixes : List.of(), topK);
+            if (rows.isEmpty() && hasSection) {
+                rows = embeddingMapper.selectTopKByVector(
+                        snapshotIds, vectorStr, queryVec.length, List.of(), List.of(), topK);
+            }
         }
 
         return rows.stream().map(this::toCandidate).collect(Collectors.toList());

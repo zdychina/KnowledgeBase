@@ -109,22 +109,16 @@ public class FtsRetriever implements Retriever {
         List<String> scopeJsonParams = buildScopeJsonParams(scope);
         boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
-        // With scope + section
+        // Skip scope filter — facets_json doesn't contain products/network_elements,
+        // so scope queries always return empty. Query without scope directly.
         List<FtsResultRow> rows = retrievalUnitMapper.searchByFtsWithScope(
-                ftsQuery, snapshotIds, scopeJsonParams,
+                ftsQuery, snapshotIds, List.of(),
                 hasSection ? sectionPrefixes : List.of(), limit);
 
-        // Drop section filter, keep scope
+        // Drop section filter if needed
         if (rows.isEmpty() && hasSection) {
-            log.info("Section filter eliminated all BM25 results, retrying without section filter");
             rows = retrievalUnitMapper.searchByFtsWithScope(
-                    ftsQuery, snapshotIds, scopeJsonParams, List.of(), limit);
-        }
-
-        // Drop scope too
-        if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
-            log.info("Scope filter eliminated all BM25 results, retrying without scope");
-            rows = retrievalUnitMapper.searchByFts(ftsQuery, snapshotIds, limit);
+                    ftsQuery, snapshotIds, List.of(), List.of(), limit);
         }
 
         return rows.stream()
@@ -146,19 +140,14 @@ public class FtsRetriever implements Retriever {
         boolean hasSection = sectionPrefixes != null && !sectionPrefixes.isEmpty();
 
         try {
+            // Skip scope filter — facets_json doesn't contain scope keys
             List<FtsResultRow> rows = retrievalUnitMapper.searchByTrigramWithScope(
-                    queryText, snapshotIds, scopeJsonParams,
+                    queryText, snapshotIds, List.of(),
                     hasSection ? sectionPrefixes : List.of(), limit);
 
             if (rows.isEmpty() && hasSection) {
-                log.info("Section filter eliminated all trigram results, retrying without section filter");
                 rows = retrievalUnitMapper.searchByTrigramWithScope(
-                        queryText, snapshotIds, scopeJsonParams, List.of(), limit);
-            }
-
-            if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
-                log.info("Scope filter eliminated all trigram results, retrying without scope");
-                rows = retrievalUnitMapper.searchByTrigram(queryText, snapshotIds, limit);
+                        queryText, snapshotIds, List.of(), List.of(), limit);
             }
 
             return rows.stream()
@@ -185,19 +174,14 @@ public class FtsRetriever implements Retriever {
                 .map(t -> "%" + t + "%")
                 .toList();
 
+        // Skip scope filter — facets_json doesn't contain scope keys
         List<FtsResultRow> rows = retrievalUnitMapper.searchByLikeWithScope(
-                likeTerms, snapshotIds, scopeJsonParams,
+                likeTerms, snapshotIds, List.of(),
                 hasSection ? sectionPrefixes : List.of(), limit);
 
         if (rows.isEmpty() && hasSection) {
-            log.info("Section filter eliminated all LIKE results, retrying without section filter");
             rows = retrievalUnitMapper.searchByLikeWithScope(
-                    likeTerms, snapshotIds, scopeJsonParams, List.of(), limit);
-        }
-
-        if (rows.isEmpty() && !scopeJsonParams.isEmpty()) {
-            log.info("Scope filter eliminated all LIKE results, retrying without scope");
-            rows = retrievalUnitMapper.searchByLike(likeTerms, snapshotIds, limit);
+                    likeTerms, snapshotIds, List.of(), List.of(), limit);
         }
 
         // Score by keyword hit ratio

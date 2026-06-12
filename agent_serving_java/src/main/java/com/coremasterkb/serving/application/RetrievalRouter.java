@@ -23,17 +23,17 @@ public class RetrievalRouter {
     static {
         Map<String, Map<String, Map<String, Double>>> cr = new LinkedHashMap<>();
         cr.put("simple", Map.of(
-                "entity_exact", Map.of("weight", 1.5, "top_k", 20.0),
-                "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0)
+                "entity_exact", Map.of("weight", 1.5, "top_k", 15.0),
+                "lexical_bm25", Map.of("weight", 1.0, "top_k", 30.0)
         ));
         cr.put("medium", Map.of(
-                "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
-                "dense_vector", Map.of("weight", 0.9, "top_k", 50.0)
+                "lexical_bm25", Map.of("weight", 1.0, "top_k", 30.0),
+                "dense_vector", Map.of("weight", 0.9, "top_k", 30.0)
         ));
         cr.put("complex", Map.of(
-                "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
-                "dense_vector", Map.of("weight", 0.9, "top_k", 50.0),
-                "entity_exact", Map.of("weight", 0.7, "top_k", 20.0)
+                "lexical_bm25", Map.of("weight", 1.0, "top_k", 30.0),
+                "dense_vector", Map.of("weight", 0.9, "top_k", 30.0),
+                "entity_exact", Map.of("weight", 0.7, "top_k", 15.0)
         ));
         COMPLEXITY_ROUTES = Collections.unmodifiableMap(cr);
     }
@@ -77,7 +77,7 @@ public class RetrievalRouter {
     private static final Map<String, String> INTENT_RERANK = Map.of(
             "troubleshooting", "cascade",
             "comparison",      "cascade",
-            "procedure",       "cascade"
+            "procedure",       "score"
     );
 
     private static final int INTENT_EXPANSION_MAX_EXPANDED = 8;
@@ -136,7 +136,7 @@ public class RetrievalRouter {
         }
         String builtin = INTENT_RERANK.get(intent);
         if (builtin != null) return builtin;
-        if ("complex".equals(complexity)) return "cascade";
+        // Only use model reranker when the query explicitly needs comparison evidence
         if (understanding.evidenceNeed() != null && understanding.evidenceNeed().needsComparison()) {
             return "cascade";
         }
@@ -146,9 +146,13 @@ public class RetrievalRouter {
     @SuppressWarnings("unchecked")
     private static AssemblyConfig resolveAssembly(
             String intent, String complexity, Map<String, Object> intentOverride) {
-        AssemblyConfig base = "complex".equals(complexity)
-                ? AssemblyConfig.defaults()
-                : new AssemblyConfig(true, false, 10, 0, 0, List.of());
+        // All complexity tiers get graph expansion enabled by default.
+        // Simple/medium get a smaller budget than complex, not zero.
+        AssemblyConfig base = switch (complexity) {
+            case "complex" -> AssemblyConfig.defaults();  // maxItems=10, maxExpanded=20, depth=2
+            case "medium"  -> new AssemblyConfig(true, true, 10, 12, 2, AssemblyConfig.defaults().relationTypes());
+            default        -> new AssemblyConfig(true, true, 10, 8, 1, AssemblyConfig.defaults().relationTypes());
+        };
 
         List<String> builtinTypes = INTENT_EXPANSION.get(intent);
         Map<String, Object> ge = intentOverride.get("graph_expand") instanceof Map<?, ?> m
