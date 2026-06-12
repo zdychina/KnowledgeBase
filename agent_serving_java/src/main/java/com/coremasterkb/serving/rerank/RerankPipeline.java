@@ -68,8 +68,11 @@ public class RerankPipeline {
         int countBefore = candidates.size();
         List<RetrievalCandidate> result = null;
 
-        // 1. Try model-based reranker (Zhipu / Service)
-        if (modelReranker != null) {
+        // Resolve configured rerank method once before the cascade
+        String configuredMethod = resolveRerankMethod(routePlan);
+
+        // 1. Try model-based reranker (Zhipu / Service) — only when method allows
+        if (modelReranker != null && ("model".equals(configuredMethod) || "cascade".equals(configuredMethod))) {
             long t0 = System.nanoTime();
             RerankTraceStep step = new RerankTraceStep("model", true, false, "", 0, countBefore, 0);
             try {
@@ -93,8 +96,7 @@ public class RerankPipeline {
 
         // 2. Try LLM reranker if model failed and route plan allows
         if (result == null && llmReranker != null) {
-            String method = resolveRerankMethod(routePlan);
-            if ("llm".equals(method) || "cascade".equals(method)) {
+            if ("llm".equals(configuredMethod) || "cascade".equals(configuredMethod)) {
                 long t0 = System.nanoTime();
                 RerankTraceStep step = new RerankTraceStep("llm", true, false, "", 0, countBefore, 0);
                 try {

@@ -166,6 +166,18 @@ public class SearchService {
             }
         }, pipelineExecutor)
                 : CompletableFuture.completedFuture(null);
+        // Start multi-query expansion in parallel with QU and HyDE
+        CompletableFuture<List<String>> variantsFuture = CompletableFuture.supplyAsync(() -> {
+            llmClient.setKnowledgeDomain(threadDomain);
+            try {
+                return multiQueryExpander.expand(request.query());
+            } catch (Exception e) {
+                log.warn("Multi-query expansion failed, using original only: {}", e.getMessage());
+                return List.of(request.query());
+            } finally {
+                llmClient.clearKnowledgeDomain();
+            }
+        }, pipelineExecutor);
 
         understanding = understandingFuture.join();
         trace.endStage("query_understanding",
@@ -207,9 +219,9 @@ public class SearchService {
         trace.endStage("tree_navigation",
                 "soft=" + navigatedSections.size() + ", hard=" + sectionHardFilter.size());
 
-        // 3.5. Multi-Query Expansion
+        // 3.5. Multi-Query Expansion (started in parallel with QU+HyDE)
         trace.startStage("multi_query_expand");
-        List<String> queryVariants = multiQueryExpander.expand(request.query());
+        List<String> queryVariants = variantsFuture.join();
         trace.endStage("multi_query_expand", "variants=" + queryVariants.size());
 
         // 5. Collect pre-computed embedding (started in parallel with understanding)
@@ -233,38 +245,83 @@ public class SearchService {
         }
         trace.endStage("semantic_cache", "hit=false");
 
-        // 6. Retrieve for each variant
-        trace.startStage("retrieve");
-        List<RetrievalCandidate> rawCandidates = new ArrayList<>();
-        List<RouteTrace> allRouteTraces = new ArrayList<>();
-
-        for (String variant : queryVariants) {
-            QueryUnderstanding varUnderstanding = variant.equals(request.query())
-                    ? understanding
-                    : buildVariantUnderstanding(understanding, variant);
-            // Generate per-variant embedding for dense route accuracy
-            float[] variantEmbedding = queryEmbedding;
-            if (!variant.equals(request.query()) && denseEnabled && embeddingClient.isConfigured()) {
+        // 6. Pre-compute variant embeddings in batch (single API call instead of N)
+        final float[] finalQueryEmbedding = queryEmbedding;
+        Map<String, float[]> variantEmbeddingMap = new LinkedHashMap<>();
+        if (denseEnabled && embeddingClient.isConfigured()) {
+            List<String> nonOriginalVariants = queryVariants.stream()
+                    .filter(v -> !v.equals(request.query()))
+                    .toList();
+            if (!nonOriginalVariants.isEmpty()) {
                 try {
-                    variantEmbedding = embeddingClient.embed(variant);
+                    List<float[]> batchResults = embeddingClient.embedBatch(nonOriginalVariants);
+                    for (int i = 0; i < nonOriginalVariants.size(); i++) {
+                        float[] emb = i < batchResults.size() ? batchResults.get(i) : null;
+                        if (emb != null) {
+                            variantEmbeddingMap.put(nonOriginalVariants.get(i), emb);
+                        }
+                    }
+                    log.info("[BatchEmbed] embedded {} variants in batch", nonOriginalVariants.size());
                 } catch (Exception e) {
-                    log.warn("Variant embedding failed, using original: {}", e.getMessage());
+                    log.warn("Batch variant embedding failed, will use HyDE embedding: {}", e.getMessage());
                 }
             }
-            OrchestratorResult varResult = orchestrator.execute(
-                    varUnderstanding, routePlan, variantEmbedding, scope.snapshotIds(), sectionHardFilter);
-            rawCandidates.addAll(varResult.candidates());
-            allRouteTraces.addAll(varResult.routeTraces());
         }
 
-        // 6b. Sub-query decomposition (cap at 4)
-        for (SubQuery subQuery : understanding.subQueries().stream().limit(4).toList()) {
-            QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(understanding, subQuery);
-            OrchestratorResult subResult = orchestrator.execute(
-                    subUnderstanding, routePlan, queryEmbedding, scope.snapshotIds(), sectionHardFilter);
-            rawCandidates.addAll(subResult.candidates());
-            allRouteTraces.addAll(subResult.routeTraces());
+        // 6a. Retrieve for each variant (parallel via CompletableFuture)
+        trace.startStage("retrieve");
+        List<RetrievalCandidate> rawCandidates = Collections.synchronizedList(new ArrayList<>());
+        List<RouteTrace> allRouteTraces = Collections.synchronizedList(new ArrayList<>());
+
+        // Capture effectively-final copies for lambda use
+        final QueryUnderstanding finalUnderstanding = understanding;
+        final RetrievalRoutePlan finalRoutePlan = routePlan;
+        final ActiveScope finalScope = scope;
+        final List<String> finalSectionHardFilter = sectionHardFilter;
+
+        List<CompletableFuture<Void>> variantFutures = new ArrayList<>();
+
+        for (String variant : queryVariants) {
+            CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
+                try {
+                    QueryUnderstanding varUnderstanding = variant.equals(request.query())
+                            ? finalUnderstanding
+                            : buildVariantUnderstanding(finalUnderstanding, variant);
+                    // Use pre-computed batch embedding, fall back to query embedding
+                    float[] variantEmb = variant.equals(request.query())
+                            ? finalQueryEmbedding
+                            : variantEmbeddingMap.getOrDefault(variant, finalQueryEmbedding);
+                    OrchestratorResult varResult = orchestrator.execute(
+                            varUnderstanding, finalRoutePlan, variantEmb,
+                            finalScope.snapshotIds(), finalSectionHardFilter);
+                    rawCandidates.addAll(varResult.candidates());
+                    allRouteTraces.addAll(varResult.routeTraces());
+                } catch (Exception e) {
+                    log.error("Variant retrieval failed for '{}': {}", variant, e.getMessage());
+                }
+            }, pipelineExecutor);
+            variantFutures.add(f);
         }
+
+        // 6b. Sub-query decomposition (cap at 4) — also parallel
+        for (SubQuery subQuery : understanding.subQueries().stream().limit(4).toList()) {
+            CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
+                try {
+                    QueryUnderstanding subUnderstanding = buildSubQueryUnderstanding(finalUnderstanding, subQuery);
+                    OrchestratorResult subResult = orchestrator.execute(
+                            subUnderstanding, finalRoutePlan, finalQueryEmbedding,
+                            finalScope.snapshotIds(), finalSectionHardFilter);
+                    rawCandidates.addAll(subResult.candidates());
+                    allRouteTraces.addAll(subResult.routeTraces());
+                } catch (Exception e) {
+                    log.error("Sub-query retrieval failed for '{}': {}", subQuery.text(), e.getMessage());
+                }
+            }, pipelineExecutor);
+            variantFutures.add(f);
+        }
+
+        // Wait for all variant + sub-query retrievals to complete
+        CompletableFuture.allOf(variantFutures.toArray(CompletableFuture[]::new)).join();
 
         trace.endStage("retrieve",
                 "candidates=" + rawCandidates.size() + ", variants=" + queryVariants.size());

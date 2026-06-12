@@ -146,9 +146,9 @@ public class RetrievalRouter {
     @SuppressWarnings("unchecked")
     private static AssemblyConfig resolveAssembly(
             String intent, String complexity, Map<String, Object> intentOverride) {
-        AssemblyConfig base = "complex".equals(complexity)
-                ? AssemblyConfig.defaults()
-                : new AssemblyConfig(true, false, 10, 0, 0, List.of());
+        // Graph expansion is enabled for all complexity tiers.
+        // Previously disabled for non-complex, causing context loss.
+        AssemblyConfig base = AssemblyConfig.defaults();
 
         List<String> builtinTypes = INTENT_EXPANSION.get(intent);
         Map<String, Object> ge = intentOverride.get("graph_expand") instanceof Map<?, ?> m

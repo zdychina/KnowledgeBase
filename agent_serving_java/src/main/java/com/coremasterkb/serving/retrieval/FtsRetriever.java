@@ -43,6 +43,10 @@ public class FtsRetriever implements Retriever {
     private static final Set<String> STOPWORDS_ZH = loadStopwords("fts/stopwords_zh.txt");
     private static final Set<String> STOPWORDS_EN = loadStopwords("fts/stopwords_en.txt");
 
+    /** Keys that actually exist in facets_json. Scope params with other keys can never match. */
+    private static final Set<String> KNOWN_FACET_KEYS = Set.of(
+            "block_type", "section_depth", "semantic_role");
+
     private final AssetRetrievalUnitMapper retrievalUnitMapper;
 
     public FtsRetriever(AssetRetrievalUnitMapper retrievalUnitMapper) {
@@ -254,6 +258,8 @@ public class FtsRetriever implements Retriever {
     /**
      * Build scope JSON parameters for parameterized JSONB @> containment queries.
      * Each scope entry {key: [values]} becomes a JSON string like {"key":["v1","v2"]}.
+     * Keys not present in KNOWN_FACET_KEYS are silently skipped because facets_json
+     * cannot contain them, avoiding wasted DB round trips.
      */
     static List<String> buildScopeJsonParams(Map<String, Object> scope) {
         if (scope == null || scope.isEmpty()) {
@@ -261,6 +267,10 @@ public class FtsRetriever implements Retriever {
         }
         List<String> params = new ArrayList<>();
         for (Map.Entry<String, Object> entry : scope.entrySet()) {
+            // Skip scope keys that don't exist in facets_json — they can never match
+            if (!KNOWN_FACET_KEYS.contains(entry.getKey())) {
+                continue;
+            }
             if (entry.getValue() instanceof List<?> values && !values.isEmpty()) {
                 StringBuilder sb = new StringBuilder();
                 sb.append("{\"").append(entry.getKey()).append("\":[");
