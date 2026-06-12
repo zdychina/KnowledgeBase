@@ -18,6 +18,7 @@ from llm_service.providers.base import ProviderProtocol
 from llm_service.providers.anthropic import AnthropicProvider
 from llm_service.providers.openai_compatible import OpenAICompatibleProvider
 from llm_service.runtime.model_service import ModelService
+from llm_service.runtime.persist_writer import PersistWriter
 from llm_service.runtime.service import LLMService
 from llm_service.runtime.worker import LeaseRecovery, Worker
 
@@ -67,7 +68,7 @@ def create_app(
         db = LlmRuntimeDB.from_conninfo(
             pg_cfg.conninfo,
             pool_min=pg_cfg.pool_min,
-            pool_max=pg_cfg.pool_max,
+            pool_max=dig(cfg, "pool_max") or pg_cfg.pool_max,
         )
         await db.open()
 
@@ -149,9 +150,21 @@ def create_app(
         # Embedding dimensions: optional in YAML, None means don't pass to provider
         _embedding_dimensions = cfg.get("embedding", {}).get("dimensions")
 
-        svc = LLMService(db=db, provider=provider, config=cfg, model_provider=model_provider, templates=templates)
+        # PersistWriter — decouples sync-call DB writes from request hot path
+        pw_cfg = dig(cfg, "persist_writer") or {}
+        persist_writer = PersistWriter(
+            db=db,
+            queue_size=pw_cfg.get("queue_size", 10000),
+            batch_size=pw_cfg.get("batch_size", 20),
+            flush_interval=pw_cfg.get("flush_interval", 0.5),
+            writer_count=pw_cfg.get("writer_count", 1),
+        )
+        await persist_writer.start()
+
+        svc = LLMService(db=db, provider=provider, config=cfg, model_provider=model_provider, templates=templates, persist_writer=persist_writer)
         model_svc = ModelService(
             model_provider, db=db,
+            persist_writer=persist_writer,
             default_embedding_model=dig(cfg, "embedding", "model"),
             default_rerank_model=dig(cfg, "rerank", "model"),
             default_embedding_dimensions=_embedding_dimensions,
@@ -224,6 +237,8 @@ def create_app(
                 logger.info("Re-queued in-flight tasks on shutdown")
             except Exception:
                 logger.exception("Failed to re-queue in-flight tasks")
+        # Flush remaining sync-call records before closing DB
+        await persist_writer.stop()
         if hasattr(provider, 'close'):
             await provider.close()
         if hasattr(model_provider, 'close'):

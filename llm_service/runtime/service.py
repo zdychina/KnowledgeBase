@@ -14,6 +14,7 @@ from llm_service.providers.base import ProviderProtocol
 from llm_service.providers.model_base import ModelProviderProtocol
 from llm_service.runtime.event_bus import EventBus
 from llm_service.runtime.parser import ParseResult, parse_output
+from llm_service.runtime.persist_writer import PersistWriter, SyncChatRecord
 from llm_service.runtime.task_manager import TaskManager
 from llm_service.runtime.template_registry import TemplateRegistry
 
@@ -31,9 +32,11 @@ class LLMService:
         config: dict,
         model_provider: ModelProviderProtocol | None = None,
         templates: TemplateRegistry | None = None,
+        persist_writer: PersistWriter | None = None,
     ):
         self._db = db
         self._config = config
+        self._persist_writer = persist_writer
         self._bus = EventBus(db)
         self._submit_lock = asyncio.Lock()
         self._mgr = TaskManager(
@@ -471,8 +474,8 @@ class LLMService:
     ) -> dict:
         """Sync execute: resolve template → call LLM → return immediately.
 
-        ALL DB writes are fire-and-forget background tasks.
-        This is a relay service — the caller should see near-zero overhead beyond the LLM call itself.
+        DB writes are deferred to PersistWriter (in-memory queue → background batch DB writes).
+        This is a relay service — the caller sees zero DB overhead.
         """
         # ---- Phase 1: Resolve template (cached → 0 DB after warm-up) ----
         resolved = await self._resolve_template(
@@ -513,7 +516,7 @@ class LLMService:
         parse_result = parse_output(resp.output_text, actual_expected_type, actual_schema)
         parse_ok = parse_result.parse_status == "succeeded"
 
-        # ---- Phase 3: Fire-and-forget all DB writes ----
+        # ---- Phase 3: Enqueue for background persist (zero DB blocking) ----
         task_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         attempt_id = str(uuid.uuid4())
@@ -523,85 +526,44 @@ class LLMService:
         effective_priority = max(priority, 999)
         final_status = "succeeded" if parse_ok else "failed"
 
-        async def _persist():
-            """Background task: write all bookkeeping rows to DB."""
-            try:
-                async with self._db.pool.connection() as conn:
-                    async with conn.transaction():
-                        # task row
-                        await conn.execute(
-                            """INSERT INTO agent_llm_tasks
-                               (id, caller_service, knowledge_domain, pipeline_stage, task_type,
-                                idempotency_key, status, priority, available_at, attempt_count, max_attempts,
-                                created_at, updated_at, started_at, finished_at, lease_expires_at, metadata_json)
-                               VALUES (%s, %s, %s, %s, 'chat', %s, %s, %s, %s, 1, %s, %s, %s, %s, %s, %s, %s)""",
-                            (
-                                task_id, caller_service, knowledge_domain, pipeline_stage,
-                                idempotency_key, final_status, effective_priority, now, max_attempts,
-                                now, now, now, now, lease_dt.isoformat(), json.dumps(metadata or {}),
-                            ),
-                        )
-                        # request row
-                        await conn.execute(
-                            """INSERT INTO agent_llm_requests
-                               (id, task_id, provider, model, prompt_template_key, messages_json, input_json,
-                                params_json, expected_output_type, output_schema_json, created_at)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                            (
-                                request_id, task_id, self._provider_name, self._default_model, template_key,
-                                json.dumps(actual_messages), json.dumps(input or {}),
-                                json.dumps(params or {}), actual_expected_type,
-                                json.dumps(actual_schema or {}), now,
-                            ),
-                        )
-                        # attempt row (final state directly)
-                        if parse_ok:
-                            await conn.execute(
-                                """INSERT INTO agent_llm_attempts
-                                   (id, task_id, request_id, attempt_no, status, started_at, finished_at,
-                                    raw_output_text, prompt_tokens, completion_tokens, total_tokens,
-                                    latency_ms, raw_response_json)
-                                   VALUES (%s, %s, %s, 1, 'succeeded', %s, %s, %s, %s, %s, %s, %s, %s)""",
-                                (
-                                    attempt_id, task_id, request_id, now, now,
-                                    resp.output_text, resp.prompt_tokens, resp.completion_tokens,
-                                    resp.total_tokens, latency, json.dumps(resp.raw_response or {}),
-                                ),
-                            )
-                        else:
-                            await conn.execute(
-                                """INSERT INTO agent_llm_attempts
-                                   (id, task_id, request_id, attempt_no, status, started_at, finished_at,
-                                    raw_output_text, prompt_tokens, completion_tokens, total_tokens,
-                                    latency_ms, raw_response_json, error_type, error_message)
-                                   VALUES (%s, %s, %s, 1, 'failed', %s, %s, %s, %s, %s, %s, %s, %s,
-                                    'parse_failed', %s)""",
-                                (
-                                    attempt_id, task_id, request_id, now, now,
-                                    resp.output_text, resp.prompt_tokens, resp.completion_tokens,
-                                    resp.total_tokens, latency, json.dumps(resp.raw_response or {}),
-                                    parse_result.parse_error or f"parse_status={parse_result.parse_status}",
-                                ),
-                            )
-                        # result row
-                        await conn.execute(
-                            """INSERT INTO agent_llm_results
-                               (id, task_id, attempt_id, parse_status, parsed_output_json, text_output,
-                                parse_error, validation_errors_json, created_at)
-                               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                            (
-                                result_id, task_id, attempt_id, parse_result.parse_status,
-                                json.dumps(parse_result.parsed_output if parse_result.parsed_output is not None else {}),
-                                parse_result.text_output, parse_result.parse_error,
-                                json.dumps(parse_result.validation_errors), now,
-                            ),
-                        )
-                # Emit event (fire-and-forget within fire-and-forget)
-                asyncio.ensure_future(self._bus.emit(task_id, final_status, "task completed"))
-            except Exception:
-                logger.exception("Background persist failed for task %s", task_id[:8])
-
-        asyncio.ensure_future(_persist())
+        if self._persist_writer is not None:
+            self._persist_writer.enqueue(SyncChatRecord(
+                task_id=task_id,
+                request_id=request_id,
+                attempt_id=attempt_id,
+                result_id=result_id,
+                caller_service=caller_service,
+                knowledge_domain=knowledge_domain,
+                pipeline_stage=pipeline_stage,
+                idempotency_key=idempotency_key,
+                template_key=template_key,
+                provider_name=self._provider_name,
+                model=self._default_model,
+                messages_json=json.dumps(actual_messages),
+                input_json=json.dumps(input or {}),
+                params_json=json.dumps(params or {}),
+                expected_output_type=actual_expected_type,
+                output_schema_json=json.dumps(actual_schema or {}),
+                final_status=final_status,
+                effective_priority=effective_priority,
+                max_attempts=max_attempts,
+                now=now,
+                lease_dt=lease_dt.isoformat(),
+                metadata_json=json.dumps(metadata or {}),
+                raw_output_text=resp.output_text,
+                prompt_tokens=resp.prompt_tokens,
+                completion_tokens=resp.completion_tokens,
+                total_tokens=resp.total_tokens,
+                latency_ms=latency,
+                raw_response_json=json.dumps(resp.raw_response or {}),
+                error_type="parse_failed" if not parse_ok else None,
+                error_message=(parse_result.parse_error or f"parse_status={parse_result.parse_status}") if not parse_ok else None,
+                parse_status=parse_result.parse_status,
+                parsed_output_json=json.dumps(parse_result.parsed_output if parse_result.parsed_output is not None else {}),
+                text_output=parse_result.text_output,
+                parse_error=parse_result.parse_error,
+                validation_errors_json=json.dumps(parse_result.validation_errors),
+            ))
 
         # ---- Phase 4: Return immediately from memory ----
         if parse_ok:
