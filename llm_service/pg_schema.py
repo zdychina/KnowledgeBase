@@ -36,14 +36,53 @@ def ensure_database(cfg: LlmDbConfig) -> None:
 
 
 def ensure_schema(cfg: LlmDbConfig) -> None:
-    """Ensure database exists, then execute DDL file (idempotent)."""
+    """Ensure database exists, then execute DDL file (idempotent).
+
+    Before applying DDL, terminate stale "idle in transaction" connections
+    left by previously killed processes to avoid lock contention.
+    """
     ensure_database(cfg)
+
+    # Terminate stale "idle in transaction" connections that may hold locks
+    # from a previously SIGKILL'd process
+    _cleanup_stale_connections(cfg)
 
     conn = psycopg.connect(cfg.conninfo, autocommit=True)
     try:
         ddl = _DDL_PATH.read_text(encoding="utf-8")
         _execute_ddl(conn, ddl)
         logger.info("Applied DDL: %s", _DDL_PATH.name)
+    finally:
+        conn.close()
+
+
+def _cleanup_stale_connections(cfg: LlmDbConfig) -> None:
+    """Kill "idle in transaction" and long-running "active" connections to avoid lock waits."""
+    conn = psycopg.connect(cfg.maintenance_conninfo, autocommit=True)
+    try:
+        with conn.cursor() as cur:
+            # Terminate idle-in-transaction connections (these hold locks from crashed processes)
+            cur.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = %s AND state = 'idle in transaction' AND pid <> pg_backend_pid()",
+                (cfg.dbname,),
+            )
+            killed_idle = sum(1 for r in cur.fetchall() if r[0])
+            if killed_idle:
+                logger.warning("Terminated %d stale 'idle in transaction' connections", killed_idle)
+
+            # Terminate long-running active queries on our DB (stuck > 30s)
+            cur.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = %s AND state = 'active' AND query_start < now() - interval '30 seconds' "
+                "AND pid <> pg_backend_pid()",
+                (cfg.dbname,),
+            )
+            killed_active = sum(1 for r in cur.fetchall() if r[0])
+            if killed_active:
+                logger.warning("Terminated %d stuck active queries (>30s)", killed_active)
+    except Exception:
+        logger.exception("Failed to cleanup stale connections (non-fatal)")
     finally:
         conn.close()
 
