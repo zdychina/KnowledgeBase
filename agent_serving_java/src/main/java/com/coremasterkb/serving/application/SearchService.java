@@ -357,6 +357,15 @@ public class SearchService {
         trace.endStage("fusion",
                 "fused=" + fused.size() + ", method=" + routePlan.fusion().method());
 
+        // 7.5. Hydrate: fetch text + JSON details for fused candidates BEFORE rerank.
+        //      Retrieval SQL defers text/source_refs_json/target_ref_json (NULL aliases)
+        //      to reduce per-route data transfer over high-RTT network.
+        //      Hydration here fills them in once (post-fusion) so the model reranker,
+        //      text-similarity dedup, and assembly all see full content.
+        trace.startStage("hydrate");
+        fused = hydrateCandidates(fused);
+        trace.endStage("hydrate", "hydrated=" + fused.size());
+
         // 8. Rerank (cascading: model -> LLM -> score)
         trace.startStage("rerank");
         long rerankStartNanos = System.nanoTime();
@@ -365,11 +374,6 @@ public class SearchService {
         ranked = rerankResult.candidates();
         metrics.recordRerankFallback(resolveWinningRerankMethod(rerankResult.traces()));
         trace.endStage("rerank", "ranked=" + ranked.size());
-
-        // 8.5. Hydrate: fetch text + JSON details for top-K survivors only
-        trace.startStage("hydrate");
-        ranked = hydrateCandidates(ranked);
-        trace.endStage("hydrate", "hydrated=" + ranked.size());
 
         // 9. Assemble ContextPack
         trace.startStage("assembly");
@@ -429,8 +433,10 @@ public class SearchService {
 
     /**
      * Hydrate candidates with text, source_refs_json, and target_ref_json.
-     * These heavy columns were excluded from retrieval SQL to reduce data transfer
-     * (138KB → ~11KB per query). Only the top-K survivors need full data.
+     * These heavy columns were excluded from retrieval SQL to reduce per-route data transfer
+     * (138KB → ~11KB per route query). Hydration runs once post-fusion so the model reranker
+     * and text-similarity dedup have full content. Fetches ~50 IDs (fused) instead of ~219
+     * (3 routes × 73 rows pre-fusion).
      */
     private List<RetrievalCandidate> hydrateCandidates(List<RetrievalCandidate> candidates) {
         if (candidates.isEmpty()) return candidates;

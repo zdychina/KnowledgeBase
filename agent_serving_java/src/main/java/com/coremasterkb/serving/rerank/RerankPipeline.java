@@ -71,8 +71,10 @@ public class RerankPipeline {
         // Resolve configured rerank method once before the cascade
         String configuredMethod = resolveRerankMethod(routePlan);
 
-        // 1. Try model-based reranker (Zhipu / Service) — only when method allows
-        if (modelReranker != null && ("model".equals(configuredMethod) || "cascade".equals(configuredMethod))) {
+        // 1. Try model-based reranker (Zhipu / Service) — always attempt when available.
+        //    The model reranker is the primary quality signal; the configuredMethod only
+        //    controls whether the LLM-text fallback (step 2) is attempted when the model fails.
+        if (modelReranker != null) {
             long t0 = System.nanoTime();
             RerankTraceStep step = new RerankTraceStep("model", true, false, "", 0, countBefore, 0);
             try {
