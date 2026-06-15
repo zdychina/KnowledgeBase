@@ -447,7 +447,14 @@ public class SearchService {
                 .toList();
 
         long t0 = System.nanoTime();
-        List<FtsResultRow> details = retrievalUnitMapper.fetchDetailsByIds(ids);
+        List<FtsResultRow> details;
+        try {
+            details = retrievalUnitMapper.fetchDetailsByIds(ids);
+        } catch (Exception e) {
+            log.warn("[HYDRATE] fetchDetailsByIds failed ({} IDs), proceeding with unhydrated candidates: {}",
+                    ids.size(), e.getMessage());
+            return candidates;
+        }
         long hydrateMs = (System.nanoTime() - t0) / 1_000_000;
 
         Map<String, FtsResultRow> detailMap = new LinkedHashMap<>();

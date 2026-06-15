@@ -99,6 +99,24 @@ class RerankPipelineTest {
         }
 
         @Test
+        @DisplayName("model reranker runs even when method=score (regression test)")
+        void modelRerankerRunsForScoreMethod() {
+            var c1 = candidate("u1", 0.9);
+            when(modelReranker.rerank(any(), any())).thenReturn(List.of(c1));
+
+            var pipeline = new RerankPipeline(modelReranker, llmReranker, scoreReranker);
+            var routePlan = new RetrievalRoutePlan(null, null, null,
+                    new RerankConfig("score", "score"), null, null);
+
+            pipeline.rerank(List.of(c1), routePlan, null);
+
+            // Model reranker MUST be invoked regardless of configured method
+            verify(modelReranker).rerank(any(), any());
+            // LLM reranker should NOT run (method=score, and model succeeded anyway)
+            verify(llmReranker, never()).rerank(any(), any());
+        }
+
+        @Test
         @DisplayName("no model/llm → score only")
         void noModelScoreOnly() {
             var c1 = candidate("u1", 0.3);

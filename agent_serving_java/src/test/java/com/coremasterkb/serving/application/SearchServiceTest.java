@@ -6,6 +6,8 @@ import com.coremasterkb.serving.domainpack.DomainContext;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
 import com.coremasterkb.serving.domainpack.DomainPoolManager;
 import com.coremasterkb.serving.domainpack.DomainRegistry;
+import com.coremasterkb.serving.mapper.AssetRetrievalUnitMapper;
+import com.coremasterkb.serving.mapper.result.FtsResultRow;
 import com.coremasterkb.serving.observability.SearchMetrics;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
@@ -16,7 +18,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -38,6 +43,7 @@ class SearchServiceTest {
     private DomainPoolManager domainPoolManager;
     private EmbeddingClient embeddingClient;
     private com.coremasterkb.serving.repository.AssetRepository assetRepo;
+    private AssetRetrievalUnitMapper retrievalUnitMapper;
     private SearchService searchService;
 
     @BeforeEach
@@ -52,6 +58,7 @@ class SearchServiceTest {
         domainPoolManager = mock(DomainPoolManager.class);
         embeddingClient = mock(EmbeddingClient.class);
         assetRepo = mock(com.coremasterkb.serving.repository.AssetRepository.class);
+        retrievalUnitMapper = mock(AssetRetrievalUnitMapper.class);
 
         when(domainRegistry.getDefaultChannel(anyString())).thenReturn("prod");
         when(domainRegistry.findEntry(anyString())).thenReturn(java.util.Optional.empty());
@@ -73,7 +80,7 @@ class SearchServiceTest {
                 embeddingClient, assetRepo,
                 mock(LlmClient.class),
                 multiQueryExpander, semanticCache, metrics, treeNavigator,
-                mock(com.coremasterkb.serving.mapper.AssetRetrievalUnitMapper.class),
+                retrievalUnitMapper,
                 new ServingProperties(null, null, "cloud_core_network", null));
     }
 
@@ -172,6 +179,107 @@ class SearchServiceTest {
             assertThat(DomainContext.get())
                     .as("DomainContext must be cleared after exception")
                     .isNull();
+        }
+
+        @Test
+        @DisplayName("hydration runs before rerank and fills text metadata")
+        void hydrateBeforeRerank() {
+            var candidate = new RetrievalCandidate(
+                    "ru-1", 0.9, "lexical_bm25",
+                    Map.of("title", "SMF Config"),
+                    new ScoreChain(0.9, 0.0, 0.0, List.of("lexical_bm25")));
+            var orchResult = new OrchestratorResult(List.of(candidate), List.of());
+
+            var detail = new FtsResultRow();
+            detail.setId("ru-1");
+            detail.setText("PFCP session parameters include heartbeat interval...");
+            detail.setSourceRefsJson("{\"raw_segment_ids\":[\"seg-1\"]}");
+
+            var understanding = new QueryUnderstanding("SMF配置", "concept_lookup",
+                    List.of(), List.of(), Map.of(), List.of("SMF"),
+                    EvidenceNeed.empty(), List.of(), "rule", null);
+            var routePlan = new RetrievalRoutePlan(
+                    List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
+                    Map.of(), new FusionConfig("identity", 60),
+                    new RerankConfig("score", "score"),
+                    AssemblyConfig.defaults(), ExpansionConfig.defaults());
+
+            when(domainPackReader.getProfile(anyString())).thenReturn(null);
+            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(router.route(any(), any())).thenReturn(routePlan);
+            when(orchestrator.execute(any(), any(), any(), anyList(), anyList())).thenReturn(orchResult);
+            when(retrievalUnitMapper.fetchDetailsByIds(anyList())).thenReturn(List.of(detail));
+
+            var rerankResult = new RerankResult(List.of(candidate), List.of());
+            when(rerankPipeline.rerank(any(), any(), any())).thenReturn(rerankResult);
+            when(assembler.assemble(anyString(), any(), any(), any(), any(), any()))
+                    .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(),
+                            List.of(), List.of(), List.of(), Map.of()));
+
+            var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
+                    "cloud_core_network", null, "evidence");
+            searchService.search(request);
+
+            // Verify hydration happened before rerank
+            InOrder inOrder = inOrder(retrievalUnitMapper, rerankPipeline);
+            inOrder.verify(retrievalUnitMapper).fetchDetailsByIds(anyList());
+            inOrder.verify(rerankPipeline).rerank(any(), any(), any());
+
+            // Verify the rerank input contains hydrated text
+            ArgumentCaptor<List<RetrievalCandidate>> captor = ArgumentCaptor.forClass(List.class);
+            verify(rerankPipeline).rerank(captor.capture(), any(), any());
+            List<RetrievalCandidate> rerankInput = captor.getValue();
+            assertThat(rerankInput).hasSize(1);
+            assertThat(rerankInput.get(0).metadata())
+                    .containsEntry("text", "PFCP session parameters include heartbeat interval...")
+                    .containsEntry("source_refs_json", "{\"raw_segment_ids\":[\"seg-1\"]}");
+        }
+
+        @Test
+        @DisplayName("hydration failure degrades gracefully — rerank still runs")
+        void hydrationFailureDegradesGracefully() {
+            var candidate = new RetrievalCandidate(
+                    "ru-1", 0.9, "lexical_bm25",
+                    Map.of("title", "SMF Config"),
+                    new ScoreChain(0.9, 0.0, 0.0, List.of("lexical_bm25")));
+            var orchResult = new OrchestratorResult(List.of(candidate), List.of());
+
+            var understanding = new QueryUnderstanding("SMF配置", "concept_lookup",
+                    List.of(), List.of(), Map.of(), List.of("SMF"),
+                    EvidenceNeed.empty(), List.of(), "rule", null);
+            var routePlan = new RetrievalRoutePlan(
+                    List.of(new RouteConfig("lexical_bm25", true, 1.0, 50)),
+                    Map.of(), new FusionConfig("identity", 60),
+                    new RerankConfig("score", "score"),
+                    AssemblyConfig.defaults(), ExpansionConfig.defaults());
+
+            when(domainPackReader.getProfile(anyString())).thenReturn(null);
+            when(quEngine.understand(anyString(), any())).thenReturn(understanding);
+            when(router.route(any(), any())).thenReturn(routePlan);
+            when(orchestrator.execute(any(), any(), any(), anyList(), anyList())).thenReturn(orchResult);
+            when(retrievalUnitMapper.fetchDetailsByIds(anyList()))
+                    .thenThrow(new RuntimeException("connection reset"));
+
+            var rerankResult = new RerankResult(List.of(candidate), List.of());
+            when(rerankPipeline.rerank(any(), any(), any())).thenReturn(rerankResult);
+            when(assembler.assemble(anyString(), any(), any(), any(), any(), any()))
+                    .thenReturn(new ContextPack(null, List.of(), List.of(), List.of(),
+                            List.of(), List.of(), List.of(), Map.of()));
+
+            var request = new SearchRequest("SMF配置", Map.of(), List.of(), false,
+                    "cloud_core_network", null, "evidence");
+
+            // Should NOT throw — request should succeed with unhydrated candidates
+            var result = searchService.search(request);
+            assertThat(result).isNotNull();
+
+            // Rerank was still called with the original (unhydrated) candidate
+            ArgumentCaptor<List<RetrievalCandidate>> captor = ArgumentCaptor.forClass(List.class);
+            verify(rerankPipeline).rerank(captor.capture(), any(), any());
+            List<RetrievalCandidate> rerankInput = captor.getValue();
+            assertThat(rerankInput).hasSize(1);
+            // Text should NOT be present (hydration failed)
+            assertThat(rerankInput.get(0).metadata()).doesNotContainKey("text");
         }
     }
 }
