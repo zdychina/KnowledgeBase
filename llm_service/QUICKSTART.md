@@ -1,157 +1,138 @@
 # LLM Service 快速上手指南
 
+> 最后核对日期：2026-06-18（与 README v2.0 / ARCHITECTURE.md 同步）。本版本相对旧版有重大变更：**数据库由 SQLite 迁至 PostgreSQL；配置不再走 `.env` 环境变量，改为控制面 HTTP 拉取**。下面示例已按新机制更新。
+
 ## 概述
 
 独立的 LLM 调用服务，FastAPI 进程，端口 8900。
-- 支持任意 OpenAI 兼容接口（DeepSeek / OpenAI / 通义千问 / 硅基流动 / Ollama 等）
+- 支持任意 OpenAI 兼容接口（DeepSeek / OpenAI / 通义千问 / 硅基流动 / Ollama 等）+ Anthropic 原生 API
 - 支持共享 Embedding / Rerank 模型接口（当前默认对接 BigModel）
 - 同步调用（`execute`，等结果）+ 异步提交（`submit`，后台 Worker 执行）
 - Prompt 模板管理（`$variable` 占位符 + JSON Schema 校验）
 - 三重 JSON 保障：schema 注入 prompt → response_format → jsonschema 后校验
-- Web 看板，可查看每次调用的完整 prompt、结果、token 用量
-- 所有数据存本地 SQLite（WAL 模式），自动建库建表
+- 所有数据存 **PostgreSQL**（库 `agent_llm_runtime`，7 张表），启动自动建库建表
+- 配置热重载（`POST /api/v1/admin/reload-config`），无需重启切换 provider
 - Python SDK：`LLMClient`，Mining / Serving 直接 import 使用
 
 ## 目录结构
 
 ```
 llm_service/
-├── __main__.py          # python -m llm_service 入口
-├── main.py              # FastAPI app 工厂
-├── config.py            # 配置（从 .env 或环境变量读取）
-├── db.py                # 数据库初始化
+├── __main__.py          # python -m llm_service 入口（含 Windows event loop fix）
+├── main.py              # FastAPI app 工厂 + lifespan
+├── config.py            # 从控制面拉取服务配置（${VAR} 展开）
+├── pg_config.py         # 从控制面拉取 DB 连接信息
+├── pg_schema.py         # PostgreSQL DDL 执行（含 stale connection 清理）
+├── db.py                # psycopg AsyncConnectionPool
+├── models.py            # Pydantic 请求/响应模型
 ├── client.py            # Python SDK（Mining/Serving 接入用）
 ├── runtime/
-│   ├── service.py       # 核心服务：提交、执行、模板解析
-│   ├── worker.py        # 后台 Worker（并发=4）+ LeaseRecovery
-│   ├── task_manager.py  # 任务生命周期
-│   ├── executor.py      # 执行器（调 provider）
+│   ├── service.py       # LLMService：submit / execute 编排（含同步快路径）
+│   ├── model_service.py # Embedding / Rerank 服务层
+│   ├── task_manager.py  # 任务生命周期（FOR UPDATE SKIP LOCKED claim）
+│   ├── worker.py        # 后台 Worker + LeaseRecovery
+│   ├── persist_writer.py# 同步路径异步落库（Queue + 批写）
 │   ├── parser.py        # 输出解析（text/json_object/json_array + schema 校验）
-│   ├── event_bus.py     # 事件记录
-│   └── template_registry.py  # 模板 CRUD
-├── api/                 # REST API 路由
-├── dashboard/           # Web 看板
-└── templates/           # Jinja2 HTML 模板
+│   ├── event_bus.py     # 事件落库（INSERT）
+│   ├── template_registry.py  # 模板 CRUD（含缓存）
+│   └── idempotency.py   # 幂等查询
+├── providers/           # ProviderProtocol / ModelProviderProtocol 实现
+└── api/                 # 25 个 REST 路由（tasks/results/templates/admin/stats/health/model_api）
 ```
+
+> **架构详情**：参见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。旧版提到的 `runtime/executor.py` / `dashboard/` / `templates/` 目录**均已不存在**。
 
 ## 1. 安装依赖
 
 在项目根目录执行：
 
 ```bash
-pip install fastapi uvicorn aiosqlite pydantic-settings httpx jsonschema jinja2
+pip install -e .
 ```
 
-或者如果项目有 pyproject.toml：
+依赖包含：`fastapi` / `uvicorn` / `psycopg[binary,pool]` / `pydantic-settings` / `httpx` / `jsonschema`。
 
-```bash
-pip install -e ".[llm]"
-```
+## 2. 配置（控制面拉取）
 
-## 2. 配置 Provider
+**llm_service 不再从本地 `.env` 读 yaml 配置**。启动时通过 HTTP 从控制面拉取两份配置：
 
-在项目根目录的 `.env` 文件中设置聊天模型这三个必填项：
+| 配置 | URL |
+|---|---|
+| Service 配置 | `${CONTROL_PLANE_BASE_URL}/api/v1/system/llm_service/raw` |
+| DB 配置 | `${CONTROL_PLANE_BASE_URL}/api/v1/system/database/raw` |
 
-```
-LLM_SERVICE_PROVIDER_API_KEY=你的API密钥
-LLM_SERVICE_PROVIDER_BASE_URL=完整接口地址（含路径）
-LLM_SERVICE_PROVIDER_MODEL=模型名称
-```
-
-如果要让 Mining / Serving 走共享 Embedding / Rerank 接口，再补这组配置：
+### 2.1 启动必需的环境变量
 
 ```
-LLM_SERVICE_EMBEDDING_BASE_URL=https://open.bigmodel.cn/api/paas/v4/embeddings
-LLM_SERVICE_EMBEDDING_API_KEY=你的Embedding密钥
-LLM_SERVICE_EMBEDDING_MODEL=embedding-3
-LLM_SERVICE_EMBEDDING_DIMENSIONS=1024
-LLM_SERVICE_RERANK_BASE_URL=https://open.bigmodel.cn/api/paas/v4/rerank
-LLM_SERVICE_RERANK_API_KEY=你的Rerank密钥
-LLM_SERVICE_RERANK_MODEL=rerank-pro
+CONTROL_PLANE_BASE_URL=http://your-control-plane
 ```
 
-当前项目里，如果你用的是同一个 BigModel key，可以直接把
-`LLM_SERVICE_EMBEDDING_API_KEY` 和 `LLM_SERVICE_RERANK_API_KEY` 配成同一个值。
+### 2.2 控制面 dict 内的关键字段
 
-### 各平台配置示例
+控制面返回一个 dict，必须包含 25 个字段路径（`config.py::_REQUIRED_PATHS`）。主要分组：
 
-#### DeepSeek（默认）
+| 分组 | 关键字段 |
+|---|---|
+| `host` / `port` | `0.0.0.0` / `8900` |
+| `provider.*` | type / api_key / base_url / models / active_model / timeout / bypass_proxy |
+| `embedding.*` 或 `model_provider.embedding.*` | base_url / api_key / model / dimensions |
+| `rerank.*` 或 `model_provider.rerank.*` | base_url / api_key / model |
+| `worker.*` | concurrency / poll_interval |
+| `persist_writer.*` | queue_size / batch_size / flush_interval / writer_count |
+| `task.*` | default_max_attempts / retry_backoff_base/max / execute_timeout / lease_duration / lease_recovery_interval |
+| `template.*` | cache_ttl |
+| `db.pool.*` | min_size / max_size |
 
-```
-LLM_SERVICE_PROVIDER_API_KEY=sk-xxxxxxxxxxxx
-LLM_SERVICE_PROVIDER_BASE_URL=https://api.deepseek.com/chat/completions
-LLM_SERVICE_PROVIDER_MODEL=deepseek-chat
-```
+### 2.3 `${VAR}` 环境变量展开
 
-#### GLM / 智谱
+`config.py` 解析 dict 时，对字符串值做 `${VAR_NAME}` → `os.environ[VAR_NAME]` 展开。典型用法：把 `provider.api_key` 在控制面写成 `${MY_LLM_KEY}`，真实 key 通过环境变量注入。
 
-```
-LLM_SERVICE_PROVIDER_API_KEY=xxxxxxxxxxxx.xxxxxx
-LLM_SERVICE_PROVIDER_BASE_URL=https://open.bigmodel.cn/api/paas/v4/chat/completions
-LLM_SERVICE_PROVIDER_MODEL=glm-4-flash
-```
+### 2.4 Provider 示例（控制面 dict 片段）
 
-#### OpenAI
-
-```
-LLM_SERVICE_PROVIDER_API_KEY=sk-xxxxxxxxxxxx
-LLM_SERVICE_PROVIDER_BASE_URL=https://api.openai.com/v1/chat/completions
-LLM_SERVICE_PROVIDER_MODEL=gpt-4o-mini
-```
-
-#### 通义千问（DashScope 兼容模式）
-
-```
-LLM_SERVICE_PROVIDER_API_KEY=sk-xxxxxxxxxxxx
-LLM_SERVICE_PROVIDER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-LLM_SERVICE_PROVIDER_MODEL=qwen-plus
-```
-
-#### 硅基流动（SiliconFlow）
-
-```
-LLM_SERVICE_PROVIDER_API_KEY=sk-xxxxxxxxxxxx
-LLM_SERVICE_PROVIDER_BASE_URL=https://api.siliconflow.cn/v1/chat/completions
-LLM_SERVICE_PROVIDER_MODEL=Qwen/Qwen2.5-7B-Instruct
-```
-
-#### 本地 Ollama
-
-```
-LLM_SERVICE_PROVIDER_API_KEY=ollama
-LLM_SERVICE_PROVIDER_BASE_URL=http://localhost:11434/v1/chat/completions
-LLM_SERVICE_PROVIDER_MODEL=qwen2.5:7b
+```jsonc
+{
+  "provider": {
+    "type": "openai_compatible",
+    "base_url": "https://api.deepseek.com/chat/completions",
+    "api_key": "${DEEPSEEK_KEY}",     // 从环境变量展开
+    "models": {
+      "default": {"model": "deepseek-chat", "temperature": 0.3},
+      "strong":  {"model": "deepseek-reasoner"}
+    },
+    "active_model": "default"
+  },
+  "embedding": {
+    "base_url": "https://open.bigmodel.cn/api/paas/v4/embeddings",
+    "api_key": "${BIGMODEL_KEY}",
+    "model": "embedding-3",
+    "dimensions": 1024
+  },
+  "rerank": {
+    "base_url": "https://open.bigmodel.cn/api/paas/v4/rerank",
+    "api_key": "${BIGMODEL_KEY}",
+    "model": "rerank-pro"
+  }
+}
 ```
 
-### 可选配置
+**Provider 类型可选值**：
+- `openai_compatible` — DeepSeek / OpenAI / 通义千问 / 硅基流动 / Ollama 等
+- `anthropic` — Anthropic Claude（原生 Messages API）
+- `mock` — 测试用
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `LLM_SERVICE_PORT` | 8900 | 服务端口 |
-| `LLM_SERVICE_DB_PATH` | `data/llm_service.sqlite` | 数据库路径（自动创建） |
-| `LLM_SERVICE_WORKER_CONCURRENCY` | 4 | Worker 并发数 |
-| `LLM_SERVICE_DEFAULT_MAX_ATTEMPTS` | 3 | 最大重试次数 |
-| `LLM_SERVICE_EXECUTE_TIMEOUT` | 60 | 同步执行超时秒数 |
-| `LLM_SERVICE_PROVIDER_TIMEOUT` | 30 | Provider 请求超时秒数 |
-| `LLM_SERVICE_PROVIDER_BYPASS_PROXY` | false | Chat 请求绕过系统代理 |
-| `LLM_SERVICE_EMBEDDING_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4/embeddings` | Embedding 完整 API 地址 |
-| `LLM_SERVICE_EMBEDDING_API_KEY` | 空 | Embedding 模型密钥 |
-| `LLM_SERVICE_EMBEDDING_MODEL` | `embedding-3` | Embedding 模型名 |
-| `LLM_SERVICE_EMBEDDING_DIMENSIONS` | `1024` | Embedding 维度 |
-| `LLM_SERVICE_RERANK_BASE_URL` | `https://open.bigmodel.cn/api/paas/v4/rerank` | Rerank 完整 API 地址 |
-| `LLM_SERVICE_RERANK_API_KEY` | 空 | Rerank 模型密钥 |
-| `LLM_SERVICE_RERANK_MODEL` | 空 | Rerank 模型名 |
-| `LLM_SERVICE_MODEL_TIMEOUT` | `60` | 模型请求超时（秒） |
-| `LLM_SERVICE_MODEL_BYPASS_PROXY` | false | 模型请求绕过系统代理 |
-| `LLM_SERVICE_MODEL_EXTRA_HEADERS` | `{}` | 内网网关认证 header（JSON dict，所有 provider 共用） |
-| `LLM_SERVICE_LEASE_DURATION` | 300 | Worker 租约（秒） |
-| `LLM_SERVICE_RETRY_BACKOFF_BASE` | 2.0 | 重试退避基数 |
-| `LLM_SERVICE_RETRY_BACKOFF_MAX` | 60.0 | 重试退避上限（秒） |
+> 想切换 provider 不用重启：修改控制面 dict 后 `POST /api/v1/admin/reload-config`。
 
 ## 3. 启动服务
 
 ```bash
-# 在项目根目录执行
+# 设置控制面地址（必需）
+export CONTROL_PLANE_BASE_URL=http://your-control-plane
+
+# 可选：被控制面 dict 中 ${VAR} 引用的密钥
+export DEEPSEEK_KEY=sk-xxxxxxxxxxxx
+export BIGMODEL_KEY=xxxxxxxxxxxx.xxxxxx
+
+# 启动
 python -m llm_service
 ```
 
@@ -161,22 +142,27 @@ python -m llm_service
 INFO:     Uvicorn running on http://0.0.0.0:8900 (Press CTRL+C to quit)
 ```
 
-启动时会同时启动：
-- API 服务（处理 HTTP 请求）
-- 后台 Worker（并发=4，从队列取任务执行）
-- LeaseRecovery（30s 一次，回收超时任务）
+启动 lifespan 顺序：
+1. 从控制面拉 config + db_config
+2. `pg_schema.ensure_database()` + `ensure_schema()`（幂等建库建表，含 stale 连接清理）
+3. `LlmRuntimeDB` 连接池初始化（psycopg `AsyncConnectionPool`）
+4. `health_check()` 验证 DB
+5. 把残留的 `status='running'` 任务 re-queue
+6. 构造 Provider / ModelProvider / TemplateRegistry / PersistWriter
+7. 启动 Worker（`concurrency` 个 `_loop()` 协程）+ LeaseRecovery（30s 扫描）
 
 ### 数据库说明
 
-- **位置**：`data/llm_service.sqlite`（相对于项目根目录）
-- **自动创建**：首次启动时如果文件不存在，会自动创建目录和数据库文件，并建好全部 6 张表
-- **想重新开始**：`rm -f data/llm_service.sqlite`，再启动服务即可
+- **类型**：PostgreSQL（库 `agent_llm_runtime`）
+- **连接信息**：由控制面 `database/raw` 决定（host/port/user/password/dbname/sslmode）
+- **自动建库建表**：首次启动时 `pg_schema.py` 会建库（若不存在）+ 执行 DDL（`databases/agent_llm_runtime/schemas/002_agent_llm_runtime_postgresql.sql`，幂等）
+- **想重新开始**：`DROP DATABASE agent_llm_runtime;` 重启后会重建
 
 ### 验证启动
 
 ```bash
 curl http://localhost:8900/health
-# 返回：{"status":"ok"}
+# 返回：{"status":"ok","db":true,"tables_ok":true}
 ```
 
 ### 验证共享模型接口
@@ -566,10 +552,11 @@ curl http://localhost:8900/api/v1/tasks/这里填task_id/events
 ### 通过数据库
 
 ```bash
-sqlite3 data/llm_service.sqlite
+# 用 psql 连接（连接信息从控制面 database/raw 来）
+psql "host=<host> port=<port> dbname=agent_llm_runtime user=<user> sslmode=<sslmode>"
 
 # 查看所有任务
-SELECT substr(id,1,8) as id, status, caller_domain, pipeline_stage, attempt_count
+SELECT substr(id,1,8) AS id, status, caller_service, pipeline_stage, attempt_count
 FROM agent_llm_tasks ORDER BY created_at;
 
 # 查看解析结果
@@ -587,28 +574,21 @@ SELECT substr(task_id,1,8), total_tokens, latency_ms FROM agent_llm_attempts;
 SELECT substr(task_id,1,8), error_type, error_message FROM agent_llm_attempts
 WHERE status='failed';
 
-.quit
+\q
 ```
 
-### 通过 Web 看板
+### 通过 API 文档
 
 浏览器打开：
 
 | 页面 | 地址 |
 |------|------|
-| 看板首页 | http://localhost:8900/dashboard |
 | API 文档 | http://localhost:8900/docs |
 | 健康检查 | http://localhost:8900/health |
+| 任务统计 | http://localhost:8900/api/v1/stats |
+| Worker 状态 | http://localhost:8900/api/v1/admin/worker-status |
 
-看板首页展示任务列表、状态筛选、token 统计。
-点击任意 task_id 进入详情页，可以看到：
-- **Request Config**：用了哪个模板、Provider、模型
-- **Input Data**：传入的参数
-- **Actual Prompt Sent to Model**：模板展开后发给模型的完整 prompt（含 system/user role + schema 注入）
-- **Result**：模型输出（JSON 或文本），parse_status 是否成功
-- **Attempts**：每次尝试的 token 数和延迟
-- **Event Timeline**：submitted → claimed → succeeded 完整事件链
-- **Raw Output**：模型原始返回文本（可展开查看）
+> 旧版的 `/dashboard` Web 看板与 `dashboard/` 目录**已移除**；如需查任务详情请用 `/docs` Swagger 或 `/api/v1/tasks` 列表 API。
 
 ## 9. 关闭服务
 
@@ -616,13 +596,21 @@ WHERE status='failed';
 
 ## 10. 常见问题
 
-### Q: 启动报 `PROVIDER_API_KEY is required`
+### Q: 启动报 `_REQUIRED_PATHS` 校验失败
 
-`.env` 文件中没设 `LLM_SERVICE_PROVIDER_API_KEY`，或者 `.env` 不在项目根目录。
+控制面 dict 缺字段。`config.py::_REQUIRED_PATHS` 列了 25 个必须存在的路径（provider.* / worker.* / persist_writer.* / task.* / template.* / db.pool.*）。对照错误提示补齐。
+
+### Q: 启动报 `CONTROL_PLANE_BASE_URL is required`
+
+启动前没设这个环境变量。它是控制面 API 根地址。
+
+### Q: 启动卡在 PG 连接
+
+`pg_schema.py` 启动时会清理 `idle in transaction` 与 >30s active 连接（commit 63c0412）。若仍卡住，检查 `pg_hba.conf` / 防火墙 / 控制面 `database/raw` 配置是否正确。
 
 ### Q: 异步任务一直 queued 不执行
 
-检查 Worker 是否正常启动。启动日志里应该有 `Worker started with 4 concurrency`。如果是用 MockProvider 测试则不会有真实执行。
+检查 Worker 是否正常启动。诊断端点：`GET /api/v1/admin/worker-status` 看 `active_tasks` / `queue_depth`。如果是用 MockProvider 测试则不会有真实执行。
 
 ### Q: parse_status 是 `schema_invalid` 但原始输出看起来对
 
@@ -638,28 +626,22 @@ WHERE status='failed';
 - `expected_output_type` 设成了 `json_object` 但模型返回了数组
 - parser 已自动剥离 markdown 代码块标记，如果仍然失败说明模型确实没返回 JSON
 
-### Q: 想换数据库位置
-
-设环境变量：
-```
-LLM_SERVICE_DB_PATH=/your/path/llm.sqlite
-```
-
-### Q: 数据库里 6 张表分别是干什么的
+### Q: 数据库里 7 张表分别是干什么的
 
 | 表名 | 作用 |
 |------|------|
 | `agent_llm_prompt_templates` | Prompt 模板定义（system prompt + user prompt 模板 + schema） |
-| `agent_llm_tasks` | 任务主表（状态、调用方、优先级、重试次数） |
-| `agent_llm_requests` | 请求详情（发给模型的完整 messages、input、schema） |
-| `agent_llm_attempts` | 每次尝试记录（token 用量、延迟、原始输出、错误信息） |
-| `agent_llm_results` | 解析结果（JSON/文本输出、schema 校验结果） |
-| `agent_llm_events` | 事件流水（submitted/claimed/succeeded/failed/retried/dead_letter/cancelled） |
+| `agent_llm_tasks` | 任务主表（status / task_type / priority / 重试次数 / lease_expires_at / idempotency_key） |
+| `agent_llm_requests` | 请求详情（messages / input / params / expected_output_type / output_schema_json） |
+| `agent_llm_attempts` | 每次尝试记录（tokens / latency / raw_output_text / error_type） |
+| `agent_llm_results` | 解析结果（parse_status / parsed_output / text_output / validation_errors） |
+| `agent_llm_events` | 事件流水（submitted / claimed / succeeded / retried / dead_letter / cancelled） |
+| `agent_llm_model_calls` | **Embedding/Rerank 审计**（call_type / model / input_count / latency / tokens） |
 
 ### Q: Worker 并发数怎么调
 
-设环境变量：
-```
-LLM_SERVICE_WORKER_CONCURRENCY=8
-```
-重启服务生效。默认 4，一般够用。调太高可能触发 Provider 限流。
+修改控制面 `worker.concurrency` 后调用 `POST /api/v1/admin/reload-config`，热重载即时生效（动态增减 `_loop` 协程）。默认 4，调太高可能触发 Provider 限流。
+
+### Q: 想切换 Provider（如 DeepSeek → Anthropic）
+
+修改控制面 `provider.type` + 对应字段后调用 `POST /api/v1/admin/reload-config`。热重载会销毁旧 Provider 构造新的，**无需重启服务**。
