@@ -1,10 +1,10 @@
-"""Live demo: start LLM Service, submit tasks, view on dashboard.
+"""Live demo: start LLM Service, submit tasks, inspect via API.
 
 Usage:
     python llm_service/tests/test_live_demo.py
 
 Then open in browser:
-    - Dashboard: http://localhost:8900/dashboard
+    - Swagger docs: http://localhost:8900/docs
     - Task list API: http://localhost:8900/api/v1/tasks (GET)
     - Health: http://localhost:8900/health
 
@@ -89,7 +89,7 @@ async def main():
     # 3. Sync execute with text template (Serving pattern)
     print("\n[4/6] Sync execute (Serving pattern - text summary)")
     resp = await client.post("/api/v1/execute", json={
-        "caller_domain": "serving",
+        "caller_service": "serving",
         "pipeline_stage": "normalizer",
         "template_key": "demo-summary",
         "input": {"text": "大语言模型（LLM）是一种基于深度学习的自然语言处理技术，通过海量文本数据训练，能够理解和生成人类语言。"},
@@ -114,7 +114,7 @@ async def main():
     task_ids = []
     for i, section in enumerate(sections):
         resp = await client.post("/api/v1/tasks", json={
-            "caller_domain": "mining",
+            "caller_service": "mining",
             "pipeline_stage": "retrieval_units",
             "template_key": "demo-qa-gen",
             "input": section,
@@ -142,14 +142,10 @@ async def main():
     print("\n" + "=" * 60)
     print("Demo complete!")
     print("=" * 60)
-    print(f"\nDashboard: {BASE_URL}/dashboard")
-    print(f"API docs:  {BASE_URL}/docs")
-    print(f"DB file:   data/llm_service.sqlite")
-    print(f"\nTo view DB: sqlite3 data/llm_service.sqlite")
-    print(f"  .tables                              -- show all tables")
-    print(f"  SELECT * FROM agent_llm_tasks;       -- view all tasks")
-    print(f"  SELECT * FROM agent_llm_results;     -- view results")
-    print(f"  SELECT * FROM agent_llm_prompt_templates;  -- view templates")
+    print(f"\nAPI docs:  {BASE_URL}/docs")
+    print(f"Stats:     {BASE_URL}/api/v1/stats")
+    print(f"\nThis service uses PostgreSQL (database: agent_llm_runtime).")
+    print(f"Connection details come from the control plane database/raw endpoint.")
     print(f"\nSubmitted {len(task_ids)} async tasks (mining) + 1 sync task (serving)")
     print("If using a real provider (DeepSeek), async tasks should complete in seconds.")
     print("If using mock, tasks stay 'queued' (no worker in mock mode).")

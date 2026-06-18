@@ -128,18 +128,18 @@
 | M-004 | README §3.6 / §7.5 + ARCHITECTURE §7.4 + QUICKSTART §10 已完整说明 reload-config | 文档已对齐 |
 | M-005 | README §3.5 已标注 DELETE 实为 archive | 文档已对齐 |
 | M-006 | README §3.4 已列 retry 端点 | 文档已对齐 |
-| M-007 | README §6 已更新为 33 tests | 文档已对齐 |
-| M-008 | **代码侧**：`tests/test_live_demo.py:147-152` 删除 SQLite 输出块或改成 PG 指令 | 5 min（代码改动） |
+| M-007 | README §6 已更新为 38 active tests（新增 10 个覆盖本次修复） | 文档已对齐 |
+| M-008 | **已修复（2026-06-18）**：`tests/test_live_demo.py` 顶部 docstring + 末尾总结块的 SQLite/dashboard 残留已替换为 PostgreSQL/API 链接 | ✅ 已修复 |
 
 ### P3（LOW — 可延后或归档）
 
 | ID | 建议 | 工作量 |
 |---|---|---|
-| L-001 | 统一两条幂等查询路径到 `find_existing_task` 的优先级语义 | 0.5 day（代码改动 + 测试） |
-| L-002 | 在 `parser.py:34-48` 显式拒绝未知 `expected_type`，或在文档/类型注解中列出允许值 | 30 min |
-| L-003 | BigModelProvider 移除 `timeout` / `bypass_proxy` / `extra_headers` legacy 形参 | 1 hour（含调用方排查） |
-| L-004 | AnthropicProvider 把真实 `output_schema_json` 透传进 tool_use `input_schema`（当前为空 schema，仅触发 tool_use） | 0.5 day（需验证模型行为） |
-| L-005 | `tests/test_live_demo.py:93,117` 把 `caller_domain` 升级为 `caller_service` | 5 min |
+| L-001 | **已修复（2026-06-18）**：`LLMService._submit_with_idempotency` 改为委托 `find_existing_task`，统一 `succeeded > running > queued` 优先级语义。新增 `tests/test_idempotency.py` 6 个测试锁定行为 | ✅ 已修复 |
+| L-002 | **已修复（2026-06-18）**：`parse_output` 在 `expected_type` 不在 `(text, json_object, json_array)` 时立即返回 `parse_status='failed'`，错误信息含非法值与允许列表。新增 2 个测试 | ✅ 已修复 |
+| L-003 | **已修复（2026-06-18）**：`BigModelProvider.__init__` 移除 `timeout` / `bypass_proxy` / `extra_headers` 三个 legacy 形参及其回退逻辑；`main.py` 已确认只用新风格 kwargs，无影响 | ✅ 已修复 |
+| L-004 | **已修复（2026-06-18）**：`response_format` 现可携带 `schema` 字段；`AnthropicProvider` 将其透传到 `tool_use.input_schema`（未提供时仍用空 schema 兜底）。`service.py` 两个调用点（line 184 / 487）已更新为 schema 存在时附加。新增 2 个 provider 测试 | ✅ 已修复 |
+| L-005 | **已修复（2026-06-18）**：`tests/test_live_demo.py:93,117` 改用 `caller_service` | ✅ 已修复 |
 
 ## 已验证对齐项
 
@@ -172,3 +172,4 @@
 
 - 2026-06-18 初版（Claude）— Task 0-6 完成，CRITICAL 1 / HIGH 6 / MEDIUM 8 / LOW 5
 - 2026-06-18 终稿（Claude）— Task 7-11 完成，文档侧全部对齐；剩余建议为代码层修复（已分级标注）
+- 2026-06-18 代码层修复（Claude）— 应用 TDD 修复 L-001 / L-002 / L-003 / L-004 / L-005 / M-008；新增测试 10 个（`test_idempotency.py` 6 + `test_parser.py` 2 + `test_providers.py` 2），总测试数 33 → 43（active 28 → 38）。全部 RED → GREEN 验证。未修复项：M-003 同步端点删除（需评审）、L-004 的 OpenAI-compat 路径未透传 schema（其 API 不支持）

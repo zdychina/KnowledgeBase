@@ -21,6 +21,16 @@ def parse_output(
     expected_type: str,
     schema: dict | None = None,
 ) -> ParseResult:
+    _ALLOWED_TYPES = ("text", "json_object", "json_array")
+    if expected_type not in _ALLOWED_TYPES:
+        return ParseResult(
+            parse_status="failed",
+            parse_error=(
+                f"unsupported expected_type: {expected_type!r}. "
+                f"Must be one of {', '.join(_ALLOWED_TYPES)}."
+            ),
+        )
+
     if not raw_text:
         return ParseResult(parse_status="failed", parse_error="empty or null response from provider")
 

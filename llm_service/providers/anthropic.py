@@ -107,6 +107,9 @@ class AnthropicProvider:
             response_format is not None
             and response_format.get("type") == "json_object"
         )
+        # Optional: caller can plumb a real JSON Schema via response_format["schema"]
+        # to strengthen tool_use constraints. Default empty schema just triggers tool_use.
+        json_schema = response_format.get("schema") if want_json else None
 
         system, anthropic_messages = self._convert_messages(messages)
 
@@ -135,13 +138,14 @@ class AnthropicProvider:
 
         # Also attempt tool_use for models that support it
         if want_json:
+            input_schema = json_schema if json_schema else {
+                "type": "object",
+                "properties": {},
+            }
             body.setdefault("tools", []).append({
                 "name": "structured_output",
                 "description": "Output structured JSON",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {},
-                },
+                "input_schema": input_schema,
             })
             body["tool_choice"] = {"type": "tool", "name": "structured_output"}
 

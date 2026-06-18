@@ -26,29 +26,24 @@ class BigModelProvider:
         rerank_timeout: int = 60,
         rerank_bypass_proxy: bool = False,
         rerank_headers: dict | None = None,
-        # Legacy aliases kept for backward compat during migration
-        timeout: int | None = None,
-        bypass_proxy: bool | None = None,
-        extra_headers: dict | None = None,
     ) -> None:
         self._embedding_api_key = embedding_api_key
         self._embedding_url = embedding_url.rstrip("/")
         self._embedding_model = embedding_model
-        self._embedding_headers = embedding_headers or extra_headers or {}
+        self._embedding_headers = embedding_headers or {}
         self._rerank_api_key = rerank_api_key
         self._rerank_url = rerank_url.rstrip("/")
         self._rerank_model = rerank_model
         self._rerank_headers = rerank_headers or {}
 
-        # Use per-capability timeout, fall back to legacy shared param
-        self._embedding_timeout = embedding_timeout if timeout is None else timeout
-        self._rerank_timeout = rerank_timeout if timeout is None else timeout
-
-        # Build a shared client with the longer of the two timeouts
+        # Per-capability timeout. Build a shared client with the longer of the two.
+        self._embedding_timeout = embedding_timeout
+        self._rerank_timeout = rerank_timeout
         max_timeout = max(self._embedding_timeout, self._rerank_timeout)
-        bp = embedding_bypass_proxy if bypass_proxy is None else bypass_proxy
-        transport = httpx.AsyncHTTPTransport() if bp else None
-        self._client = httpx.AsyncClient(transport=transport, timeout=max_timeout, trust_env=not bp)
+        transport = httpx.AsyncHTTPTransport() if embedding_bypass_proxy else None
+        self._client = httpx.AsyncClient(
+            transport=transport, timeout=max_timeout, trust_env=not embedding_bypass_proxy
+        )
 
     async def close(self) -> None:
         await self._client.aclose()

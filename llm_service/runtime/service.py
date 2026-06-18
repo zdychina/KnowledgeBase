@@ -13,6 +13,7 @@ from llm_service.db import LlmRuntimeDB
 from llm_service.providers.base import ProviderProtocol
 from llm_service.providers.model_base import ModelProviderProtocol
 from llm_service.runtime.event_bus import EventBus
+from llm_service.runtime.idempotency import find_existing_task
 from llm_service.runtime.parser import ParseResult, parse_output
 from llm_service.runtime.persist_writer import PersistWriter, SyncChatRecord
 from llm_service.runtime.task_manager import TaskManager
@@ -180,11 +181,12 @@ class LLMService:
                    VALUES (%s, %s, %s, %s, 'running', %s)""",
                 (attempt_id, task_id, request_id, attempt_no, now),
             )
-            response_format = (
-                {"type": "json_object"}
-                if expected_type in ("json_object", "json_array")
-                else None
-            )
+            if expected_type in ("json_object", "json_array"):
+                response_format = {"type": "json_object"}
+                if schema:
+                    response_format["schema"] = schema
+            else:
+                response_format = None
             resp = await self._provider.complete(
                 messages=messages, params=params,
                 response_format=response_format,
@@ -285,16 +287,11 @@ class LLMService:
         """Generic idempotent submit: check key -> insert task + request -> emit event."""
         async with self._submit_lock:
             if idempotency_key:
-                row = await self._db.fetchone(
-                    """SELECT id FROM agent_llm_tasks
-                       WHERE idempotency_key = %s
-                         AND status NOT IN ('failed', 'dead_letter', 'cancelled')
-                       ORDER BY created_at DESC
-                       LIMIT 1""",
-                    (idempotency_key,),
-                )
-                if row:
-                    return row["id"]
+                # Delegate to find_existing_task for consistent priority semantics
+                # (succeeded > running > queued). See runtime/idempotency.py.
+                existing = await find_existing_task(self._db, idempotency_key)
+                if existing:
+                    return existing
 
             # Use a transaction for task + request insert
             async with self._db.pool.connection() as conn:
@@ -487,11 +484,15 @@ class LLMService:
 
         # ---- Phase 2: Call LLM (the only blocking work) ----
         start = time.monotonic()
-        response_format = (
-            {"type": "json_object"}
-            if actual_expected_type in ("json_object", "json_array")
-            else None
-        )
+        if actual_expected_type in ("json_object", "json_array"):
+            # Carry the schema so providers that support structured tool_use
+            # (e.g. Anthropic) can enforce it natively. OpenAI-compatible
+            # providers ignore the extra "schema" key.
+            response_format = {"type": "json_object"}
+            if actual_schema:
+                response_format["schema"] = actual_schema
+        else:
+            response_format = None
 
         try:
             resp = await self._provider.complete(

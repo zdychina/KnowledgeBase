@@ -147,3 +147,67 @@ async def test_anthropic_json_object_tool_use_returns_input():
     import json
     assert json.loads(resp.output_text) == {"result": "hello"}
     await provider.close()
+
+
+async def test_anthropic_json_object_uses_empty_schema_when_none_provided():
+    """Default behavior: no schema in response_format → empty input_schema
+    (just enough to trigger tool_use). Backward-compat guard."""
+    from unittest.mock import AsyncMock, patch
+    from llm_service.providers.anthropic import AnthropicProvider
+
+    provider = AnthropicProvider(api_key="k", model="m", base_url="http://x/v1/messages")
+    captured_body = {}
+
+    def capture_post(url, json=None, headers=None):
+        captured_body.update(json or {})
+        mock = AsyncMock()
+        mock.status_code = 200
+        mock.json = lambda: {"content": [], "usage": {}}
+        return mock
+
+    with patch.object(provider._client, "post", side_effect=capture_post):
+        await provider.complete(
+            messages=[{"role": "user", "content": "x"}],
+            params={},
+            response_format={"type": "json_object"},
+        )
+    tools = captured_body.get("tools", [])
+    assert len(tools) == 1
+    assert tools[0]["name"] == "structured_output"
+    # Empty default schema still triggers tool_use
+    assert tools[0]["input_schema"] == {"type": "object", "properties": {}}
+    await provider.close()
+
+
+async def test_anthropic_json_object_passes_schema_to_tool_use():
+    """When response_format carries a schema, it must be plumbed into tool_use.input_schema
+    so the model receives stronger constraints than the empty default."""
+    from unittest.mock import AsyncMock, patch
+    from llm_service.providers.anthropic import AnthropicProvider
+
+    provider = AnthropicProvider(api_key="k", model="m", base_url="http://x/v1/messages")
+    captured_body = {}
+    expected_schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+
+    def capture_post(url, json=None, headers=None):
+        captured_body.update(json or {})
+        mock = AsyncMock()
+        mock.status_code = 200
+        mock.json = lambda: {"content": [], "usage": {}}
+        return mock
+
+    with patch.object(provider._client, "post", side_effect=capture_post):
+        await provider.complete(
+            messages=[{"role": "user", "content": "x"}],
+            params={},
+            response_format={"type": "json_object", "schema": expected_schema},
+        )
+    tools = captured_body.get("tools", [])
+    assert len(tools) == 1
+    assert tools[0]["input_schema"] == expected_schema
+    await provider.close()
+
