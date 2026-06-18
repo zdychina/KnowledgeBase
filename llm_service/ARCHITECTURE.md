@@ -6,7 +6,29 @@
 
 ## 1. 模块全图
 
-（TODO：Task 5 用真实文件清单替换）
+`llm_service/` 顶层文件（每个一句话职责）：
+
+| 文件 | 职责 |
+|---|---|
+| `__init__.py` | 模块 docstring（仅一行，无导出） |
+| `__main__.py` | 入口；Windows 下强制 `asyncio.SelectorEventLoop`（psycopg async 兼容），uvicorn 跑 `create_app` 工厂 |
+| `main.py` | `create_app()` 工厂 + FastAPI lifespan；按依赖顺序构造 DB / Provider / Template / PersistWriter / Worker / LeaseRecovery，shutdown 逆序 |
+| `config.py` | 从控制面 `{CONTROL_PLANE_BASE_URL}/api/v1/system/llm_service/raw` 拉取配置，`_REQUIRED_PATHS` 强制 25 个字段必须存在；`${VAR}` 占位在加载时展开为环境变量 |
+| `pg_config.py` | 从控制面 `/api/v1/system/database/raw` 拉取 DB 连接信息，返回 `LlmDbConfig` dataclass（host/port/user/password/dbname/sslmode） |
+| `pg_schema.py` | `ensure_database()` 建库 + `ensure_schema()` 执行 DDL（幂等，忽略 DuplicateObject）；启动前清理 `idle in transaction` 与 >30s active 连接（commit 63c0412） |
+| `db.py` | `LlmRuntimeDB`：包 `psycopg_pool.AsyncConnectionPool`，min/max size 来自 config；提供 `acquire()`、`health_check()`、`close()` |
+| `models.py` | Pydantic 请求/响应模型：TaskCreateRequest、ExecuteRequest、EmbeddingRequest、RerankRequest、各 Response、Template CRUD 模型 |
+| `client.py` | `LLMClient`：Mining/Serving 用的 HTTP SDK；`bypass_proxy=True` 时用 `httpx.AsyncClient(proxy=None, trust_env=False)` 绕本机代理 |
+
+子目录：
+
+| 目录 | 内容 |
+|---|---|
+| `runtime/` | 业务编排层 — service / worker / task_manager / model_service / persist_writer / event_bus / idempotency / parser / template_registry（详见 §2-§6） |
+| `providers/` | Provider/ModelProvider 实现 — base / model_base / openai_compatible / anthropic / bigmodel_models / mock / utils（详见 §5） |
+| `api/` | FastAPI 路由 — tasks / results / model_api / templates / admin / stats / health（路由清单见 README §3） |
+| `tests/` | pytest 单测 + curl 示例 + profiling 脚本（详见 README §6） |
+| `architecture.html` | **已过时**（2026-04-23 版），仅保留历史参考，新读者请读本文件 |
 
 ## 2. 启动生命周期
 
@@ -291,7 +313,7 @@ Anthropic 不原生支持 `response_format=json_object`，provider 内部双管�
 
 ### 6.1 PostgreSQL Schema
 
-llm_service 已迁离 SQLite（与 README v1.2 描述不符）。表清单（基于 SQL 模板与 pg_schema，pg_schema 细节 Task 5 补全）：
+llm_service 已迁离 SQLite（与 README v1.2 描述不符）。**7 张表**，DDL 文件 `databases/agent_llm_runtime/schemas/002_agent_llm_runtime_postgresql.sql`，由 `pg_schema.py::ensure_schema()` 启动时幂等执行：
 
 | 表 | 用途 | 关键字段 |
 |---|---|---|
@@ -301,9 +323,13 @@ llm_service 已迁离 SQLite（与 README v1.2 描述不符）。表清单（基
 | `agent_llm_results` | 解析结果 | task_id, attempt_id, parse_status, parsed_output_json, text_output, parse_error, validation_errors_json |
 | `agent_llm_events` | 状态变迁日志 | task_id, event_type, message, metadata_json |
 | `agent_llm_prompt_templates` | 模板 CRUD | template_key, template_version, knowledge_domain, system_prompt, user_prompt_template |
-| `agent_llm_model_calls` | **embedding/rerank 专属审计**（README 未提） | call_type, model, input_count, latency_ms, token_usage |
+| `agent_llm_model_calls` | **embedding/rerank 专属审计** | call_type, model, input_count, latency_ms, token_usage |
 
-> README v1.2 标"6 张表"，实际 ≥ 7 张（多 `agent_llm_model_calls`）。
+> README v1.2 标"6 张表"，实际 7 张（多 `agent_llm_model_calls`）。`pg_schema.py` 还会：
+> - 启动前 `pg_terminate_backend` 清理 `idle in transaction` 与 >30s active 连接（commit 63c0412）
+> - DDL 用 `_split_ddl` 按 `;` 切分（带 `$$` dollar-quoting 识别），忽略 `DuplicateObject` / `DuplicateTable` / `DuplicateFunction`
+
+`LlmRuntimeDB`（`db.py`）包 `psycopg_pool.AsyncConnectionPool`，min/max size 来自 config.db.pool。
 
 ### 6.2 PersistWriter（`runtime/persist_writer.py`）
 
@@ -345,8 +371,52 @@ return from memory             batch ← 取最多 batch_size 条
 
 ## 7. 配置与热重载
 
-（TODO：Task 5 写环境变量 + 热重载机制）
+### 7.1 配置来源：控制面拉取
+
+llm_service **不在本地读 yaml 文件**，启动时通过 HTTP 从控制面拉两份配置：
+
+| 配置类型 | URL | 文件 | 内容 |
+|---|---|---|---|
+| Service 配置 | `{CONTROL_PLANE_BASE_URL}/api/v1/system/llm_service/raw` | `config.py` | provider/model/template/worker/persist_writer/task 等子树 |
+| DB 配置 | `{CONTROL_PLANE_BASE_URL}/api/v1/system/database/raw` | `pg_config.py` | host/port/user/password/dbname/sslmode |
+
+`config.py::_REQUIRED_PATHS` 强制 25 个路径必须存在（缺失即启动失败），涵盖：provider.type / provider.models / provider.api_key / model_provider.* / template.cache_ttl / worker.concurrency / persist_writer.* / task.retry_* / task.lease_duration 等。
+
+### 7.2 环境变量（启动期）
+
+启动**必需**的环境变量：
+
+| 变量 | 用途 |
+|---|---|
+| `CONTROL_PLANE_BASE_URL` | 控制面 API 根（`config.py` + `pg_config.py` 都依赖） |
+| `LLM_SERVICE_*` | 旧版本前缀；当前路径走控制面后，仅 `${VAR}` 展开时可能用到（详见下条） |
+
+`config.py` 在解析控制面返回的 dict 时，会对字符串值做 `${VAR_NAME}` → `os.environ[VAR_NAME]` 展开（典型用于 `provider.api_key` 引用环境变量而非明文）。这是**唯一**的 LLM_SERVICE_* 风格注入点，其余字段都来自控制面 dict 本身。
+
+### 7.3 多模型选择
+
+`provider.models` 是 dict，key 是模型别名（如 `default` / `cheap` / `strong`）。`provider.active_model` 指向当前生效的 key。`resolve_active_model_config()` 把 `provider.models[active_model]` 深合并覆盖 `provider` 顶层（model / temperature / max_tokens 等），最终作为运行时配置。
+
+### 7.4 热重载机制
+
+**入口**：`POST /api/v1/admin/reload-config`（`api/admin.py:53-176`）
+
+热重载流程：
+```
+POST /api/v1/admin/reload-config
+  → 重新从控制面拉 config + db_config
+  → diff 新旧 config：
+       ├─ provider.type 变了 → 销毁旧 Provider，构造新 Provider（跨 provider 切换）
+       ├─ worker.concurrency 变了 → Worker.scale(new_n)（动态增减 _loop 协程）
+       ├─ template.cache_ttl 变了 → 更新 TemplateRegistry 缓存 TTL
+       └─ 其余字段 → 替换 config 引用
+  → 返回 diff summary
+```
+
+**不影响**：进行中的 task（已 claim 的继续跑）、PersistWriter 队列中的 record、DB 连接池本身（除非 pg_config 变了，需要重启）。
+
+**相关诊断端点**：`GET /api/v1/admin/worker-status` 返回当前 concurrency / active_tasks / queue_depth。
 
 ## 8. 已知边界与限制
 
-（TODO：Task 10 汇总）
+（占位 · Task 10 汇总）
