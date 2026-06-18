@@ -87,6 +87,20 @@
 
 实际为 25 个端点（含 list_tasks）。README 重写时按功能分组：提交/同步/查询/管理/模型/统计/系统。
 
+### 新增 MEDIUM（Task 6 追加）
+
+- **M-007 [README §6 测试数 96 已过时]** 旧 README 写"pytest 96 passed"，实际为 **33 个 test 函数**（5 个被 skip 的集成 stub + 28 个真实可执行）。分布：
+  - `test_parser.py`：12（json_object / json_array / text / markdown 剥围栏 / schema 验证通过/失败 / 非法 schema 不崩溃 / 空输入 / text 跳过 schema）
+  - `test_providers.py`：8（Mock 循环 + OpenAICompatible URL 构造 + Anthropic 3 个：system 转换、JSON fallback 提取、tool_use input 序列化）
+  - `test_models.py`：7（TaskSubmitRequest 默认值 / legacy caller_domain 兼容 / 校验拒绝空服务名 / ExecuteResponse 两态 / EmbeddingRequest 标量归一化 / RerankRequest 空文档拒绝）
+  - `test_client.py`：1 真实（_build_submit_payload）+ 5 `@pytest.mark.skip` 集成 stub（execute/submit+get/cancel/embed/rerank）
+  - `conftest.py`：0（仅 `config` fixture + `TEST_CFG` 常量 + asyncio_mode=auto 设置）
+  - 非测试脚本：`curl_test.md`（curl 食谱，非 pytest）、`profile_execute.py`（手动跑的 ASGI 计时脚本）、`test_live_demo.py`（带 `__main__` 的 live 演示，**非 pytest**，且 line 147-152 仍写 `data/llm_service.sqlite` 与 `sqlite3` 指令 — SQLite 残留）
+
+- **M-008 [test_live_demo.py 仍引用 SQLite]** `tests/test_live_demo.py:147-152` 的总结输出打印 `DB file: data/llm_service.sqlite` + `sqlite3 data/llm_service.sqlite` 命令。这是 SQLite→PG 迁移时漏改的残留，会误导新成员。属代码层（非本次修复范围），但应在 README §6 测试章节标注「demo 脚本输出有 SQLite 残留」。
+
+- **L-005 [test_live_demo.py 用 legacy caller_domain]** `tests/test_live_demo.py:93, 117` 仍用 `caller_domain` 字段（legacy），而 `test_models.py::test_task_submit_request_accepts_legacy_caller_domain` 证实新字段是 `caller_service`。models.py 同时接受两者做兼容，但 demo 脚本应升级到新字段。
+
 ## 修复建议优先级
 
 （占位 · Task 10 整合）
