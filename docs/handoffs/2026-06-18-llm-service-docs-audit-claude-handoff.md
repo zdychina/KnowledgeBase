@@ -47,6 +47,46 @@
 - **L-003 [BigModelProvider 兼容 legacy 参数命名]** 构造函数同时接受 `timeout` / `bypass_proxy` / `extra_headers`（legacy）与 `embedding_*` / `rerank_*` 前缀（新），并保留 `if timeout is None` 等回退逻辑。属于迁移期产物，长期应移除。位置：`providers/bigmodel_models.py:30-50`。
 - **L-004 [AnthropicProvider tool_use input_schema 空定义]** 强制 JSON 输出时塞入的 tool `input_schema` 是 `{"type":"object","properties":{}}`（无字段约束），仅起触发 tool_use 之效；若上层 `output_schema_json` 已注入到 system prompt，两者并不联动。可考虑把真实 schema 透传进 tool_use。位置：`providers/anthropic.py:137-146`。
 
+### 新增 MEDIUM/HIGH（Task 4 追加）
+
+- **H-006 [README §3 API 总览大量端点缺失]** 旧 README 仅提到 `/tasks`、`/execute`、`/tasks/{id}`、`/cancel`、`/models/embeddings`、`/models/rerank`。实际共 **21 个端点**（见下表）。重写 README 时必须全列。
+- **M-003 [同步 model 端点已加 Deprecation]** `api/model_api.py:16-18` 在 `/api/v1/models/embeddings` 与 `/api/v1/models/rerank` 的响应里加了 `X-Deprecation-Notice` header，引导改用 `/api/v1/tasks/embed` 与 `/api/v1/tasks/rerank`（异步队列版）。README 未提，且 QUICKSTART 若仍示例同步端点需补充异步版示例。
+- **M-004 [admin/reload-config 是热重载入口]** `api/admin.py:53-176` 实现完整热重载（含跨 provider 切换、worker concurrency 动态 scale、cache_ttl 热更新），是配置热重载章节的关键证据。README 完全未提此端点。
+- **M-005 [templates DELETE 实为 archive]** `api/templates.py:113-120` 的 DELETE 不删行，只把 `status='archived'`，与 RESTful DELETE 语义略有偏差，应在文档明示。
+- **M-006 [tasks/retry 路径存在]** `api/tasks.py:145-170` 提供 retry 端点：把 failed/dead_letter/cancelled 的任务重置为 queued，attempt_count=0。README 未提。
+
+#### Task 4 完整路由清单（用于 README §3）
+
+| Method | 路径 | 文件 | 用途 |
+|---|---|---|---|
+| POST | `/api/v1/tasks` | tasks.py | 异步提交 chat 任务 |
+| POST | `/api/v1/tasks/embed` | tasks.py | 异步提交 embedding 任务 |
+| POST | `/api/v1/tasks/rerank` | tasks.py | 异步提交 rerank 任务 |
+| POST | `/api/v1/execute` | tasks.py | **同步**执行 chat，立即返回 |
+| GET | `/api/v1/tasks/{task_id}` | tasks.py | 任务详情（含 request/result/attempts/events） |
+| POST | `/api/v1/tasks/{task_id}/cancel` | tasks.py | 取消 queued 任务 |
+| POST | `/api/v1/tasks/{task_id}/retry` | tasks.py | 重置失败任务为 queued |
+| POST | `/api/v1/tasks/batch-cancel` | tasks.py | 批量取消 |
+| GET | `/api/v1/tasks/{task_id}/result` | results.py | 解析结果 |
+| GET | `/api/v1/tasks/{task_id}/request` | results.py | 原始请求快照 |
+| GET | `/api/v1/tasks/{task_id}/attempts` | results.py | 所有尝试列表 |
+| GET | `/api/v1/tasks/{task_id}/events` | results.py | 状态变迁事件流 |
+| POST | `/api/v1/models/embeddings` | model_api.py | **同步** embedding（已加 Deprecation header） |
+| POST | `/api/v1/models/rerank` | model_api.py | **同步** rerank（已加 Deprecation header） |
+| GET | `/health` | health.py | 健康检查（含 DB 连通性 + tables_ok） |
+| POST | `/api/v1/templates` | templates.py | 创建/UPSERT 模板 |
+| GET | `/api/v1/templates` | templates.py | 列出模板（可选 domain 过滤） |
+| GET | `/api/v1/templates/{template_key}` | templates.py | 按 key+domain 解析模板 |
+| PUT | `/api/v1/templates/{tpl_id}` | templates.py | 更新模板字段 |
+| DELETE | `/api/v1/templates/{tpl_id}` | templates.py | 归档（status='archived'） |
+| POST | `/api/v1/admin/reload-config` | admin.py | **热重载**配置（跨 provider 切换） |
+| GET | `/api/v1/admin/worker-status` | admin.py | Worker 诊断（concurrency/active_tasks） |
+| GET | `/api/v1/stats` | stats.py | 全局聚合统计 |
+| GET | `/api/v1/stats/tokens` | stats.py | token 用量细分 |
+| GET | `/api/v1/tasks` | stats.py | 任务列表（分页+多维过滤） |
+
+实际为 25 个端点（含 list_tasks）。README 重写时按功能分组：提交/同步/查询/管理/模型/统计/系统。
+
 ## 修复建议优先级
 
 （占位 · Task 10 整合）
