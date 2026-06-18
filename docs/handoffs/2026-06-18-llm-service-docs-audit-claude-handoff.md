@@ -33,7 +33,14 @@
 
 ### LOW
 
-（占位 · Task 2-7 继续追加）
+- **L-001 [幂等查询存在两条不一致的路径]** `runtime/idempotency.py::find_existing_task` 按 `succeeded → running → queued` 优先级返回；`LLMService._submit_with_idempotency` 内部用「NOT IN (failed, dead_letter, cancelled) ORDER BY created_at DESC LIMIT 1」。前者只在 `TaskManager.submit` 路径使用，后者在 `LLMService.submit*` 路径使用。语义差异：若同时存在一条 succeeded 和一条 queued，前者返回 succeeded，后者返回最新创建的（可能是 queued）。建议统一到 `find_existing_task` 的优先级语义。位置：`runtime/service.py:286-297` vs `runtime/idempotency.py:6-23`。
+- **L-002 [parser 未在文档列出的边界]** `parse_output` 在 `expected_type` 既非 text 也非 json_object/json_array 时，会走 json 解析但不做类型校验（行为同 json_object 但允许 array）。建议文档化或显式拒绝。位置：`runtime/parser.py:34-48`。
+
+### 新增 CRITICAL/HIGH（本节追加）
+
+无新增 CRITICAL。新增 HIGH：
+
+- **H-005 [README §1 表数错]** 标"数据库：agent_llm_runtime（6 张表）"，实际至少 7 张（多出 `agent_llm_model_calls` 用于 embedding/rerank 审计）。位置：`runtime/persist_writer.py:182-188` 的 `_model_call_sql`。
 
 ## 修复建议优先级
 

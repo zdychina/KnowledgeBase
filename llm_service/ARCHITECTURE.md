@@ -94,7 +94,37 @@ Rerank 流程结构相同，仅 provider 调用与 text_output 拼装不同（�
 
 ### 3.4 同步 Embedding / Rerank（`POST /api/v1/models/embeddings` 等）
 
-经 `ModelService`（Task 2 补全）直通 provider，**同样绕过 worker**。审计落库由 `_record_sync_task` 类机制完成（具体在 §6.2 PersistWriter 中说明）。
+经 `ModelService` 直通 ModelProvider，**同样绕过 worker**。
+
+```
+Client.embed() / rerank()
+  → POST /api/v1/models/embeddings | /rerank
+  → ModelService.embed(body) / rerank(body)
+       ├─ model_provider.embed(texts, model, dimensions)
+       │    └─ provider 异常 → enqueue(SyncModelRecord(status='failed')) → re-raise
+       ├─ 提取 token_usage、构造 text_output（rerank 还拼装每文档 score）
+       ├─ enqueue(SyncModelRecord(status='succeeded', raw_response_json=...))
+       └─ 返回 EmbeddingResponse / RerankResponse
+```
+
+落库不在请求路径上：`enqueue` 是非阻塞 `Queue.put_nowait`，由后台 PersistWriter 批量写。
+
+### 3.5 输出解析（`runtime/parser.py`）
+
+`parse_output(raw_text, expected_type, schema)` 是 sync / async 共用的解析层：
+
+| `expected_type` | 行为 |
+|---|---|
+| `text` | 直接返回原文，`parse_status='succeeded'` |
+| `json_object` | 剥 ```json``` 围栏 → `json.loads` → 必须是 dict，否则 fail |
+| `json_array` | 同上 → 必须是 list |
+| 其它 | 走 json_object 分支但类型不校验 |
+
+`schema` 非空时调用 `jsonschema.validate`：
+- Schema 本身非法 → `parse_status='failed'`，`parse_error='invalid schema: ...'`
+- 实例不匹配 → `parse_status='schema_invalid'`，`validation_errors=[message]`
+
+`ParseResult.parse_status` 三态：`succeeded` / `failed` / `schema_invalid`。Worker / sync 路径都依据它决定 `_mgr.complete()` 还是 `_mgr.fail()`。
 
 ## 4. 任务状态机
 
@@ -140,11 +170,84 @@ default: backoff_base=2.0, backoff_max=60.0  →  2, 4, 8, 16, 32, 60, 60...
 
 ## 5. Provider 体系
 
-（TODO：Task 2 + Task 3 写协议/能力矩阵/扩展指南）
+### 5.1 模板系统（`runtime/template_registry.py` + `runtime/service.py::_resolve_template`）
+
+- **存储**：表 `agent_llm_prompt_templates`，按 `(template_key, template_version, knowledge_domain)` UPSERT
+- **查询**：`get_by_key(template_key, knowledge_domain)` — 精确匹配 domain 优先于 NULL（domain-specific overrides generic）
+- **缓存**：内存字典 + TTL（`config.template.cache_ttl`）。`update` / `archive` 后缓存全清
+- **白名单更新**：列名静态校验（`_ALLOWED_UPDATE_COLUMNS`），杜绝 SQL 注入
+- **展开**：`string.Template($var).safe_substitute(input)`，未匹配变量保留原文
+- **schema 注入**：`expected_output_type ∈ (json_object, json_array)` 且 schema 非空时，把 JSON Schema 追加到 system prompt（带"不要原样输出 Schema 定义本身"的中文说明）
+
+### 5.2 幂等性（`runtime/idempotency.py`）
+
+`find_existing_task(db, idempotency_key)`：
+- 按 `succeeded → running → queued` 顺序找最新匹配
+- 任意一步命中即返回，全部未命中返回 None（允许新建）
+
+> **微差注意**：`LLMService._submit_with_idempotency` 自身的查询是「status NOT IN ('failed','dead_letter','cancelled') ORDER BY created_at DESC LIMIT 1」——返回任意非终态最新一条，与上面函数的优先级顺序不完全一致。两条路径并存：`TaskManager.submit` 走 `find_existing_task`；`LLMService.submit_*` 走自身内联查询。建议统一（见 handoff）。
+
+### 5.3 事件总线（`runtime/event_bus.py`）
+
+极简：每次 `emit(task_id, event_type, message, metadata)` = 一条 `INSERT INTO agent_llm_events`。无广播、无订阅者，事件表仅供 Dashboard / 排查使用。Task 1 已列各状态迁移对应的事件类型。
+
+> Provider 协议、能力矩阵、扩展指南在 Task 3 写入（依赖 providers/* 的全核）。
 
 ## 6. 存储层
 
-（TODO：Task 2 + Task 5 写 PostgreSQL schema + PersistWriter）
+### 6.1 PostgreSQL Schema
+
+llm_service 已迁离 SQLite（与 README v1.2 描述不符）。表清单（基于 SQL 模板与 pg_schema，pg_schema 细节 Task 5 补全）：
+
+| 表 | 用途 | 关键字段 |
+|---|---|---|
+| `agent_llm_tasks` | 任务主表 | id, status, task_type, priority, attempt_count, max_attempts, lease_expires_at, idempotency_key |
+| `agent_llm_requests` | 请求快照 | task_id, messages_json, input_json, params_json, expected_output_type, output_schema_json |
+| `agent_llm_attempts` | 每次尝试 | task_id, attempt_no, status, raw_output_text, prompt/completion/total_tokens, latency_ms, error_type |
+| `agent_llm_results` | 解析结果 | task_id, attempt_id, parse_status, parsed_output_json, text_output, parse_error, validation_errors_json |
+| `agent_llm_events` | 状态变迁日志 | task_id, event_type, message, metadata_json |
+| `agent_llm_prompt_templates` | 模板 CRUD | template_key, template_version, knowledge_domain, system_prompt, user_prompt_template |
+| `agent_llm_model_calls` | **embedding/rerank 专属审计**（README 未提） | call_type, model, input_count, latency_ms, token_usage |
+
+> README v1.2 标"6 张表"，实际 ≥ 7 张（多 `agent_llm_model_calls`）。
+
+### 6.2 PersistWriter（`runtime/persist_writer.py`）
+
+**目的**：把同步路径（execute / embed / rerank）的 DB 落库完全移出请求热路径，让同步调用者看不到 DB 延迟。
+
+```
+请求路径（同步）            后台路径
+──────────────              ──────────────
+provider.complete()         PersistWriter._writer_loop:
+parse_output()                while running:
+enqueue(SyncChatRecord)  ─→     item = queue.get(timeout=flush_interval)
+return from memory             batch ← 取最多 batch_size 条
+                                async with conn.transaction():
+                                  _write_chat(record)  / _write_model(record)
+```
+
+**关键参数**（从 config 注入）：
+- `queue_size=10000` — 内存队列上限
+- `batch_size=20` — 单次最多批写条数
+- `flush_interval=0.5s` — 即使数据少也定期刷
+- `writer_count=1` — 后台写协程数
+
+**降级策略**：队列满 → `put_nowait` 抛 `QueueFull` → 丢弃记录 + 计数 `self._dropped`；前 10 条 + 每 1000 条打 WARNING。**优先保证同步路径延迟，而非审计完整性**。
+
+**事务粒度**：每条 record 一个 transaction，单条失败不影响批次内其它记录。
+
+**SyncChatRecord 落库**（4 个 SQL，单事务）：
+1. `INSERT agent_llm_tasks`（status 直接是最终态 `succeeded`/`failed`，`attempt_count=1`）
+2. `INSERT agent_llm_requests`
+3. `INSERT agent_llm_attempts`（按 final_status 选 OK / FAIL 模板）
+4. `INSERT agent_llm_results`
+
+**SyncModelRecord 落库**（最多 5 个 SQL）：
+1. `INSERT agent_llm_tasks`（attempt_count=1, max_attempts=1，直接终态）
+2. `INSERT agent_llm_requests`
+3. `INSERT agent_llm_attempts`
+4. `INSERT agent_llm_results`（仅 succeeded 时）
+5. **`INSERT agent_llm_model_calls`**（embedding/rerank 专属审计表，记录 call_type/model/input_count/latency/tokens）
 
 ## 7. 配置与热重载
 
