@@ -193,6 +193,100 @@ default: backoff_base=2.0, backoff_max=60.0  →  2, 4, 8, 16, 32, 60, 60...
 
 > Provider 协议、能力矩阵、扩展指南在 Task 3 写入（依赖 providers/* 的全核）。
 
+### 5.4 Provider 协议（`providers/base.py` + `providers/model_base.py`）
+
+llm_service 区分两种能力协议，互不耦合：
+
+```python
+# providers/base.py — chat 能力
+@runtime_checkable
+class ProviderProtocol(Protocol):
+    async def complete(
+        self, messages: list[dict], params: dict,
+        *, response_format: dict | None = None,
+    ) -> ProviderResponse: ...
+    @property
+    def provider_name(self) -> str: ...
+    @property
+    def default_model(self) -> str: ...
+
+# providers/model_base.py — embedding/rerank 能力
+@runtime_checkable
+class ModelProviderProtocol(Protocol):
+    async def embed(
+        self, texts: list[str], *, model: str | None = None, dimensions: int | None = None,
+    ) -> dict: ...
+    async def rerank(
+        self, query: str, documents: list[str],
+        *, model: str | None = None, top_n: int | None = None,
+    ) -> dict: ...
+```
+
+错误模型：`ProviderError(error_type, message)` / `ModelProviderError(error_type, message)`，`error_type` 取值由各 provider 自行约定，但常见集合是：
+
+| error_type | 触发条件 |
+|---|---|
+| `timeout` | httpx.TimeoutException |
+| `connection_error` | httpx.ConnectError |
+| `rate_limited` | HTTP 429 |
+| `server_error` | HTTP ≥ 500 |
+| `client_error` | HTTP 400-499（非 429） |
+| `invalid_response` | 响应非 JSON |
+| `not_configured` | 缺 api_key 等 |
+
+### 5.5 Provider 能力矩阵
+
+| Provider | chat | embedding | rerank | 鉴权 | 备注 |
+|---|---|---|---|---|---|
+| `OpenAICompatibleProvider` | ✓ | — | — | Bearer | 通用 OpenAI 兼容（DeepSeek / Qwen / Ollama 等） |
+| `AnthropicProvider` | ✓ | — | — | x-api-key + anthropic-version | `/v1/messages`，content blocks 解析，json 走 tool_use 注入 |
+| `BigModelProvider` | — | ✓ | ✓ | Bearer | 智谱 AI，rerank 自带多批并发与索引重建 |
+| `MockProvider` | ✓ | — | — | — | 测试用，按预设 responses 循环返回 |
+
+**所有 provider 共性**：
+- `bypass_proxy=True` 时用 `httpx.AsyncHTTPTransport()` + `trust_env=False`，绕过本机代理（commit 30fbe7a、5339b22）
+- HTTP 错误统一映射到 `ProviderError`/`ModelProviderError`，调用方靠 `error_type` 决定是否重试
+
+### 5.6 BigModel rerank 批处理细节
+
+BigModel rerank 有三层硬上限（commit 9da5cfa 修复 1214 超长错误）：
+
+| 常量 | 值 | 含义 |
+|---|---|---|
+| `_RERANK_DOC_MAX_CHARS` | 4096 | 单文档截断阈值 |
+| `_RERANK_BATCH_SIZE` | 128 | 单批最大文档数 |
+| `_RERANK_BATCH_CHARS` | 28000 | 单批 query+docs 总字符上限 |
+
+流程：
+1. 文档逐条截断到 4096 字符
+2. `_split_batches`：任一上限触发即切批
+3. 单批 → 直接调用，使用 API 返回的 index
+4. 多批 → `asyncio.gather` 并发，跨批按 score 排序取 top_n
+5. 多批场景下 API 的 batch-local index **不可信** → `_rebuild_indices` 用文档文本匹配回全局索引（处理重复文档时用集合 `used_indices` 去重）
+6. 还原原始（未截断）文档文本到 result
+
+### 5.7 AnthropicProvider JSON 输出策略
+
+Anthropic 不原生支持 `response_format=json_object`，provider 内部双管齐下：
+1. 注入英文 system instruction："You MUST respond with valid JSON only..."
+2. 追加 `tool_use`：`{"name":"structured_output","input_schema":{"type":"object","properties":{}}}` + `tool_choice={"type":"tool","name":"structured_output"}`
+3. 解析响应时优先取 `tool_use.input`（已是 dict），否则取 text block
+4. 若仍未拿到合法 JSON，调用 `_extract_json` 在原文里找首个配对的大括号/方括号子串；找不到则包裹为 `{"text": "..."}` 兜底
+
+### 5.8 Provider 扩展指南
+
+新增 chat provider：
+1. 创建 `providers/your_provider.py`，实现 `ProviderProtocol`（`complete` + `provider_name` + `default_model`）
+2. 所有失败路径抛 `ProviderError(error_type, message)`，error_type 尽量复用 §5.4 表中的取值
+3. 在 `main.py` 的 provider 工厂分支里加 `elif provider_type == "your_provider":`
+4. 配置项命名：`provider.type = "your_provider"`，其余键自由命名
+
+新增 model provider（embedding/rerank）：
+1. 创建 `providers/your_models.py`，实现 `ModelProviderProtocol`（`embed` 和/或 `rerank`）
+2. 抛 `ModelProviderError`
+3. `main.py` model_provider 工厂里加分支
+4. 配置项命名：`embedding.*` / `rerank.*`
+
 ## 6. 存储层
 
 ### 6.1 PostgreSQL Schema

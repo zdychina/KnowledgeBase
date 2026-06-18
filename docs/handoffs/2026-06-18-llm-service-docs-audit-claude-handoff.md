@@ -42,6 +42,11 @@
 
 - **H-005 [README §1 表数错]** 标"数据库：agent_llm_runtime（6 张表）"，实际至少 7 张（多出 `agent_llm_model_calls` 用于 embedding/rerank 审计）。位置：`runtime/persist_writer.py:182-188` 的 `_model_call_sql`。
 
+### 新增 LOW（Task 3 追加）
+
+- **L-003 [BigModelProvider 兼容 legacy 参数命名]** 构造函数同时接受 `timeout` / `bypass_proxy` / `extra_headers`（legacy）与 `embedding_*` / `rerank_*` 前缀（新），并保留 `if timeout is None` 等回退逻辑。属于迁移期产物，长期应移除。位置：`providers/bigmodel_models.py:30-50`。
+- **L-004 [AnthropicProvider tool_use input_schema 空定义]** 强制 JSON 输出时塞入的 tool `input_schema` 是 `{"type":"object","properties":{}}`（无字段约束），仅起触发 tool_use 之效；若上层 `output_schema_json` 已注入到 system prompt，两者并不联动。可考虑把真实 schema 透传进 tool_use。位置：`providers/anthropic.py:137-146`。
+
 ## 修复建议优先级
 
 （占位 · Task 10 整合）
