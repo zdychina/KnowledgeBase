@@ -1,5 +1,0 @@
-target/
-.env
-docs/
-src/test/
-*.md
