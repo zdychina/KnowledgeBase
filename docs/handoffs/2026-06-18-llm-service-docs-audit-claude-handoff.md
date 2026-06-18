@@ -103,16 +103,72 @@
 
 ## 修复建议优先级
 
-（占位 · Task 10 整合）
+> 接手人按本顺序处理。**本审计只改文档，下面是代码层修复建议，需要单独立项。**
+
+### P0（CRITICAL — 必须在下次迭代前处置）
+
+| ID | 建议 | 工作量 |
+|---|---|---|
+| C-001 | 已在 README v2.0 §3.2 / ARCHITECTURE §3.2 重新描述同步 execute 数据流，**代码无需改动**；如要进一步固化，在 `runtime/service.py::LLMService.execute()` 顶部加注释指明「绕过 claim / Worker，走 PersistWriter」 | 文档已对齐；注释 5 min |
+
+### P1（HIGH — 建议批量改）
+
+| ID | 建议 | 工作量 |
+|---|---|---|
+| H-001, H-002, H-003, H-005 | README v2.0 已全量重写，**文档侧已对齐**；代码侧无遗漏文件，无需动作 | 文档已对齐 |
+| H-004 | README v2.0 §3.7 与 ARCHITECTURE §4.1 已显式说明 `failed` 仅是 attempt 级状态，task 终态只有 `succeeded` / `dead_letter` / `cancelled` | 文档已对齐 |
+| H-006 | README v2.0 §3 已列全 25 个端点，按 6 个功能分组 | 文档已对齐 |
+
+### P2（MEDIUM — 建议独立 PR）
+
+| ID | 建议 | 工作量 |
+|---|---|---|
+| M-001, M-002 | README v2.0 已增 LeaseRecovery 说明，删除 dashboard/templates 引用 | 文档已对齐 |
+| M-003 | QUICKSTART §2.4 与 README §3.2 已标注 Deprecation header，建议在下一个大版本移除 `/api/v1/models/*` 同步端点 | 文档已对齐；删端点需评审 |
+| M-004 | README §3.6 / §7.5 + ARCHITECTURE §7.4 + QUICKSTART §10 已完整说明 reload-config | 文档已对齐 |
+| M-005 | README §3.5 已标注 DELETE 实为 archive | 文档已对齐 |
+| M-006 | README §3.4 已列 retry 端点 | 文档已对齐 |
+| M-007 | README §6 已更新为 33 tests | 文档已对齐 |
+| M-008 | **代码侧**：`tests/test_live_demo.py:147-152` 删除 SQLite 输出块或改成 PG 指令 | 5 min（代码改动） |
+
+### P3（LOW — 可延后或归档）
+
+| ID | 建议 | 工作量 |
+|---|---|---|
+| L-001 | 统一两条幂等查询路径到 `find_existing_task` 的优先级语义 | 0.5 day（代码改动 + 测试） |
+| L-002 | 在 `parser.py:34-48` 显式拒绝未知 `expected_type`，或在文档/类型注解中列出允许值 | 30 min |
+| L-003 | BigModelProvider 移除 `timeout` / `bypass_proxy` / `extra_headers` legacy 形参 | 1 hour（含调用方排查） |
+| L-004 | AnthropicProvider 把真实 `output_schema_json` 透传进 tool_use `input_schema`（当前为空 schema，仅触发 tool_use） | 0.5 day（需验证模型行为） |
+| L-005 | `tests/test_live_demo.py:93,117` 把 `caller_domain` 升级为 `caller_service` | 5 min |
 
 ## 已验证对齐项
 
-（占位 · Task 10 整合）
+以下漂移点已通过本次文档刷新对齐，接手人不必再看：
+
+- **[对齐] 数据存储**：README §1 / §3 / §4 + ARCHITECTURE §6.1 + QUICKSTART §概述/§3 已统一为 PostgreSQL，库名 `agent_llm_runtime`，**7 张表**（新增 `agent_llm_model_calls`）
+- **[对齐] 同步 execute 数据流**：README §3.2 + ARCHITECTURE §3.2 已描述「直调 Provider → parse → 内存构造 → PersistWriter.enqueue」快路径，绕过 claim / Worker
+- **[对齐] 模块图**：README §1 + ARCHITECTURE §1 已删除 `runtime/executor.py` / `dashboard/` / `templates/`，新增 `pg_config.py` / `pg_schema.py` / `runtime/persist_writer.py` / `runtime/event_bus.py` / `providers/anthropic.py`
+- **[对齐] 任务状态机**：ARCHITECTURE §4 已列全 5 个状态 + 迁移矩阵 + 退避公式 + Lease 机制；README §3.7 已明示 `failed` 仅 attempt 级
+- **[对齐] Provider 体系**：ARCHITECTURE §5 已列双协议（ProviderProtocol / ModelProviderProtocol）、4 个 Provider 能力矩阵、BigModel rerank 三层批处理上限（4096/128/28000）、Anthropic JSON 双管策略、扩展指南
+- **[对齐] PersistWriter**：ARCHITECTURE §6.2 已说明 queue_size/batch_size/flush_interval/writer_count、降级策略（队列满丢弃 + 计数）、事务粒度
+- **[对齐] API 路由**：README §3 已列全 25 个端点，按提交/同步/查询/管理/模板/统计/系统 6 类分组；已标注同步 model 端点的 Deprecation、templates DELETE 的 archive 语义
+- **[对齐] 配置机制**：README §4 + ARCHITECTURE §7 已说明控制面拉取（替代 `.env`）、`CONTROL_PLANE_BASE_URL` 必需、`${VAR}` 展开、多模型选择、热重载机制
+- **[对齐] 测试**：README §6 已更新为 33 个 test 函数分布表，标注非测试脚本
+- **[对齐] architecture.html**：已加 deprecated banner 指向 ARCHITECTURE.md
 
 ## 未验证项
 
-（占位 · Task 10 整合）
+诚实列出本次**未做**的验证（避免给接手人虚假信心）：
+
+- **未运行测试**：本次只统计 `def test_` 函数数，**没有执行 `pytest`**。28 个 active 测试是否真的全绿、5 个 skip 是否仍合理、是否有 flaky，需要接手人跑一次确认
+- **未在容器/真实环境启动服务**：所有架构理解来自静态读码，未实际 `python -m llm_service` 验证启动序列
+- **未做真实 LLM 调用**：Anthropic / BigModel / OpenAICompatible 三条 provider 路径的具体 HTTP 行为（超时/限流/错误码映射）来自代码注释，未实测
+- **未验证控制面 dict 完整性**：`config.py::_REQUIRED_PATHS` 列了 25 个字段，本次未实际向控制面拉取并比对实际返回结构
+- **未验证 `agent_llm_model_calls` 表的全部字段**：DDL 文件确认了表存在与主要列，但 embedding/rerank 写入此表的完整字段映射（input_count / token_usage 的具体结构）未对照 `persist_writer.py::_write_model` 中的 SQL 参数列表逐字段核对
+- **未深查 ARCHITECTURE §7.4 热重载字段差异处理**：代码扫到 `provider.type` 变化会重建 Provider、`worker.concurrency` 变化会调 `Worker.scale()`，但**未列出所有 diff 分支**；具体哪些字段会触发哪种动作的完整映射需接手人补
+- **未核对 `_cleanup_stale_connections` 在生产是否真的命中**：commit 63c0412 描述了死锁恢复场景，但触发频率、是否真正解决了所有锁等待问题，未在真实 PG 实例上验证
 
 ## 修订记录
 
-- 2026-06-18 初版（Claude）
+- 2026-06-18 初版（Claude）— Task 0-6 完成，CRITICAL 1 / HIGH 6 / MEDIUM 8 / LOW 5
+- 2026-06-18 终稿（Claude）— Task 7-11 完成，文档侧全部对齐；剩余建议为代码层修复（已分级标注）
