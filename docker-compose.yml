@@ -38,6 +38,9 @@ services:
       - ./main_control_service:/app/main_control_service
       - ./mcp_server:/app/mcp_server
       - ./databases:/app/databases
+    environment:
+      - PG_POOL_MIN=5
+      - PG_POOL_MAX=30
     stdin_open: true
     tty: true
     restart: unless-stopped

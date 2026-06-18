@@ -146,6 +146,59 @@ class TestGeneratedQuestionDifferentiation:
         assert unit.title.startswith("What is this?")
         assert not unit.title.startswith("Q")
 
+    def test_question_unit_carries_full_raw_text(self):
+        """Regression: text must contain FULL raw_text, not a 200-char truncation.
+
+        Previously `seg.raw_text[:200]` silently dropped the answer context.
+        """
+        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
+
+        long_body = "BODY-" + ("x" * 500) + "-END"  # 509 chars, well past the old 200 cap
+        seg = RawSegmentData(
+            document_key="doc:/test.md",
+            segment_index=0,
+            block_type="paragraph",
+            raw_text=long_body,
+        )
+        unit = _make_generated_question_unit(seg, "question?", 0)
+        assert long_body in unit.text           # full body present
+        assert "-END" in unit.text              # tail survived
+        assert len(unit.text) > 500             # not truncated near 200
+
+    def test_question_unit_uses_structural_context_as_source(self):
+        """Source line should prefer the full hierarchical path (structural_context)."""
+        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
+
+        seg = RawSegmentData(
+            document_key="doc:/test.md",
+            segment_index=0,
+            block_type="paragraph",
+            section_title="4.1 leaf-title",
+            raw_text="payload",
+            metadata_json={
+                "structural_context": "guide.pdf > 4 Commands > 4.1 leaf-title",
+            },
+        )
+        unit = _make_generated_question_unit(seg, "question?", 0)
+        # Full path is the source line, not just the leaf section_title
+        assert "guide.pdf > 4 Commands > 4.1 leaf-title" in unit.text
+        # search_text also picks up the path tokens for BM25/FTS5
+        assert "Commands" in unit.search_text or "guide" in unit.search_text
+
+    def test_question_unit_falls_back_to_section_title_without_context(self):
+        """Without structural_context, source line falls back to section_title."""
+        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
+
+        seg = RawSegmentData(
+            document_key="doc:/test.md",
+            segment_index=0,
+            block_type="paragraph",
+            section_title="4.2 only-leaf",
+            raw_text="payload",
+        )
+        unit = _make_generated_question_unit(seg, "question?", 0)
+        assert "4.2 only-leaf" in unit.text
+
 
 class TestQuestionGenerationFilter:
     """Bug 3: heading-only and very short segments should not generate questions."""
