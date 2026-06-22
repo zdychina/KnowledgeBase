@@ -107,6 +107,14 @@ export function useMiningApi() {
       return data
     },
 
+    async getRunDocumentRawContent(runId: string, docId: string): Promise<{ content: string; format: string }> {
+      const { data, headers } = await client.get(`/api/runs/${runId}/documents/${docId}/raw-content`, {
+        responseType: 'text',
+      })
+      const format = headers['x-content-format'] || 'plain'
+      return { content: data, format }
+    },
+
     async getRunArtifacts(runId: string): Promise<{
       run_id: string; document_count: number
       segment_count: number; unit_count: number; relation_count: number
@@ -188,6 +196,14 @@ export function useMiningApi() {
       } catch {
         return { document_id: docId, snapshot_id: '', total: 0, items: [] }
       }
+    },
+
+    async getDocumentRawContent(docId: string): Promise<{ content: string; format: string }> {
+      const { data, headers } = await client.get(`/api/knowledge/documents/${docId}/raw-content`, {
+        responseType: 'text',
+      })
+      const format = headers['x-content-format'] || 'plain'
+      return { content: data, format }
     },
 
     async getSegments(params?: { limit?: number }): Promise<PaginatedResponse<KnowledgeSegment>> {

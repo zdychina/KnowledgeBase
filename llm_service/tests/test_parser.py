@@ -83,3 +83,21 @@ def test_invalid_schema_still_returns_parsed_output():
     result = parse_output('{"ok": true}', expected_type="json_object", schema=bad_schema)
     assert result.parse_status == "failed"
     assert result.parsed_output == {"ok": True}
+
+
+def test_parse_unknown_expected_type_fails():
+    """Unknown expected_type values must be rejected explicitly, not silently
+    fall through to json_object behavior."""
+    result = parse_output('{"x": 1}', expected_type="xml")
+    assert result.parse_status == "failed"
+    assert result.parse_error is not None
+    assert "xml" in result.parse_error
+    assert "expected_type" in result.parse_error or "unsupported" in result.parse_error
+
+
+def test_parse_none_expected_type_fails():
+    """None expected_type must also be rejected explicitly."""
+    result = parse_output('{"x": 1}', expected_type=None)  # type: ignore[arg-type]
+    assert result.parse_status == "failed"
+    assert result.parse_error is not None
+

@@ -15,8 +15,10 @@ from llm_service.pg_schema import ensure_schema
 from llm_service.providers.bigmodel_models import BigModelProvider
 from llm_service.providers.model_base import ModelProviderProtocol
 from llm_service.providers.base import ProviderProtocol
+from llm_service.providers.anthropic import AnthropicProvider
 from llm_service.providers.openai_compatible import OpenAICompatibleProvider
 from llm_service.runtime.model_service import ModelService
+from llm_service.runtime.persist_writer import PersistWriter
 from llm_service.runtime.service import LLMService
 from llm_service.runtime.worker import LeaseRecovery, Worker
 
@@ -66,7 +68,7 @@ def create_app(
         db = LlmRuntimeDB.from_conninfo(
             pg_cfg.conninfo,
             pool_min=pg_cfg.pool_min,
-            pool_max=pg_cfg.pool_max,
+            pool_max=dig(cfg, "pool_max") or pg_cfg.pool_max,
         )
         await db.open()
 
@@ -99,14 +101,29 @@ def create_app(
         # Providers — all params from config dict, no defaults
         # Resolve multi-model: if provider.models exists, merge active_model overrides
         active_provider = resolve_active_model_config(cfg)
-        provider = _factory() if _factory else OpenAICompatibleProvider(
-            base_url=active_provider["base_url"],
-            api_key=active_provider["api_key"],
-            model=active_provider.get("model", active_provider.get("active_model", "")),
-            headers=active_provider.get("headers") or {},
-            timeout=active_provider.get("timeout", 30),
-            bypass_proxy=active_provider.get("bypass_proxy", False),
-        )
+        # Select provider implementation based on provider_type
+        provider_type = active_provider.get("provider_type", "openai_compatible")
+        if _factory:
+            provider = _factory()
+        elif provider_type == "anthropic":
+            provider = AnthropicProvider(
+                api_key=active_provider["api_key"],
+                model=active_provider.get("model", active_provider.get("active_model", "")),
+                base_url=active_provider.get("base_url", "https://api.anthropic.com/v1/messages"),
+                api_version=active_provider.get("api_version", "2023-06-01"),
+                headers=active_provider.get("headers") or {},
+                timeout=active_provider.get("timeout", 60),
+                bypass_proxy=active_provider.get("bypass_proxy", False),
+            )
+        else:
+            provider = OpenAICompatibleProvider(
+                base_url=active_provider["base_url"],
+                api_key=active_provider["api_key"],
+                model=active_provider.get("model", active_provider.get("active_model", "")),
+                headers=active_provider.get("headers") or {},
+                timeout=active_provider.get("timeout", 30),
+                bypass_proxy=active_provider.get("bypass_proxy", False),
+            )
         model_provider = (
             model_provider_factory()
             if model_provider_factory
@@ -133,9 +150,21 @@ def create_app(
         # Embedding dimensions: optional in YAML, None means don't pass to provider
         _embedding_dimensions = cfg.get("embedding", {}).get("dimensions")
 
-        svc = LLMService(db=db, provider=provider, config=cfg, model_provider=model_provider, templates=templates)
+        # PersistWriter — decouples sync-call DB writes from request hot path
+        pw_cfg = dig(cfg, "persist_writer") or {}
+        persist_writer = PersistWriter(
+            db=db,
+            queue_size=pw_cfg.get("queue_size", 10000),
+            batch_size=pw_cfg.get("batch_size", 20),
+            flush_interval=pw_cfg.get("flush_interval", 0.5),
+            writer_count=pw_cfg.get("writer_count", 1),
+        )
+        await persist_writer.start()
+
+        svc = LLMService(db=db, provider=provider, config=cfg, model_provider=model_provider, templates=templates, persist_writer=persist_writer)
         model_svc = ModelService(
             model_provider, db=db,
+            persist_writer=persist_writer,
             default_embedding_model=dig(cfg, "embedding", "model"),
             default_rerank_model=dig(cfg, "rerank", "model"),
             default_embedding_dimensions=_embedding_dimensions,
@@ -179,6 +208,7 @@ def create_app(
                 await recovery.start()
                 app.state.worker = worker
                 app.state.worker_concurrency = worker_concurrency
+                app.state.lease_recovery = recovery
         except Exception:
             if recovery:
                 await recovery.stop()
@@ -207,6 +237,8 @@ def create_app(
                 logger.info("Re-queued in-flight tasks on shutdown")
             except Exception:
                 logger.exception("Failed to re-queue in-flight tasks")
+        # Flush remaining sync-call records before closing DB
+        await persist_writer.stop()
         if hasattr(provider, 'close'):
             await provider.close()
         if hasattr(model_provider, 'close'):

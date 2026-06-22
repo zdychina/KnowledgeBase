@@ -64,6 +64,18 @@ export function useControlPlaneApi() {
         headers: { 'Content-Type': 'text/yaml' },
       })
     },
+
+    // ── Service reload (via existing proxy) ──
+    async reloadServiceConfig(domainId: string, serviceName: string): Promise<ServiceReloadResult> {
+      const { data } = await client.post(`/api/v1/proxy/${domainId}/${serviceName}/api/v1/admin/reload-config`)
+      return data
+    },
+
+    // ── Code sync ──
+    async codeSync(): Promise<CodeSyncResult> {
+      const { data } = await client.post('/api/v1/code-sync')
+      return data
+    },
   }
 }
 
@@ -75,4 +87,17 @@ export interface ControlPlaneDomainSummary {
   enabled: boolean
   default_channel: string
   scenario_pack_ref: string
+}
+
+export interface ServiceReloadResult {
+  ok: boolean
+  error?: string
+  config?: Record<string, unknown>
+}
+
+export interface CodeSyncResult {
+  ok: boolean
+  updated_dirs?: string[]
+  file_count?: number
+  error?: string
 }

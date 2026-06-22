@@ -155,7 +155,7 @@
             <el-table-column type="index" label="#" width="50" />
             <el-table-column label="文本内容">
               <template #default="{ row }">
-                <span class="cell-value">{{ row.text }}</span>
+                <ExpandableText :text="row.text" />
               </template>
             </el-table-column>
             <el-table-column label="字符数" width="90" align="right">
@@ -201,7 +201,7 @@
             <el-table-column type="index" label="#" width="50" />
             <el-table-column label="文档内容">
               <template #default="{ row }">
-                <span class="cell-value">{{ row.doc }}</span>
+                <ExpandableText :text="row.doc" />
               </template>
             </el-table-column>
             <el-table-column label="字符数" width="90" align="right">
@@ -255,7 +255,7 @@
             </el-table-column>
             <el-table-column label="文档内容">
               <template #default="{ row }">
-                <span class="cell-value">{{ row.doc }}</span>
+                <ExpandableText :text="row.doc" />
               </template>
             </el-table-column>
           </el-table>
@@ -384,6 +384,7 @@ import { useLlmApi } from '@/api/llm'
 import { usePolling } from '@/composables/usePolling'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
+import ExpandableText from './ExpandableText.vue'
 
 const props = defineProps<{ taskId: string }>()
 const router = useRouter()
@@ -445,7 +446,7 @@ const embedTexts = computed(() => {
 
 const embedTableRows = computed(() =>
   embedTexts.value.map((text: string) => ({
-    text: text.length > 200 ? text.slice(0, 200) + '...' : text,
+    text,
     length: text.length,
   }))
 )
@@ -473,9 +474,7 @@ const rerankDocuments = computed(() => {
 
 const rerankDocRows = computed(() =>
   rerankDocuments.value.map((d: any) => ({
-    doc: typeof d === 'string'
-      ? (d.length > 200 ? d.slice(0, 200) + '...' : d)
-      : JSON.stringify(d),
+    doc: typeof d === 'string' ? d : JSON.stringify(d),
     length: typeof d === 'string' ? d.length : JSON.stringify(d).length,
   }))
 )
@@ -503,7 +502,7 @@ const rerankResultRows = computed(() =>
   rerankResults.value.map((r: any) => ({
     index: r.index ?? 0,
     score: typeof r.relevance_score === 'number' ? r.relevance_score : 0,
-    doc: truncateDoc(r.document),
+    doc: typeof r.document === 'string' ? r.document : JSON.stringify(r.document ?? ''),
   }))
 )
 
@@ -570,11 +569,6 @@ function formatTime(t?: string | null) {
 function formatJson(obj: unknown): string {
   if (!obj) return ''
   return JSON.stringify(obj, null, 2)
-}
-
-function truncateDoc(doc: unknown): string {
-  if (typeof doc !== 'string') return JSON.stringify(doc)
-  return doc.length > 300 ? doc.slice(0, 300) + '...' : doc
 }
 
 function scoreWidth(score: number): string {

@@ -62,6 +62,9 @@ ALL_TABLES = [
     "mining_run_stage_events",
     "mining_run_documents",
     "mining_runs",
+    # serving_runtime（检索服务）
+    "serving_query_cache",
+    "serving_query_logs",
     # asset_core（资产核心）
     "asset_retrieval_embeddings",
     "asset_retrieval_units",
@@ -90,6 +93,8 @@ ALL_TRIGGERS = [
 
 # ── 要执行的建表 SQL 文件（按顺序） ─────────────────────────
 SCHEMA_FILES = [
+    REPO_ROOT / "databases" / "serving_runtime" / "schemas" / "001_serving_runtime_postgresql.sql",
+    REPO_ROOT / "databases" / "serving_runtime" / "schemas" / "002_serving_query_cache.sql",
     REPO_ROOT / "databases" / "agent_llm_runtime" / "schemas" / "002_agent_llm_runtime_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "002_mining_runtime_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "003_mining_runtime_domain.sql",

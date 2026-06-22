@@ -98,6 +98,12 @@ mining:
       - navigation
       - toc
       - metadata
+    # Segmentation thresholds (v2.0)
+    min_chunk_tokens: 128
+    max_chunk_tokens: 512
+    cross_section_merge: true
+    min_enrich_tokens: 30
+    structural_context_mode: breadcrumb
 
   # LLM templates
   llm_templates:
@@ -547,31 +553,6 @@ serving:
       - UDG
       - UNC
       - CloudCore
-
-  # Per-intent retrieval strategy overrides (graph expansion relation chains + rerank).
-  # Optional: when an intent is omitted here, RetrievalRouter's built-in defaults apply.
-  intent_strategy:
-    troubleshooting:
-      graph_expand:
-        enabled: true
-        relation_types: [causes, results_in, enables, conditions, elaborates, backgrounds]
-        max_depth: 2
-        max_expanded: 8
-      rerank: cascade
-    comparison:
-      graph_expand:
-        enabled: true
-        relation_types: [contrasts_with, parallels, elaborates]
-        max_depth: 2
-        max_expanded: 8
-      rerank: cascade
-    procedure:
-      graph_expand:
-        enabled: true
-        relation_types: [purposes, enables, sequences, conditions, elaborates]
-        max_depth: 2
-        max_expanded: 8
-      rerank: cascade
 
   # Per-intent retrieval weights and top-k limits.
   route_policy:

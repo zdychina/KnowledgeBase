@@ -260,8 +260,8 @@ CREATE TABLE IF NOT EXISTS asset_build_document_snapshots (
     build_id              TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE CASCADE,
     document_id           TEXT NOT NULL REFERENCES asset_documents(id) ON DELETE CASCADE,
     document_snapshot_id  TEXT NOT NULL REFERENCES asset_document_snapshots(id) ON DELETE RESTRICT,
-    selection_status      TEXT NOT NULL CHECK (selection_status IN ('active', 'removed')),
-    reason                TEXT NOT NULL CHECK (reason IN ('add', 'update', 'retain', 'remove')),
+    selection_status      TEXT NOT NULL CHECK (selection_status IN ('active', 'removed', 'skipped_empty')),
+    reason                TEXT NOT NULL CHECK (reason IN ('add', 'update', 'retain', 'remove', 'no_segments')),
     metadata_json         JSONB NOT NULL DEFAULT '{}'::jsonb,
     PRIMARY KEY (build_id, document_id)
 );

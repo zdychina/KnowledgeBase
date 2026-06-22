@@ -1,5 +1,6 @@
 host: "0.0.0.0"
 port: 8900
+pool_max: 20
 provider:
   active_model: "deepseek-chat"
   headers: {}
@@ -66,8 +67,13 @@ rerank:
   bypass_proxy: false
   headers: {}
 worker:
-  concurrency: 1
+  concurrency: 6
   poll_interval: 1.0
+persist_writer:
+  queue_size: 10000
+  batch_size: 20
+  flush_interval: 0.5
+  writer_count: 1
 task:
   default_max_attempts: 3
   retry_backoff_base: 8.0

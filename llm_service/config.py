@@ -52,7 +52,6 @@ _REQUIRED_PATHS: list[tuple[str, ...]] = [
     ("task", "default_max_attempts"),
     ("task", "retry_backoff_base"),
     ("task", "retry_backoff_max"),
-    ("task", "execute_timeout"),
     ("task", "lease_duration"),
     ("task", "lease_recovery_interval"),
     ("template", "cache_ttl"),
