@@ -34,7 +34,7 @@
 import { useRoute } from 'vue-router'
 import {
   Monitor, Management, Search, FolderOpened, Share,
-  Cpu, Setting,
+  Cpu, Setting, Connection,
 } from '@element-plus/icons-vue'
 import { useDomainStore } from '@/stores/domain'
 
@@ -45,6 +45,7 @@ const navItems = [
   { path: '/', label: '概览', icon: Monitor },
   { path: '/mining', label: '挖掘管理', icon: Management },
   { path: '/search', label: '检索测试', icon: Search },
+  { path: '/paradigm', label: '检索范式', icon: Connection },
   { path: '/knowledge', label: '知识资产', icon: FolderOpened },
   { path: '/graph', label: '知识图谱', icon: Share },
   { path: '/llm', label: 'LLM 服务', icon: Cpu },

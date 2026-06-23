@@ -68,6 +68,17 @@ const router = createRouter({
           props: true,
         },
         {
+          path: 'paradigm',
+          name: 'paradigm',
+          component: () => import('@/views/paradigm/ParadigmListView.vue'),
+        },
+        {
+          path: 'paradigm/:id',
+          name: 'paradigm-edit',
+          component: () => import('@/views/paradigm/ParadigmEditorView.vue'),
+          props: true,
+        },
+        {
           path: 'settings',
           name: 'settings',
           component: () => import('@/views/SettingsView.vue'),
