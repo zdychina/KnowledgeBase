@@ -33,6 +33,8 @@
           :nodes-draggable="!previewMode"
           fit-view-on-init
           @connect="onConnect"
+          @connect-start="onConnectStart"
+          @connect-end="onConnectEnd"
           @node-click="onNodeClick"
           @pane-click="selectedNodeId = ''"
         >
@@ -44,6 +46,23 @@
         </VueFlow>
         <div v-if="nodes.length === 0" class="editor__canvas-hint">从左侧拖拽算子到此处开始编排</div>
         <div class="editor__canvas-legend">连线规则：相同 slot 类型才能连（候选可接入融合多入口）；类型不符会被拒绝</div>
+
+        <button class="editor__help-btn" type="button" @click="helpVisible = !helpVisible">
+          {{ helpVisible ? '✕ 关闭' : '？ 连线帮助' }}
+        </button>
+        <div v-if="helpVisible" class="editor__help-panel">
+          <div class="editor__help-title">连线规则</div>
+          <ul class="editor__help-list">
+            <li><b>方向</b>：从节点右侧「输出口」拖到下游左侧「输入口」</li>
+            <li><b>类型一致</b>：同类型才能连（向量→向量、范围→范围、候选→候选…）；唯一例外：<b>候选 → 融合算子的多入口</b></li>
+            <li><b>单入 / 多入</b>：普通输入口只接一条（再连会替换旧线）；融合 <code>candidates</code> 可接多条</li>
+            <li><b>不能成环</b>：整图必须是有向无环图（DAG）</li>
+            <li><b>入口</b>：<code>query</code> 输入口可不连（自动用请求查询）；检索的 <b><code>scope</code> 必须连 scope_resolve</b></li>
+            <li><b>终点</b>：用 <code>collect</code>（候选列表）或 <code>assemble</code>（ContextPack）作输出</li>
+            <li><b>删除</b>：选中节点/连线按 <kbd>Delete</kbd>；节点也可在右侧「删除节点」</li>
+          </ul>
+        </div>
+
         <div v-if="previewMode" class="editor__preview-banner">
           <span>正在查看已发布 <strong>v{{ previewVersion }}</strong>（只读）</span>
           <el-button size="small" type="primary" @click="exitPreview">退出预览，回到草稿</el-button>
@@ -179,6 +198,7 @@ const runningPub = ref(false)
 
 const previewMode = ref(false)
 const previewVersion = ref(0)
+const helpVisible = ref(false)
 
 let seq = 0
 
@@ -251,9 +271,34 @@ function isAssignable(from?: string, to?: string): boolean {
   if (from === to) return true
   return to === 'CANDIDATE_LIST_MULTI' && from === 'CANDIDATE_LIST'
 }
+const TYPE_LABELS: Record<string, string> = {
+  STRING: '文本', INT: '整数', DOUBLE: '小数', BOOL: '布尔', VECTOR: '向量',
+  STRING_LIST: '字符串列表', CANDIDATE_LIST: '候选', CANDIDATE_LIST_MULTI: '候选(多入)',
+  SCOPE: '范围', QUERY_UNDERSTANDING: '查询理解', CONTEXT_PACK: '上下文包',
+}
+function typeLabel(t?: string): string { return t ? (TYPE_LABELS[t] ?? t) : '?' }
+
+// Track the latest invalid hover so connect-end can surface a clear reason.
+let invalidHint = ''
+let connectedThisDrag = false
+
 /** Real-time guard during a connection drag — incompatible target handles won't connect. */
 function isValidConnection(c: Connection): boolean {
-  return isAssignable(outSlotType(c.source, c.sourceHandle), inSlotType(c.target, c.targetHandle))
+  const from = outSlotType(c.source, c.sourceHandle)
+  const to = inSlotType(c.target, c.targetHandle)
+  const ok = isAssignable(from, to)
+  if (!ok && from && to) {
+    invalidHint = `连接有误：${typeLabel(from)}（输出）不能接到 ${typeLabel(to)}（输入）—— slot 类型需一致`
+  }
+  return ok
+}
+
+function onConnectStart() { connectedThisDrag = false; invalidHint = '' }
+
+/** A drag that ended without a successful connect, after hovering an incompatible handle. */
+function onConnectEnd() {
+  if (!connectedThisDrag && invalidHint) ElMessage.warning(invalidHint)
+  invalidHint = ''
 }
 
 function onConnect(c: Connection) {
@@ -275,8 +320,9 @@ function onConnect(c: Connection) {
   // Dedup: the same source→target/handle pair (e.g. re-dragged onto a MULTI slot) yields an
   // identical edge id; skip it to avoid duplicate-keyed edges.
   const edge = mkEdge(c.source, c.sourceHandle || '', c.target, c.targetHandle || '')
-  if (edges.value.some(e => e.id === edge.id)) return
+  if (edges.value.some(e => e.id === edge.id)) { connectedThisDrag = true; return }
   edges.value.push(edge)
+  connectedThisDrag = true
 }
 
 function onDrop(e: DragEvent) {
@@ -493,6 +539,13 @@ function goBack() { router.push({ name: 'paradigm' }) }
 .editor__canvas { position: relative; flex: 1; border: 1px solid var(--kb-border, #e5e7eb); border-radius: 10px; overflow: hidden; background: #fbfcfe; }
 .editor__canvas-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--kb-text-tertiary); pointer-events: none; font-size: 14px; }
 .editor__canvas-legend { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--kb-text-tertiary); background: rgba(255,255,255,.75); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+.editor__help-btn { position: absolute; top: 10px; right: 10px; z-index: 5; font-size: 12px; padding: 5px 10px; border: 1px solid var(--kb-border, #e5e7eb); border-radius: 7px; background: #fff; color: var(--kb-text-secondary); cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+.editor__help-btn:hover { background: var(--kb-bg-subtle, #f8fafc); }
+.editor__help-panel { position: absolute; top: 46px; right: 10px; z-index: 5; width: 320px; background: #fff; border: 1px solid var(--kb-border, #e5e7eb); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.12); padding: 12px 14px; }
+.editor__help-title { font-size: 13px; font-weight: 700; color: var(--kb-text-secondary); margin-bottom: 8px; }
+.editor__help-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.7; color: var(--kb-text-secondary); }
+.editor__help-list code { font-family: monospace; font-size: 11px; background: var(--kb-bg-subtle, #f1f5f9); padding: 0 4px; border-radius: 4px; }
+.editor__help-list kbd { font-family: monospace; font-size: 11px; background: #1e293b; color: #fff; padding: 0 5px; border-radius: 4px; }
 /* invalid connection line turns red in real time */
 :deep(.vue-flow__connection-path) { stroke: #3b82f6; }
 :deep(.vue-flow__edge.invalid .vue-flow__edge-path) { stroke: #ef4444; }
