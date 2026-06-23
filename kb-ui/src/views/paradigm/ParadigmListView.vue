@@ -42,6 +42,12 @@
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
+        <el-form-item label="模板">
+          <el-select v-model="form.template" style="width: 100%">
+            <el-option v-for="t in templates" :key="t.key" :label="t.label" :value="t.key" />
+          </el-select>
+        </el-form-item>
+        <div v-if="selectedTemplateDesc" class="pd-list__tpl-desc">{{ selectedTemplateDesc }}</div>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -52,13 +58,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useOperatorApi } from '@/api/operator'
 import type { ParadigmView } from '@/types/operator'
+import { PARADIGM_TEMPLATES } from './templates'
 
 const router = useRouter()
 const api = useOperatorApi()
@@ -67,7 +74,10 @@ const paradigms = ref<ParadigmView[]>([])
 const loading = ref(false)
 const createVisible = ref(false)
 const creating = ref(false)
-const form = ref({ name: '', description: '' })
+const form = ref({ name: '', description: '', template: 'blank' })
+const templates = PARADIGM_TEMPLATES
+const selectedTemplateDesc = computed(() =>
+  PARADIGM_TEMPLATES.find(t => t.key === form.value.template)?.description ?? '')
 
 async function load() {
   loading.value = true
@@ -81,7 +91,7 @@ async function load() {
 }
 
 function openCreate() {
-  form.value = { name: '', description: '' }
+  form.value = { name: '', description: '', template: 'blank' }
   createVisible.value = true
 }
 
@@ -89,7 +99,12 @@ async function doCreate() {
   if (!form.value.name.trim()) { ElMessage.warning('请填写名称'); return }
   creating.value = true
   try {
-    const pd = await api.createParadigm({ name: form.value.name.trim(), description: form.value.description })
+    const tpl = PARADIGM_TEMPLATES.find(t => t.key === form.value.template)
+    const pd = await api.createParadigm({
+      name: form.value.name.trim(),
+      description: form.value.description,
+      graph: tpl?.graph ?? undefined,
+    })
     createVisible.value = false
     router.push({ name: 'paradigm-edit', params: { id: pd.id } })
   } catch (e) {
@@ -122,4 +137,5 @@ onMounted(load)
 .pd-list__sub { color: var(--kb-text-tertiary); font-size: 13px; margin: 4px 0 0; }
 .pd-list__link { color: var(--kb-accent, #3b82f6); cursor: pointer; font-weight: 600; }
 .pd-list__table { margin-top: 4px; }
+.pd-list__tpl-desc { font-size: 12px; color: var(--kb-text-tertiary); line-height: 1.6; margin: -6px 0 4px; padding: 8px 10px; background: var(--kb-bg-subtle, #f8fafc); border-radius: 6px; }
 </style>

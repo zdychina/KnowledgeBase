@@ -77,12 +77,21 @@
 
         <!-- run -->
         <section class="editor__sec">
-          <div class="editor__sec-title">试运行（不落库）</div>
-          <el-input v-model="runQuery" size="small" placeholder="输入查询，如 aa-interface" @keyup.enter="dryRun">
-            <template #append>
-              <el-button :loading="running" @click="dryRun">运行</el-button>
-            </template>
-          </el-input>
+          <div class="editor__sec-title">运行</div>
+          <el-input v-model="runQuery" size="small" placeholder="查询，如 aa-interface" @keyup.enter="dryRun" />
+          <div class="editor__run-row">
+            <el-button size="small" :loading="running" @click="dryRun">试运行草稿（不落库）</el-button>
+          </div>
+          <div class="editor__run-row">
+            <el-select v-model="runVersion" size="small" style="width: 124px" :disabled="!hasPublished">
+              <el-option label="当前版本" :value="0" />
+              <el-option v-for="v in versions" :key="v.version" :label="`v${v.version}`" :value="v.version" />
+            </el-select>
+            <el-button size="small" type="primary" :loading="runningPub" :disabled="!hasPublished" @click="runPublished">
+              运行已发布
+            </el-button>
+          </div>
+          <div v-if="!hasPublished" class="editor__run-hint">尚未发布，先点上方「发布」</div>
           <RunResultPanel :result="runResult" />
         </section>
       </aside>
@@ -112,7 +121,7 @@ import OperatorNode from '@/components/paradigm/OperatorNode.vue'
 import ParamForm from '@/components/paradigm/ParamForm.vue'
 import RunResultPanel from '@/components/paradigm/RunResultPanel.vue'
 import { useOperatorApi } from '@/api/operator'
-import type { OperatorDef, ParadigmGraph, ParadigmView, RunResult } from '@/types/operator'
+import type { OperatorDef, ParadigmGraph, ParadigmView, ParadigmVersionView, RunResult } from '@/types/operator'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -133,10 +142,15 @@ const outputKey = ref('')
 const runQuery = ref('aa-interface')
 const runResult = ref<RunResult | null>(null)
 
+const versions = ref<ParadigmVersionView[]>([])
+const runVersion = ref(0) // 0 = current/latest
+const hasPublished = computed(() => (paradigm.value?.currentVersion ?? 0) > 0)
+
 const saving = ref(false)
 const validating = ref(false)
 const publishing = ref(false)
 const running = ref(false)
+const runningPub = ref(false)
 
 let seq = 0
 
@@ -161,10 +175,19 @@ onMounted(async () => {
     paradigm.value = await api.getParadigm(props.id)
     const g = paradigm.value.draftGraph
     if (g) loadGraph(g)
+    await loadVersions()
   } catch (e) {
     ElMessage.error('加载失败：' + errMsg(e))
   }
 })
+
+async function loadVersions() {
+  if ((paradigm.value?.currentVersion ?? 0) <= 0) return
+  try {
+    versions.value = await api.listVersions(props.id)
+    runVersion.value = paradigm.value?.currentVersion ?? 0
+  } catch { /* ignore */ }
+}
 
 function loadGraph(g: ParadigmGraph) {
   let maxSeq = 0
@@ -287,6 +310,8 @@ async function publish() {
     await api.updateDraft(props.id, serialize())
     const v = await api.publish(props.id)
     paradigm.value = await api.getParadigm(props.id)
+    await loadVersions()
+    runVersion.value = v.version
     ElMessage.success(`已发布 v${v.version}`)
   } catch (e) {
     runResult.value = compileErrorOf(e)
@@ -304,6 +329,21 @@ async function dryRun() {
     runResult.value = compileErrorOf(e)
     ElMessage.error('运行失败：' + errMsg(e))
   } finally { running.value = false }
+}
+
+async function runPublished() {
+  if (!runQuery.value.trim()) { ElMessage.warning('请输入查询'); return }
+  runningPub.value = true
+  runResult.value = null
+  try {
+    runResult.value = await api.search(props.id, runQuery.value.trim(), {
+      debug: true,
+      version: runVersion.value > 0 ? runVersion.value : undefined,
+    })
+  } catch (e) {
+    runResult.value = compileErrorOf(e)
+    ElMessage.error('运行失败：' + errMsg(e))
+  } finally { runningPub.value = false }
 }
 
 // ---- helpers ----
@@ -357,4 +397,6 @@ function goBack() { router.push({ name: 'paradigm' }) }
 .editor__node-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
 .editor__node-head code { font-size: 11px; color: #94a3b8; }
 .editor__node-desc { font-size: 12px; color: var(--kb-text-tertiary); margin: 0 0 12px; line-height: 1.5; }
+.editor__run-row { display: flex; gap: 6px; margin-top: 8px; }
+.editor__run-hint { font-size: 12px; color: var(--kb-text-tertiary); margin-top: 6px; }
 </style>
