@@ -3,6 +3,7 @@
     <div class="opnode__header">
       <span class="opnode__title">{{ def?.displayName ?? data.operatorType }}</span>
       <span class="opnode__type">{{ data.operatorType }}</span>
+      <span v-if="paramSummary" class="opnode__params">{{ paramSummary }}</span>
     </div>
 
     <div class="opnode__body">
@@ -29,13 +30,23 @@ import type { OperatorDef, SlotDecl } from '@/types/operator'
 
 const props = defineProps<{
   id: string
-  data: { operatorType: string; def?: OperatorDef; isOutput?: boolean }
+  data: { operatorType: string; def?: OperatorDef; isOutput?: boolean; params?: Record<string, unknown> }
 }>()
 
 const def = computed(() => props.data.def)
 const inputs = computed<SlotDecl[]>(() => def.value?.inputSlots ?? [])
 const outputs = computed<SlotDecl[]>(() => def.value?.outputSlots ?? [])
 const isOutput = computed(() => props.data.isOutput ?? false)
+
+/** Short summary of scalar params shown on the node, e.g. "textKind=both · topK=20". */
+const paramSummary = computed(() => {
+  const parts: string[] = []
+  for (const [k, v] of Object.entries(props.data.params ?? {})) {
+    if (v === null || v === undefined || v === '' || typeof v === 'object') continue
+    parts.push(`${k}=${v}`)
+  }
+  return parts.slice(0, 3).join(' · ')
+})
 </script>
 
 <style scoped>
@@ -45,6 +56,7 @@ const isOutput = computed(() => props.data.isOutput ?? false)
   box-shadow: 0 1px 4px rgba(0,0,0,.08); font-size: 12px;
 }
 .opnode--output { box-shadow: 0 0 0 2px #22c55e55, 0 1px 4px rgba(0,0,0,.08); }
+.opnode--input { --cat: #0ea5e9; }
 .opnode--query { --cat: #6366f1; }
 .opnode--scope { --cat: #14b8a6; }
 .opnode--retrieve { --cat: #3b82f6; }
@@ -55,6 +67,7 @@ const isOutput = computed(() => props.data.isOutput ?? false)
 .opnode__header { padding: 7px 12px 6px; display: flex; flex-direction: column; gap: 1px; }
 .opnode__title { font-weight: 700; color: #1e293b; line-height: 1.2; }
 .opnode__type { font-size: 10px; color: #94a3b8; font-family: monospace; line-height: 1.2; }
+.opnode__params { font-size: 10px; color: #64748b; line-height: 1.3; margin-top: 2px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .opnode__body { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0 9px; }
 .opnode__col { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }

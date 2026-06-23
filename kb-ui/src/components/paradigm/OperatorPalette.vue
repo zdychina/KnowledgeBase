@@ -24,9 +24,9 @@ import type { OperatorDef } from '@/types/operator'
 
 const props = defineProps<{ operators: OperatorDef[] }>()
 
-const CATEGORY_ORDER = ['query', 'scope', 'retrieve', 'fuse', 'rerank', 'output']
+const CATEGORY_ORDER = ['input', 'query', 'scope', 'retrieve', 'fuse', 'rerank', 'output']
 const CATEGORY_LABELS: Record<string, string> = {
-  query: '查询变换', scope: '范围', retrieve: '检索',
+  input: '入口', query: '查询变换', scope: '范围', retrieve: '检索',
   fuse: '融合', rerank: '重排', output: '输出',
 }
 
@@ -68,6 +68,7 @@ function onDragStart(e: DragEvent, type: string) {
 .palette__item:active { cursor: grabbing; }
 .palette__item-name { font-size: 13px; font-weight: 600; color: var(--kb-text-primary); }
 .palette__item-type { font-size: 10.5px; color: var(--kb-text-tertiary); font-family: monospace; }
+.palette__item--input { --cat-color: #0ea5e9; }
 .palette__item--query { --cat-color: #6366f1; }
 .palette__item--scope { --cat-color: #14b8a6; }
 .palette__item--retrieve { --cat-color: #3b82f6; }

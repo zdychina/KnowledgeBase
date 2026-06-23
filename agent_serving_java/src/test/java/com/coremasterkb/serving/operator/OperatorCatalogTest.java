@@ -13,6 +13,7 @@ import com.coremasterkb.serving.operator.operators.query.HydeOperator;
 import com.coremasterkb.serving.operator.operators.query.MultiQueryOperator;
 import com.coremasterkb.serving.operator.operators.query.QueryEmbedOperator;
 import com.coremasterkb.serving.operator.operators.query.QueryUnderstandingOperator;
+import com.coremasterkb.serving.operator.operators.query.RequestInputOperator;
 import com.coremasterkb.serving.operator.operators.rerank.LlmRerankOperator;
 import com.coremasterkb.serving.operator.operators.rerank.ModelRerankOperator;
 import com.coremasterkb.serving.operator.operators.rerank.ScoreRerankOperator;
@@ -40,7 +41,7 @@ class OperatorCatalogTest {
     private static OperatorRegistry realRegistry() {
         List<Operator> all = List.of(
                 new QueryEmbedOperator(null), new QueryUnderstandingOperator(null, null),
-                new HydeOperator(null), new MultiQueryOperator(null),
+                new HydeOperator(null), new MultiQueryOperator(null), new RequestInputOperator(),
                 new ScopeResolveOperator(null),
                 new DenseVectorOperator(null), new FtsOperator(null),
                 new EntityExactOperator(null),
@@ -60,10 +61,10 @@ class OperatorCatalogTest {
     }
 
     @Test
-    void catalogHasAllSeventeenOperatorsWithValidSchemas() {
+    void catalogOperatorsHaveValidSchemas() {
         OperatorRegistry reg = realRegistry();
         List<OperatorDef> defs = reg.allDefinitions();
-        assertEquals(17, defs.size());
+        assertEquals(18, defs.size());
         for (OperatorDef d : defs) {
             assertNotNull(d.type());
             assertFalse(d.outputSlots().isEmpty(), d.type() + " must declare an output slot");

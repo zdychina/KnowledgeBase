@@ -66,6 +66,11 @@ export function useOperatorApi() {
       return data
     },
 
+    async archive(id: string): Promise<ParadigmView> {
+      const { data } = await client.post(`/api/v1/paradigm/${id}/archive`, {})
+      return data
+    },
+
     // ---- validation / execution ----
     async validateDraft(id: string): Promise<RunResult> {
       const { data } = await client.post(`/api/v1/paradigm/${id}/validate`, {})

@@ -84,6 +84,12 @@ public class ParadigmController {
         return paradigmView(paradigmService.rollback(id, version));
     }
 
+    /** Archive a paradigm (status → archived). */
+    @PostMapping("/{id}/archive")
+    public Map<String, Object> archive(@PathVariable String id) {
+        return paradigmView(paradigmService.archive(id));
+    }
+
     // ---- execution -----------------------------------------------------------------------
 
     /** Execute a published version (or current_version if unspecified). Body: run args. */

@@ -22,6 +22,7 @@ public final class ExecContext {
     private final String domain;
     private final String channel;
     private final boolean debug;
+    private volatile String query;
     private final Map<String, Object> attributes = new ConcurrentHashMap<>();
     private final List<NodeTrace> nodeTraces = new CopyOnWriteArrayList<>();
 
@@ -31,6 +32,10 @@ public final class ExecContext {
         this.channel = channel;
         this.debug = debug;
     }
+
+    /** The request query, available to entry operators (e.g. request_input). */
+    public String query() { return query; }
+    public void setQuery(String query) { this.query = query; }
 
     public String requestId() { return requestId; }
     public String domain()    { return domain; }

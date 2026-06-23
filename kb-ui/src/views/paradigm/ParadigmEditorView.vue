@@ -10,15 +10,15 @@
         </el-tag>
       </div>
       <div class="editor__tb-right">
-        <el-button :icon="Check" :loading="saving" @click="save">保存草稿</el-button>
-        <el-button :icon="Finished" :loading="validating" @click="validate">校验</el-button>
-        <el-button type="primary" :icon="Promotion" :loading="publishing" @click="publish">发布</el-button>
+        <el-button :icon="Check" :loading="saving" :disabled="previewMode" @click="save">保存草稿</el-button>
+        <el-button :icon="Finished" :loading="validating" :disabled="previewMode" @click="validate">校验</el-button>
+        <el-button type="primary" :icon="Promotion" :loading="publishing" :disabled="previewMode" @click="publish">发布</el-button>
       </div>
     </div>
 
     <div class="editor__body">
       <!-- palette -->
-      <aside class="editor__palette">
+      <aside class="editor__palette" :class="{ 'editor__palette--locked': previewMode }">
         <OperatorPalette :operators="operators" />
       </aside>
 
@@ -28,7 +28,9 @@
           v-model:nodes="nodes"
           v-model:edges="edges"
           :default-viewport="{ zoom: 0.9 }"
-          :delete-key-code="'Delete'"
+          :delete-key-code="previewMode ? null : 'Delete'"
+          :is-valid-connection="isValidConnection"
+          :nodes-draggable="!previewMode"
           fit-view-on-init
           @connect="onConnect"
           @node-click="onNodeClick"
@@ -41,6 +43,11 @@
           <Controls />
         </VueFlow>
         <div v-if="nodes.length === 0" class="editor__canvas-hint">从左侧拖拽算子到此处开始编排</div>
+        <div class="editor__canvas-legend">连线规则：相同 slot 类型才能连（候选可接入融合多入口）；类型不符会被拒绝</div>
+        <div v-if="previewMode" class="editor__preview-banner">
+          <span>正在查看已发布 <strong>v{{ previewVersion }}</strong>（只读）</span>
+          <el-button size="small" type="primary" @click="exitPreview">退出预览，回到草稿</el-button>
+        </div>
       </div>
 
       <!-- inspector -->
@@ -70,9 +77,26 @@
         <!-- output node -->
         <section class="editor__sec">
           <div class="editor__sec-title">输出（终点算子）</div>
-          <el-select v-model="outputKey" size="small" style="width: 100%" placeholder="选择终点节点的输出 slot" @change="onOutputChange">
+          <el-select v-model="outputKey" size="small" style="width: 100%" :disabled="previewMode" placeholder="选择终点节点的输出 slot" @change="onOutputChange">
             <el-option v-for="o in outputOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
+        </section>
+
+        <!-- version history -->
+        <section v-if="versions.length" class="editor__sec">
+          <div class="editor__sec-title">版本历史</div>
+          <div v-for="v in versions" :key="v.version" class="editor__ver-row">
+            <span class="editor__ver-tag" :class="{ 'editor__ver-tag--cur': v.version === paradigm?.currentVersion }">
+              v{{ v.version }}<span v-if="v.version === paradigm?.currentVersion"> · 当前</span>
+            </span>
+            <span class="editor__ver-by">{{ v.createdBy || '—' }}</span>
+            <el-button size="small" text @click="viewVersion(v.version)">查看</el-button>
+            <el-button
+              size="small" text type="warning"
+              :disabled="v.version === paradigm?.currentVersion"
+              @click="rollbackTo(v.version)"
+            >回滚</el-button>
+          </div>
         </section>
 
         <!-- run -->
@@ -152,6 +176,9 @@ const publishing = ref(false)
 const running = ref(false)
 const runningPub = ref(false)
 
+const previewMode = ref(false)
+const previewVersion = ref(0)
+
 let seq = 0
 
 const selectedNode = computed(() => nodes.value.find(n => n.id === selectedNodeId.value) || null)
@@ -208,11 +235,39 @@ function loadGraph(g: ParadigmGraph) {
 }
 
 // ---- canvas interactions ----
+// ---- connect-time slot-type validation (acceptance #1) ----
+function outSlotType(nodeId?: string | null, slot?: string | null): string | undefined {
+  const n = nodes.value.find(x => x.id === nodeId)
+  return defMap.value[n?.data.operatorType]?.outputSlots.find(s => s.name === slot)?.type
+}
+function inSlotType(nodeId?: string | null, slot?: string | null): string | undefined {
+  const n = nodes.value.find(x => x.id === nodeId)
+  return defMap.value[n?.data.operatorType]?.inputSlots.find(s => s.name === slot)?.type
+}
+/** Mirror of backend SlotType.isAssignable: same type, or CANDIDATE_LIST → CANDIDATE_LIST_MULTI. */
+function isAssignable(from?: string, to?: string): boolean {
+  if (!from || !to) return true // unknown — let the server compiler decide
+  if (from === to) return true
+  return to === 'CANDIDATE_LIST_MULTI' && from === 'CANDIDATE_LIST'
+}
+/** Real-time guard during a connection drag — incompatible target handles won't connect. */
+function isValidConnection(c: Connection): boolean {
+  return isAssignable(outSlotType(c.source, c.sourceHandle), inSlotType(c.target, c.targetHandle))
+}
+
 function onConnect(c: Connection) {
+  if (previewMode.value) return
   if (!c.source || !c.target) return
+  // Backstop type check (is-valid-connection already blocks during drag; this also surfaces a hint).
+  const from = outSlotType(c.source, c.sourceHandle)
+  const to = inSlotType(c.target, c.targetHandle)
+  if (!isAssignable(from, to)) {
+    ElMessage.warning(`类型不匹配：${from} 不能接到 ${to}`)
+    return
+  }
   // one incoming edge per non-variadic target slot: drop existing edge to same target slot
-  const toDef = defMap.value[nodes.value.find(n => n.id === c.target)?.data.operatorType]
-  const slot = toDef?.inputSlots.find(s => s.name === c.targetHandle)
+  const slot = defMap.value[nodes.value.find(n => n.id === c.target)?.data.operatorType]
+    ?.inputSlots.find(s => s.name === c.targetHandle)
   if (slot && slot.type !== 'CANDIDATE_LIST_MULTI') {
     edges.value = edges.value.filter(e => !(e.target === c.target && e.targetHandle === c.targetHandle))
   }
@@ -220,6 +275,7 @@ function onConnect(c: Connection) {
 }
 
 function onDrop(e: DragEvent) {
+  if (previewMode.value) return
   const type = e.dataTransfer?.getData('application/operator-type')
   if (!type) return
   const def = defMap.value[type]
@@ -236,6 +292,7 @@ function onDrop(e: DragEvent) {
 function onNodeClick(e: { node: FlowNode }) { selectedNodeId.value = e.node.id }
 
 function deleteSelected() {
+  if (previewMode.value) return
   const id = selectedNodeId.value
   nodes.value = nodes.value.filter(n => n.id !== id)
   edges.value = edges.value.filter(e => e.source !== id && e.target !== id)
@@ -244,8 +301,46 @@ function deleteSelected() {
 }
 
 function updateSelectedParams(params: Record<string, unknown>) {
+  if (previewMode.value) return
   const n = selectedNode.value
   if (n) n.data.params = params
+}
+
+// ---- version history: read-only preview + rollback ----
+function viewVersion(v: number) {
+  const ve = versions.value.find(x => x.version === v)
+  if (!ve?.graph) { ElMessage.warning('该版本无图数据'); return }
+  loadGraph(ve.graph)
+  previewVersion.value = v
+  previewMode.value = true
+  selectedNodeId.value = ''
+}
+
+function exitPreview() {
+  previewMode.value = false
+  selectedNodeId.value = ''
+  if (paradigm.value?.draftGraph) {
+    loadGraph(paradigm.value.draftGraph)
+  } else {
+    nodes.value = []
+    edges.value = []
+    output.value = null
+    outputKey.value = ''
+  }
+}
+
+async function rollbackTo(v: number) {
+  try {
+    await ElMessageBox.confirm(`将「当前版本」指回 v${v}（历史版本内容不变，可再次回滚）。`, '回滚版本', { type: 'warning' })
+  } catch { return }
+  try {
+    paradigm.value = await api.rollback(props.id, v)
+    await loadVersions()
+    runVersion.value = v
+    ElMessage.success(`已回滚，当前版本 = v${v}`)
+  } catch (e) {
+    ElMessage.error('回滚失败：' + errMsg(e))
+  }
 }
 
 function onOutputChange(val: string) {
@@ -390,6 +485,16 @@ function goBack() { router.push({ name: 'paradigm' }) }
 .editor__palette { width: 196px; overflow-y: auto; background: var(--kb-bg-subtle, #f8fafc); border: 1px solid var(--kb-border, #e5e7eb); border-radius: 10px; padding: 10px; }
 .editor__canvas { position: relative; flex: 1; border: 1px solid var(--kb-border, #e5e7eb); border-radius: 10px; overflow: hidden; background: #fbfcfe; }
 .editor__canvas-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--kb-text-tertiary); pointer-events: none; font-size: 14px; }
+.editor__canvas-legend { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--kb-text-tertiary); background: rgba(255,255,255,.75); padding: 3px 8px; border-radius: 6px; pointer-events: none; }
+/* invalid connection line turns red in real time */
+:deep(.vue-flow__connection-path) { stroke: #3b82f6; }
+:deep(.vue-flow__edge.invalid .vue-flow__edge-path) { stroke: #ef4444; }
+.editor__preview-banner { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; font-size: 12px; padding: 5px 12px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.editor__palette--locked { opacity: .5; pointer-events: none; }
+.editor__ver-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 6px; align-items: center; padding: 4px 0; border-bottom: 1px dashed var(--kb-border, #eee); }
+.editor__ver-tag { font-size: 12px; font-weight: 600; color: var(--kb-text-secondary); }
+.editor__ver-tag--cur { color: #22c55e; }
+.editor__ver-by { font-size: 11px; color: var(--kb-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor__inspector { width: 332px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
 .editor__sec { background: #fff; border: 1px solid var(--kb-border, #e5e7eb); border-radius: 10px; padding: 12px 14px; }
 .editor__sec-title { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: var(--kb-text-secondary); margin-bottom: 10px; }

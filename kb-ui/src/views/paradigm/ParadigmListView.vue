@@ -8,7 +8,14 @@
       <el-button type="primary" :icon="Plus" @click="openCreate">新建范式</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="paradigms" class="pd-list__table">
+    <el-tabs v-model="activeTab" class="pd-list__tabs">
+      <el-tab-pane label="全部" name="all" />
+      <el-tab-pane :label="`草稿 (${countBy('draft')})`" name="draft" />
+      <el-tab-pane :label="`已发布 (${countBy('active')})`" name="active" />
+      <el-tab-pane :label="`已归档 (${countBy('archived')})`" name="archived" />
+    </el-tabs>
+
+    <el-table v-loading="loading" :data="filteredParadigms" class="pd-list__table">
       <el-table-column prop="name" label="名称" min-width="160">
         <template #default="{ row }">
           <a class="pd-list__link" @click="edit(row.id)">{{ row.name }}</a>
@@ -24,9 +31,10 @@
         <template #default="{ row }">{{ row.currentVersion > 0 ? `v${row.currentVersion}` : '—' }}</template>
       </el-table-column>
       <el-table-column prop="updatedAt" label="更新时间" width="180" />
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click="edit(row.id)">编辑</el-button>
+          <el-button v-if="row.status !== 'archived'" size="small" text type="info" @click="doArchive(row)">归档</el-button>
         </template>
       </el-table-column>
       <template #empty>
@@ -61,7 +69,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { useOperatorApi } from '@/api/operator'
 import type { ParadigmView } from '@/types/operator'
@@ -78,6 +86,13 @@ const form = ref({ name: '', description: '', template: 'blank' })
 const templates = PARADIGM_TEMPLATES
 const selectedTemplateDesc = computed(() =>
   PARADIGM_TEMPLATES.find(t => t.key === form.value.template)?.description ?? '')
+
+const activeTab = ref('all')
+const filteredParadigms = computed(() =>
+  activeTab.value === 'all' ? paradigms.value : paradigms.value.filter(p => p.status === activeTab.value))
+function countBy(status: string) {
+  return paradigms.value.filter(p => p.status === status).length
+}
 
 async function load() {
   loading.value = true
@@ -116,6 +131,19 @@ async function doCreate() {
 
 function edit(id: string) {
   router.push({ name: 'paradigm-edit', params: { id } })
+}
+
+async function doArchive(row: ParadigmView) {
+  try {
+    await ElMessageBox.confirm(`归档范式「${row.name}」？归档后可在「已归档」页签查看。`, '归档', { type: 'warning' })
+  } catch { return }
+  try {
+    await api.archive(row.id)
+    ElMessage.success('已归档')
+    await load()
+  } catch (e) {
+    ElMessage.error('归档失败：' + errMsg(e))
+  }
 }
 
 function statusLabel(s: string): string {

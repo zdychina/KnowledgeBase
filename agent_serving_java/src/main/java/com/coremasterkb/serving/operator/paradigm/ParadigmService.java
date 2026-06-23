@@ -128,6 +128,14 @@ public class ParadigmService {
         return getOrThrow(id);
     }
 
+    /** Archive a paradigm (status → archived); its versions and current_version are kept intact. */
+    public ParadigmEntity archive(String id) {
+        ParadigmEntity p = getOrThrow(id);
+        paradigmMapper.updatePublish(id, p.getCurrentVersion(), "archived");
+        log.info("[paradigm] archived {}", id);
+        return getOrThrow(id);
+    }
+
     // ---- resolution for execution --------------------------------------------------------
 
     /**

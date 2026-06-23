@@ -72,6 +72,7 @@ public class ParadigmExecutionService {
         domainPoolManager.getDataSource(domain);
 
         ExecContext ctx = new ExecContext(UUID.randomUUID().toString(), domain, channel, args.debug());
+        ctx.setQuery(args.query());
         Object result = executor.execute(graph, ctx, Map.of("query", args.query()));
 
         log.info("[paradigm/exec] domain={} channel={} output={}",
