@@ -39,7 +39,7 @@
           @pane-click="selectedNodeId = ''"
         >
           <template #node-operator="nodeProps">
-            <OperatorNode :id="nodeProps.id" :data="nodeProps.data" />
+            <OperatorNode :id="nodeProps.id" :data="nodeProps.data" :selected="nodeProps.id === selectedNodeId" />
           </template>
           <Background pattern-color="#cbd5e1" :gap="16" />
           <Controls />

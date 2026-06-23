@@ -1,5 +1,5 @@
 <template>
-  <div class="opnode" :class="[`opnode--${def?.category}`, { 'opnode--output': isOutput }]">
+  <div class="opnode" :class="[`opnode--${def?.category}`, { 'opnode--output': isOutput, 'opnode--selected': selected }]">
     <div class="opnode__header">
       <span class="opnode__title">{{ def?.displayName ?? data.operatorType }}</span>
       <span class="opnode__type">{{ data.operatorType }}</span>
@@ -31,6 +31,7 @@ import type { OperatorDef, SlotDecl } from '@/types/operator'
 const props = defineProps<{
   id: string
   data: { operatorType: string; def?: OperatorDef; isOutput?: boolean; params?: Record<string, unknown> }
+  selected?: boolean
 }>()
 
 const def = computed(() => props.data.def)
@@ -63,6 +64,8 @@ const paramSummary = computed(() => {
 .opnode--fuse { --cat: #f59e0b; }
 .opnode--rerank { --cat: #ec4899; }
 .opnode--output { --cat: #22c55e; }
+/* selected state — distinct blue ring; declared after --output so it wins when both apply */
+.opnode--selected { border-color: #3b82f6; box-shadow: 0 0 0 2px #3b82f6, 0 6px 18px rgba(59,130,246,.30); }
 
 .opnode__header { padding: 7px 12px 6px; display: flex; flex-direction: column; gap: 1px; }
 .opnode__title { font-weight: 700; color: #1e293b; line-height: 1.2; }
