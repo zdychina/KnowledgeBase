@@ -90,6 +90,13 @@ public class ParadigmController {
         return paradigmView(paradigmService.archive(id));
     }
 
+    /** Permanently delete a paradigm + all its versions. Only allowed when already archived. */
+    @DeleteMapping("/{id}")
+    public Map<String, Object> delete(@PathVariable String id) {
+        paradigmService.delete(id);
+        return Map.of("deleted", true, "id", id);
+    }
+
     // ---- execution -----------------------------------------------------------------------
 
     /** Execute a published version (or current_version if unspecified). Body: run args. */

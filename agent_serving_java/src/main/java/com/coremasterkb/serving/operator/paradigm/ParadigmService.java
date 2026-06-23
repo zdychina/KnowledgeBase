@@ -142,6 +142,21 @@ public class ParadigmService {
         return getOrThrow(id);
     }
 
+    /**
+     * Permanently delete a paradigm and all its versions. Only allowed once the paradigm is
+     * archived — a two-step guard (archive → delete) against accidental loss of a live paradigm.
+     */
+    @Transactional
+    public void delete(String id) {
+        ParadigmEntity p = getOrThrow(id);
+        if (!"archived".equals(p.getStatus())) {
+            throw new ParadigmBadRequestException("paradigm_not_archived");
+        }
+        versionMapper.deleteByParadigm(id);
+        paradigmMapper.deleteById(id);
+        log.info("[paradigm] deleted {}", id);
+    }
+
     // ---- resolution for execution --------------------------------------------------------
 
     /**

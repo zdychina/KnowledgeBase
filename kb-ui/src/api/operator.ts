@@ -71,6 +71,10 @@ export function useOperatorApi() {
       return data
     },
 
+    async deleteParadigm(id: string): Promise<void> {
+      await client.delete(`/api/v1/paradigm/${id}`)
+    },
+
     // ---- validation / execution ----
     async validateDraft(id: string): Promise<RunResult> {
       const { data } = await client.post(`/api/v1/paradigm/${id}/validate`, {})

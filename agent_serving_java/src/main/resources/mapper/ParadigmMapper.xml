@@ -50,4 +50,8 @@
         WHERE id = #{id}
     </update>
 
+    <delete id="deleteById">
+        DELETE FROM operator_paradigm WHERE id = #{id}
+    </delete>
+
 </mapper>

@@ -23,4 +23,6 @@ public interface ParadigmMapper {
     int updateDraft(@Param("id") String id, @Param("draftGraphJson") String draftGraphJson);
 
     int updatePublish(@Param("id") String id, @Param("version") int version, @Param("status") String status);
+
+    int deleteById(@Param("id") String id);
 }

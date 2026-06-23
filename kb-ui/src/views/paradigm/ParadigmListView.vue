@@ -35,6 +35,7 @@
         <template #default="{ row }">
           <el-button size="small" text type="primary" @click="edit(row.id)">编辑</el-button>
           <el-button v-if="row.status !== 'archived'" size="small" text type="info" @click="doArchive(row)">归档</el-button>
+          <el-button v-else size="small" text type="danger" @click="doDelete(row)">删除</el-button>
         </template>
       </el-table-column>
       <template #empty>
@@ -143,6 +144,21 @@ async function doArchive(row: ParadigmView) {
     await load()
   } catch (e) {
     ElMessage.error('归档失败：' + errMsg(e))
+  }
+}
+
+async function doDelete(row: ParadigmView) {
+  try {
+    await ElMessageBox.confirm(
+      `永久删除范式「${row.name}」及其所有版本？此操作不可恢复。`,
+      '删除', { type: 'error', confirmButtonText: '永久删除' })
+  } catch { return }
+  try {
+    await api.deleteParadigm(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch (e) {
+    ElMessage.error('删除失败：' + errMsg(e))
   }
 }
 

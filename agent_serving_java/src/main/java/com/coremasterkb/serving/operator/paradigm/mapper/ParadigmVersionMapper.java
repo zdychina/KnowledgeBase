@@ -17,4 +17,6 @@ public interface ParadigmVersionMapper {
 
     /** Highest version number for a paradigm, or null if it has none published yet. */
     Integer selectMaxVersion(@Param("paradigmId") String paradigmId);
+
+    int deleteByParadigm(@Param("paradigmId") String paradigmId);
 }

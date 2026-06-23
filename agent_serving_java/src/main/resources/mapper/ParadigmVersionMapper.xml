@@ -39,4 +39,8 @@
         SELECT MAX(version) FROM operator_paradigm_version WHERE paradigm_id = #{paradigmId}
     </select>
 
+    <delete id="deleteByParadigm">
+        DELETE FROM operator_paradigm_version WHERE paradigm_id = #{paradigmId}
+    </delete>
+
 </mapper>
