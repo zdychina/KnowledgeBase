@@ -14,4 +14,7 @@ public interface ParadigmVersionMapper {
             @Param("paradigmId") String paradigmId, @Param("version") int version);
 
     List<ParadigmVersionEntity> selectVersionsByParadigm(@Param("paradigmId") String paradigmId);
+
+    /** Highest version number for a paradigm, or null if it has none published yet. */
+    Integer selectMaxVersion(@Param("paradigmId") String paradigmId);
 }

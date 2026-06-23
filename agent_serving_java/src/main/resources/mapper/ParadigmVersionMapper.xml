@@ -35,4 +35,8 @@
         WHERE paradigm_id = #{paradigmId} ORDER BY version DESC
     </select>
 
+    <select id="selectMaxVersion" resultType="java.lang.Integer">
+        SELECT MAX(version) FROM operator_paradigm_version WHERE paradigm_id = #{paradigmId}
+    </select>
+
 </mapper>

@@ -59,6 +59,7 @@ class ParadigmServiceTest {
     void publishCompilesAndCreatesNextVersion() {
         ParadigmEntity p = entity("pd-1", VALID_GRAPH, 2);
         when(paradigmMapper.selectById("pd-1")).thenReturn(p);
+        when(versionMapper.selectMaxVersion("pd-1")).thenReturn(2);
 
         ParadigmVersionEntity v = service.publish("pd-1", "tester");
 
@@ -70,6 +71,19 @@ class ParadigmServiceTest {
         assertEquals(3, cap.getValue().getVersion());
         assertEquals("pd-1", cap.getValue().getParadigmId());
         verify(paradigmMapper).updatePublish("pd-1", 3, "active");
+    }
+
+    @Test
+    void publishAfterRollbackUsesMaxVersionPlusOne() {
+        // after rollback current_version=1 but max published version is 3 → next must be 4, not 2
+        ParadigmEntity p = entity("pd-r", VALID_GRAPH, 1);
+        when(paradigmMapper.selectById("pd-r")).thenReturn(p);
+        when(versionMapper.selectMaxVersion("pd-r")).thenReturn(3);
+
+        ParadigmVersionEntity v = service.publish("pd-r", "tester");
+
+        assertEquals(4, v.getVersion());
+        verify(paradigmMapper).updatePublish("pd-r", 4, "active");
     }
 
     @Test

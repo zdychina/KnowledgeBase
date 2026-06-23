@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
@@ -96,6 +97,7 @@ public class ParadigmService {
     }
 
     /** Compile-validate the current draft, then snapshot it as a new immutable version and activate it. */
+    @Transactional
     public ParadigmVersionEntity publish(String id, String createdBy) {
         ParadigmEntity p = getOrThrow(id);
         String draft = p.getDraftGraphJson();
@@ -105,7 +107,11 @@ public class ParadigmService {
         JsonNode graph = parse(draft);
         compiler.compile(graph); // throws ParadigmCompileException on invalid graph
 
-        int newVersion = p.getCurrentVersion() + 1;
+        // Next version = max existing + 1 (NOT current_version + 1): after a rollback to a
+        // non-latest version, current_version < max, so current+1 would collide with an
+        // existing version and violate uq_operator_paradigm_version.
+        Integer maxVersion = versionMapper.selectMaxVersion(id);
+        int newVersion = (maxVersion == null ? 0 : maxVersion) + 1;
         ParadigmVersionEntity v = new ParadigmVersionEntity();
         v.setId("pdv-" + UUID.randomUUID().toString().substring(0, 8));
         v.setParadigmId(id);

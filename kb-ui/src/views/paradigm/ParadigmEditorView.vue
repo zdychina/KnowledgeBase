@@ -67,6 +67,7 @@
             <p class="editor__node-desc">{{ selectedDef?.description }}</p>
             <ParamForm
               v-if="selectedDef"
+              :key="selectedNode.id"
               :schema-json="selectedDef.paramSchemaJson"
               :model-value="selectedNode.data.params"
               @update:model-value="updateSelectedParams"
@@ -271,7 +272,11 @@ function onConnect(c: Connection) {
   if (slot && slot.type !== 'CANDIDATE_LIST_MULTI') {
     edges.value = edges.value.filter(e => !(e.target === c.target && e.targetHandle === c.targetHandle))
   }
-  edges.value.push(mkEdge(c.source, c.sourceHandle || '', c.target, c.targetHandle || ''))
+  // Dedup: the same source→target/handle pair (e.g. re-dragged onto a MULTI slot) yields an
+  // identical edge id; skip it to avoid duplicate-keyed edges.
+  const edge = mkEdge(c.source, c.sourceHandle || '', c.target, c.targetHandle || '')
+  if (edges.value.some(e => e.id === edge.id)) return
+  edges.value.push(edge)
 }
 
 function onDrop(e: DragEvent) {
@@ -303,7 +308,9 @@ function deleteSelected() {
 function updateSelectedParams(params: Record<string, unknown>) {
   if (previewMode.value) return
   const n = selectedNode.value
-  if (n) n.data.params = params
+  // Reassign data (not just .params) so VueFlow propagates the change to the on-canvas node
+  // and its param summary refreshes (same pattern as syncOutputFlag).
+  if (n) n.data = { ...n.data, params }
 }
 
 // ---- version history: read-only preview + rollback ----

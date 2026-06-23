@@ -71,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import type { ParamProperty, ParamSchema } from '@/types/operator'
 
 const props = defineProps<{
@@ -119,23 +119,36 @@ function value(key: string): unknown {
 }
 
 function set(key: string, val: unknown) {
-  emit('update:modelValue', { ...props.modelValue, [key]: val })
+  const next = { ...props.modelValue }
+  // Clearing a field (e.g. emptying a number input emits null) reverts to the schema default
+  // instead of writing null — null fails backend JSON-Schema (integer/number) on publish.
+  if (val === null || val === undefined) delete next[key]
+  else next[key] = val
+  emit('update:modelValue', next)
 }
 
 // ---- map (weights) helpers ----
+// Row list is the source of truth (so a half-typed / duplicate / empty key never drops a row
+// mid-edit); only the valid subset is emitted into params. ParamForm is remounted per node
+// (parent passes :key), so this local state starts fresh for each selected node.
+const mapState = reactive<Record<string, { k: string; v: number }[]>>({})
+
 function mapRows(key: string): { k: string; v: number }[] {
-  const obj = (props.modelValue?.[key] as Record<string, number>) ?? {}
-  return Object.entries(obj).map(([k, v]) => ({ k, v }))
+  if (!mapState[key]) {
+    const obj = (props.modelValue?.[key] as Record<string, number>) ?? {}
+    mapState[key] = Object.entries(obj).map(([k, v]) => ({ k, v }))
+  }
+  return mapState[key]
 }
-function writeMap(key: string, rows: { k: string; v: number }[]) {
+function emitMap(key: string) {
   const obj: Record<string, number> = {}
-  for (const r of rows) if (r.k) obj[r.k] = r.v
+  for (const r of mapState[key]) if (r.k) obj[r.k] = r.v
   set(key, obj)
 }
-function setMapKey(key: string, i: number, k: string) { const r = mapRows(key); r[i].k = k; writeMap(key, r) }
-function setMapVal(key: string, i: number, v: number) { const r = mapRows(key); r[i].v = v ?? 0; writeMap(key, r) }
-function addMapRow(key: string) { const r = mapRows(key); r.push({ k: '', v: 1.0 }); writeMap(key, r) }
-function removeMapRow(key: string, i: number) { const r = mapRows(key); r.splice(i, 1); writeMap(key, r) }
+function setMapKey(key: string, i: number, k: string) { mapRows(key)[i].k = k; emitMap(key) }
+function setMapVal(key: string, i: number, v: number) { mapRows(key)[i].v = v ?? 0; emitMap(key) }
+function addMapRow(key: string) { mapRows(key).push({ k: '', v: 1.0 }); emitMap(key) }
+function removeMapRow(key: string, i: number) { mapRows(key).splice(i, 1); emitMap(key) }
 </script>
 
 <style scoped>

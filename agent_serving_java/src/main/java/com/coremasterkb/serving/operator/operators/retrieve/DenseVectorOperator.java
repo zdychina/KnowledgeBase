@@ -28,8 +28,7 @@ public class DenseVectorOperator implements Operator {
     private static final String PARAM_SCHEMA = """
             {"type":"object","properties":{
               "textKind":{"type":"string","enum":["raw_text","question","both"],"default":"raw_text","title":"检索范围"},
-              "topK":{"type":"integer","minimum":1,"maximum":200,"default":20,"title":"返回数量"},
-              "scopeFilter":{"type":"boolean","default":true,"title":"启用 scope 过滤"}
+              "topK":{"type":"integer","minimum":1,"maximum":200,"default":20,"title":"返回数量"}
             }}""";
 
     private final OperatorEmbeddingMapper mapper;

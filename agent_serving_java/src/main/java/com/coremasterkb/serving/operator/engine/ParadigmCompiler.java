@@ -32,14 +32,20 @@ import java.util.Set;
 @Component
 public class ParadigmCompiler {
 
-    /** Implicit entry slots bound from the HTTP request (PRD §8.4). */
+    /**
+     * Implicit entry slots bound from the HTTP request (PRD §8.4). Only {@code query} is actually
+     * supplied by the executor's entry inputs, so {@code scope} is intentionally NOT here: a
+     * required {@code scope} input must be wired from a {@code scope_resolve} node — otherwise the
+     * graph would compile "valid" yet run with an unbound (null) scope and silently retrieve nothing.
+     */
     static final Map<String, SlotType> ENTRY_SLOTS = Map.of(
-            "query", SlotType.STRING,
-            "scope", SlotType.SCOPE);
+            "query", SlotType.STRING);
 
     private final OperatorRegistry registry;
     private final ObjectMapper mapper = new ObjectMapper();
     private final JsonSchemaFactory schemaFactory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7);
+    /** Parsed JSON Schema per operator type — paramSchemaJson is a static constant, so parse once. */
+    private final Map<String, JsonSchema> schemaCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ParadigmCompiler(OperatorRegistry registry) {
         this.registry = registry;
@@ -168,8 +174,8 @@ public class ParadigmCompiler {
 
     private void validateParams(NodeDef node, OperatorDef def, List<CompileError> errors) {
         try {
-            JsonNode schemaNode = mapper.readTree(def.paramSchemaJson());
-            JsonSchema schema = schemaFactory.getSchema(schemaNode);
+            JsonSchema schema = schemaCache.computeIfAbsent(def.type(),
+                    t -> schemaFactory.getSchema(parseSchema(def.paramSchemaJson())));
             Set<ValidationMessage> messages = schema.validate(node.params());
             for (ValidationMessage m : messages) {
                 errors.add(CompileError.node("param_schema", node.nodeId(),
@@ -330,5 +336,14 @@ public class ParadigmCompiler {
         if (node == null) return null;
         JsonNode v = node.get(field);
         return (v != null && v.isTextual()) ? v.asText() : null;
+    }
+
+    /** Parse a schema JSON string; wraps the checked exception so it can be used in computeIfAbsent. */
+    private JsonNode parseSchema(String json) {
+        try {
+            return mapper.readTree(json);
+        } catch (Exception e) {
+            throw new RuntimeException("invalid operator paramSchemaJson: " + e.getMessage(), e);
+        }
     }
 }
