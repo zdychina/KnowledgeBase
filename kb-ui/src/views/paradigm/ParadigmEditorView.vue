@@ -138,6 +138,28 @@
           <div v-if="!hasPublished" class="editor__run-hint">尚未发布，先点上方「发布」</div>
           <RunResultPanel :result="runResult" />
         </section>
+
+        <!-- published API call info -->
+        <section v-if="hasPublished" class="editor__sec">
+          <div class="editor__sec-title">接口调用（测试系统）</div>
+          <div class="editor__api-row">
+            <span class="editor__api-k">范式 ID</span>
+            <code class="editor__api-v">{{ id }}</code>
+            <el-button size="small" text type="primary" @click="copyText(id)">复制</el-button>
+          </div>
+          <div class="editor__api-row">
+            <span class="editor__api-k">端点</span>
+            <code class="editor__api-v">POST {{ apiPath }}</code>
+            <el-button size="small" text type="primary" @click="copyText(apiPath)">复制</el-button>
+          </div>
+          <div class="editor__api-note">
+            当前版本 <b>v{{ paradigm?.currentVersion }}</b>；调用加 <code>?version=N</code> 锁定版本，不加用最新。
+            body：<code>{"query":"...","domain":"{{ domainStore.currentDomain }}"}</code>
+          </div>
+          <el-button size="small" type="primary" plain style="width: 100%; margin-top: 8px" @click="copyText(curlExample)">
+            复制 curl 调用示例
+          </el-button>
+        </section>
       </aside>
     </div>
   </div>
@@ -165,6 +187,7 @@ import OperatorNode from '@/components/paradigm/OperatorNode.vue'
 import ParamForm from '@/components/paradigm/ParamForm.vue'
 import RunResultPanel from '@/components/paradigm/RunResultPanel.vue'
 import { useOperatorApi } from '@/api/operator'
+import { useDomainStore } from '@/stores/domain'
 import type { OperatorDef, ParadigmGraph, ParadigmView, ParadigmVersionView, RunResult } from '@/types/operator'
 
 const props = defineProps<{ id: string }>()
@@ -189,6 +212,26 @@ const runResult = ref<RunResult | null>(null)
 const versions = ref<ParadigmVersionView[]>([])
 const runVersion = ref(0) // 0 = current/latest
 const hasPublished = computed(() => (paradigm.value?.currentVersion ?? 0) > 0)
+
+// ---- published API call info ----
+const domainStore = useDomainStore()
+const apiPath = computed(() => `/api/v1/paradigm/${props.id}/search`)
+/** Full URL via the main_control proxy (reachable from this UI's origin); the test system can also call serving directly. */
+const apiProxyUrl = computed(() =>
+  `${window.location.origin}/api/control-plane/api/v1/proxy/${domainStore.currentDomain}/serving${apiPath.value}`)
+const curlExample = computed(() =>
+  `curl -X POST '${apiProxyUrl.value}?version=${paradigm.value?.currentVersion ?? 1}' \\\n`
+  + `  -H 'Content-Type: application/json' \\\n`
+  + `  -d '{"query":"aa-interface","domain":"${domainStore.currentDomain}"}'`)
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.warning('复制失败，请手动选择文本')
+  }
+}
 
 const saving = ref(false)
 const validating = ref(false)
@@ -555,6 +598,11 @@ function goBack() { router.push({ name: 'paradigm' }) }
 .editor__ver-tag { font-size: 12px; font-weight: 600; color: var(--kb-text-secondary); }
 .editor__ver-tag--cur { color: #22c55e; }
 .editor__ver-by { font-size: 11px; color: var(--kb-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor__api-row { display: grid; grid-template-columns: 52px 1fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+.editor__api-k { font-size: 11px; color: var(--kb-text-tertiary); }
+.editor__api-v { font-size: 11px; font-family: monospace; background: var(--kb-bg-subtle, #f1f5f9); padding: 2px 6px; border-radius: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor__api-note { font-size: 11px; color: var(--kb-text-tertiary); line-height: 1.6; margin-top: 4px; }
+.editor__api-note code { font-family: monospace; background: var(--kb-bg-subtle, #f1f5f9); padding: 0 4px; border-radius: 4px; }
 .editor__inspector { width: 332px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
 .editor__sec { background: #fff; border: 1px solid var(--kb-border, #e5e7eb); border-radius: 10px; padding: 12px 14px; }
 .editor__sec-title { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: var(--kb-text-secondary); margin-bottom: 10px; }
