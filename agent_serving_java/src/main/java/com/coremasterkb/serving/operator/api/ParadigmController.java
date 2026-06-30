@@ -47,6 +47,18 @@ public class ParadigmController {
         return Map.of("paradigms", views);
     }
 
+    /**
+     * List only published (currently active) paradigms — the ones the test system can call.
+     * Each entry: id, name, description, version (current published version), url (the search endpoint;
+     * calling it with no {@code ?version} runs the paradigm's current_version).
+     */
+    @GetMapping("/published")
+    public Map<String, Object> listPublished() {
+        List<Map<String, Object>> views =
+                paradigmService.listPublished().stream().map(this::publishedView).toList();
+        return Map.of("paradigms", views);
+    }
+
     @GetMapping("/{id}")
     public Map<String, Object> get(@PathVariable String id) {
         return paradigmView(paradigmService.getOrThrow(id));
@@ -128,6 +140,17 @@ public class ParadigmController {
     }
 
     // ---- views ---------------------------------------------------------------------------
+
+    /** Compact view for published paradigms: id / name / description / version / call url. */
+    private Map<String, Object> publishedView(ParadigmEntity e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", e.getId());
+        m.put("name", e.getName());
+        m.put("description", e.getDescription());
+        m.put("version", e.getCurrentVersion());
+        m.put("url", "/api/v1/paradigm/" + e.getId() + "/search");
+        return m;
+    }
 
     private Map<String, Object> paradigmView(ParadigmEntity e) {
         Map<String, Object> m = new LinkedHashMap<>();

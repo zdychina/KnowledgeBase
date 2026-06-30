@@ -37,6 +37,12 @@
         SELECT <include refid="cols"/> FROM operator_paradigm ORDER BY updated_at DESC
     </select>
 
+    <select id="selectPublished" resultMap="paradigmMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm
+        WHERE status = 'active' AND current_version &gt;= 1
+        ORDER BY name
+    </select>
+
     <update id="updateDraft">
         UPDATE operator_paradigm
         SET draft_graph_json = #{draftGraphJson,jdbcType=VARCHAR}::jsonb,

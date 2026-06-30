@@ -73,6 +73,11 @@ public class ParadigmService {
         return paradigmMapper.selectAll();
     }
 
+    /** Published (currently active) paradigms only — those callable via {@code /{id}/search}. */
+    public List<ParadigmEntity> listPublished() {
+        return paradigmMapper.selectPublished();
+    }
+
     /** Replace the editable draft graph. */
     public ParadigmEntity updateDraft(String id, String graphJson) {
         getOrThrow(id);

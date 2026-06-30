@@ -20,6 +20,9 @@ public interface ParadigmMapper {
 
     List<ParadigmEntity> selectAll();
 
+    /** Published (currently active) paradigms only: {@code status='active'} with a published version. */
+    List<ParadigmEntity> selectPublished();
+
     int updateDraft(@Param("id") String id, @Param("draftGraphJson") String draftGraphJson);
 
     int updatePublish(@Param("id") String id, @Param("version") int version, @Param("status") String status);
