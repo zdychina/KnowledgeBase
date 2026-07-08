@@ -10,6 +10,9 @@
         <span class="pipeline-stage__icon">{{ stageIcons[stage.key] || '⚙' }}</span>
       </div>
       <div class="pipeline-stage__info">
+        <span v-if="stage.line" class="pipeline-stage__line" :class="`pipeline-stage__line--${stage.line}`">
+          {{ stage.line === 'ontology' ? '本体线' : '篇章线' }}
+        </span>
         <span class="pipeline-stage__name">{{ stage.label }}</span>
         <span class="pipeline-stage__meta">
           <template v-if="getStageStatus(stage.key) === 'completed'">
@@ -34,30 +37,40 @@
 <script setup lang="ts">
 import type { MiningRunStage } from '@/types'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   stageEvents: MiningRunStage[]
-}>()
+  allDocsSettled?: boolean  // 全部文档是否已尘埃落定（用于解除逐文档阶段的孤儿 started 误判）
+}>(), {
+  allDocsSettled: false,
+})
 
 interface PipelineStage {
   key: string
   label: string
   backendKeys: string[]
+  line?: 'discourse' | 'ontology'  // 篇章线 / 本体线（L4 §15）
+  scope?: 'document' | 'global'    // 逐文档阶段 / 全局尾段（落图、建库发布）。默认逐文档
 }
 
 const stages: PipelineStage[] = [
   { key: 'parse', label: '解析', backendKeys: ['parse'] },
   { key: 'segment', label: '分段', backendKeys: ['segment'] },
-  { key: 'enrich', label: '增强', backendKeys: ['enrich'] },
-  { key: 'discourse', label: '语篇分析', backendKeys: ['discourse'] },
-  { key: 'retrieval_units', label: '检索单元', backendKeys: ['retrieval_units'] },
+  { key: 'enrich', label: '段落理解', backendKeys: ['enrich'], line: 'discourse' },
+  { key: 'entity_extract', label: '实体抽取', backendKeys: ['entity_extract'], line: 'ontology' },
+  { key: 'resolve', label: '实体归一', backendKeys: ['resolve'], line: 'ontology' },
+  { key: 'entity_relations', label: '关系抽取', backendKeys: ['entity_relations'], line: 'ontology' },
+  { key: 'discourse', label: '语篇分析', backendKeys: ['discourse', 'discourse_relations'], line: 'discourse' },
+  { key: 'retrieval_units', label: '检索单元', backendKeys: ['retrieval_units'], line: 'discourse' },
   { key: 'embedding', label: '向量化', backendKeys: ['embedding'] },
   { key: 'db_write', label: '数据写入', backendKeys: ['db_write'] },
-  { key: 'build', label: '构建&发布', backendKeys: ['assemble_build', 'validate_build', 'publish_release'] },
+  { key: 'graph_write', label: '落图', backendKeys: ['graph_write'], line: 'ontology', scope: 'global' },
+  { key: 'build', label: '构建&发布', backendKeys: ['assemble_build', 'validate_build', 'publish_release'], scope: 'global' },
 ]
 
 const stageIcons: Record<string, string> = {
-  parse: '🔍', segment: '✂️', enrich: '🧠', discourse: '💬',
-  retrieval_units: '🔎', embedding: '🔢', db_write: '💾', build: '📦',
+  parse: '🔍', segment: '✂️', enrich: '🧠', entity_extract: '🏷️',
+  resolve: '🔗', entity_relations: '🕸️', discourse: '💬',
+  retrieval_units: '🔎', embedding: '🔢', db_write: '💾', graph_write: '📊', build: '📦',
 }
 
 function findStageEvents(stage: PipelineStage): MiningRunStage[] {
@@ -72,8 +85,16 @@ function getStageStatus(key: string): string {
   if (events.some(e => e.status === 'failed')) return 'failed'
   const started = events.filter(e => e.status === 'started')
   const completed = events.filter(e => e.status === 'completed')
-  if (started.length > completed.length) return 'running'
+  // 所有 backendKey 都收到 completed → 阶段完成（多 key 阶段如 build 需全齐）
   if (stage.backendKeys.every(bk => events.some(e => e.stage === bk && e.status === 'completed'))) return 'completed'
+  // 逐文档阶段在并行流式下会出现"孤儿 started"（某篇文档发了 started、却因失败/丢事件
+  // 没发 completed），导致 started>completed 永久判为运行中。一旦全部文档已尘埃落定，
+  // 这些孤儿不该再把阶段钉在运行中——只要本阶段至少有一条 completed 就视为完成。
+  // 全局尾段（落图/建库）本就在文档落定之后才跑，不套用此豁免，按真实 started/completed 判。
+  if (stage.scope !== 'global' && props.allDocsSettled) {
+    return completed.length > 0 ? 'completed' : 'running'
+  }
+  if (started.length > completed.length) return 'running'
   if (completed.length > 0) return 'running'
   return 'pending'
 }
@@ -145,6 +166,17 @@ function formatMs(ms: number): string {
   margin-left: 8px;
   min-width: 70px;
 }
+
+.pipeline-stage__line {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 0 5px;
+  border-radius: 6px;
+  width: fit-content;
+  margin-bottom: 2px;
+}
+.pipeline-stage__line--ontology { background: var(--kb-accent-soft); color: var(--kb-accent); }
+.pipeline-stage__line--discourse { background: var(--kb-border-light); color: var(--kb-text-secondary); }
 
 .pipeline-stage__name {
   font-size: 12px;

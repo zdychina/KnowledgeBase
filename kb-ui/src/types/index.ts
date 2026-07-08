@@ -33,7 +33,9 @@ export interface KnowledgeStats {
 
 export interface MiningRun {
   id: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'awaiting_review'
+  subloop_stage?: string | null
+  ontology_version_id?: string | null
   input_path?: string
   domain?: string
   started_at?: string
@@ -71,6 +73,7 @@ export interface MiningRunDocument {
   error_summary?: string
   current_stage?: string | null
   duration_ms?: number | null
+  file_size?: number | null
   started_at?: string
   finished_at?: string
   document_snapshot_id?: string | null
@@ -288,6 +291,146 @@ export interface UploadResult {
     file_count: number
     files: string[]
   }>
+}
+
+// ─── 本体 / 知识图谱（B7）───
+
+export interface RunTrace {
+  run_id: string
+  domain: string
+  status: string
+  subloop_stage?: string | null
+  ontology_version_id?: string | null
+  awaiting_review: boolean
+  active_gate?: string | null
+  counts: {
+    total_documents: number
+    committed: number
+    new: number
+    updated: number
+    failed: number
+    skipped: number
+  }
+  ontology_proposed_candidates: number
+  entity_pending_mentions: number
+  entity_count: number
+  relation_count: number
+  escape_hatch_candidates?: number
+}
+
+export interface OntologyVersion {
+  id: string
+  domain_id: string
+  version_no: number
+  status: 'draft' | 'active' | 'superseded'
+  source?: string
+  created_by?: string | null
+  note?: string | null
+  created_at?: string
+}
+
+export interface OntologyNodeType {
+  id: string
+  name: string
+  layer: string
+  is_strong: boolean
+  definition?: string | null
+  examples_json?: unknown[]
+}
+
+export interface OntologyRelationType {
+  id: string
+  name: string
+  layer: string
+  is_directed: boolean
+  inverse_name?: string | null
+  allowed_pairs_json?: Array<{ head: string; tail: string }>
+  definition?: string | null
+}
+
+export interface ActiveOntology {
+  domain: string
+  version: OntologyVersion | null
+  node_types: OntologyNodeType[]
+  relation_types: OntologyRelationType[]
+}
+
+// 草稿编辑器：GET /ontology/draft 返回 / PUT 提交载荷，结构与 ActiveOntology 同构
+export interface OntologyDraft {
+  domain: string
+  version: OntologyVersion | null
+  node_types: OntologyNodeType[]
+  relation_types: OntologyRelationType[]
+}
+
+export interface OntologyCandidate {
+  id: string
+  domain_id: string
+  kind: 'node_type' | 'relation_type'
+  layer: string
+  proposed_name: string
+  payload_json?: Record<string, unknown>
+  source?: string
+  evidence_json?: unknown[]
+  score?: number | null
+  status: 'proposed' | 'accepted' | 'rejected'
+  review_note?: string | null
+  created_at?: string
+  duplicate_of?: string | null
+}
+
+export interface PendingMention {
+  id: string
+  document_snapshot_id: string
+  segment_id: string
+  node_type: string
+  mention_text: string
+  canonical_name?: string | null
+  resolved_entity_id?: string | null
+  resolve_status: string
+  confidence: number
+  metadata_json?: Record<string, unknown>
+  segment_text?: string | null      // §14.2：所在段原文
+  segment_section?: string | null   // §14.2：所在段标题
+}
+
+export interface GraphEntity {
+  id: string
+  domain_id: string
+  canonical_name: string
+  node_type: string
+  layer: string
+  aliases_json?: unknown[]
+  attributes_json?: Record<string, unknown>
+  mention_count: number
+  document_count: number
+}
+
+export interface EntityNeighbors {
+  center_id: string
+  hops: number
+  nodes: Array<{ id: string; canonical_name: string; node_type: string; mention_count: number }>
+  edges: Array<{ id: string; head_entity_id: string; tail_entity_id: string; relation_type: string; confidence?: number | null }>
+}
+
+export interface EntityMutationResult {
+  recomputed_edges?: number
+  affected?: string[]
+  neighbors?: EntityNeighbors
+  primary_id?: string
+}
+
+export interface GraphEvidence {
+  id: string
+  domain_id: string
+  document_snapshot_id: string
+  segment_id: string
+  quote?: string | null
+  target_kind: string
+  target_id: string
+  segment_text?: string | null
+  segment_section?: string | null
+  created_at?: string
 }
 
 // ─── Paginated Response ───
