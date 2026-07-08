@@ -9,10 +9,12 @@ Public method signatures are identical to the SQLite version.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -85,6 +87,12 @@ class _DB:
 
     def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
+        # Per-instance transaction connection slot. Each adapter (asset/runtime)
+        # gets its own ContextVar so an open transaction on one DB never leaks
+        # onto the other. None when no transaction is active in this context.
+        self._tx_conn: contextvars.ContextVar = contextvars.ContextVar(
+            f"tx_conn_{id(self)}", default=None
+        )
 
     @classmethod
     def from_conninfo(cls, conninfo: str, *, pool_min: int = 2, pool_max: int = 10) -> "_DB":
@@ -94,6 +102,11 @@ class _DB:
             min_size=pool_min,
             max_size=pool_max,
             open=False,
+            # Validate connections before handing them out so stale/closed
+            # connections (remote PG idle-timeout or restart) are discarded
+            # and replaced transparently instead of raising OperationalError.
+            check=ConnectionPool.check_connection,
+            max_idle=300.0,
             kwargs={"row_factory": dict_row},
         )
         return cls(pool)
@@ -116,30 +129,87 @@ class _DB:
     def _put_conn(self, conn: psycopg.Connection) -> None:
         self._pool.putconn(conn)
 
+    # -- transaction support --
+
+    @contextmanager
+    def transaction(self):
+        """Run a block of statements atomically on a single pooled connection.
+
+        While active, every ``_execute`` / ``_fetchone`` / ``_fetchall`` and the
+        ``delete_*`` helpers route to this one connection (so reads see the
+        block's own uncommitted writes). On normal exit the whole block is
+        committed; on any exception it is rolled back. Nested calls reuse the
+        outer transaction (no inner BEGIN/COMMIT).
+        """
+        if self._tx_conn.get() is not None:
+            # Already inside a transaction — reuse it.
+            yield
+            return
+        with self._pool.connection() as conn:
+            # psycopg connections default to autocommit=False; the pooled
+            # context manager commits on clean exit and rolls back on error.
+            # Guard against a misconfigured pool that would silently break atomicity.
+            if conn.autocommit:
+                raise RuntimeError(
+                    "transaction() requires a non-autocommit connection; "
+                    "the pool must not enable autocommit"
+                )
+            token = self._tx_conn.set(conn)
+            try:
+                yield
+            finally:
+                self._tx_conn.reset(token)
+
     # -- helpers --
 
+    def _run(self, sql: str, params: tuple, *, fetch: str | None):
+        """Dispatch a statement to the active transaction connection if one is
+        open in this context, otherwise to a fresh pooled connection (with retry).
+
+        ``fetch``: None (no result), 'one', 'all', or 'rowcount'.
+        """
+        tx_conn = self._tx_conn.get()
+        if tx_conn is not None:
+            # Inside a transaction: share the connection, do NOT commit here and
+            # do NOT retry (a failed statement aborts the whole transaction).
+            with tx_conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                if fetch == "one":
+                    return cur.fetchone()
+                if fetch == "all":
+                    return cur.fetchall()
+                if fetch == "rowcount":
+                    return cur.rowcount
+                return None
+        return self._run_pooled(sql, params, fetch=fetch)
+
     @_retry_on_op_error()
+    def _run_pooled(self, sql: str, params: tuple, *, fetch: str | None):
+        """Non-transactional path: each call gets its own connection and
+        auto-commits on context exit. Retried on transient connection errors."""
+        with self._pool.connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                if fetch == "one":
+                    return cur.fetchone()
+                if fetch == "all":
+                    return cur.fetchall()
+                if fetch == "rowcount":
+                    return cur.rowcount
+                return None
+
     def _execute(self, sql: str, params: tuple = ()) -> None:
-        with self._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params)
+        self._run(sql, params, fetch=None)
 
-    @_retry_on_op_error()
     def _fetchone(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
-        with self._pool.connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(sql, params)
-                return cur.fetchone()
+        return self._run(sql, params, fetch="one")
 
-    @_retry_on_op_error()
     def _fetchall(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
-        with self._pool.connection() as conn:
-            with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(sql, params)
-                return cur.fetchall()
+        return self._run(sql, params, fetch="all")
 
     def commit(self) -> None:
-        """No-op: each _execute auto-commits via context manager."""
+        """No-op: non-transactional statements auto-commit; transaction() commits
+        on block exit. Kept for backward compatibility with existing call sites."""
 
 
 # ===================================================================
@@ -334,13 +404,11 @@ class AssetCoreDB(_DB):
         return segment_id
 
     def delete_segments_by_snapshot(self, document_snapshot_id: str) -> int:
-        with self._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM asset_raw_segments WHERE document_snapshot_id = %s",
-                    (document_snapshot_id,),
-                )
-                return cur.rowcount
+        return self._run(
+            "DELETE FROM asset_raw_segments WHERE document_snapshot_id = %s",
+            (document_snapshot_id,),
+            fetch="rowcount",
+        )
 
     def get_segments_by_snapshot(self, document_snapshot_id: str) -> list[dict[str, Any]]:
         return self._fetchall(
@@ -389,13 +457,11 @@ class AssetCoreDB(_DB):
         return relation_id
 
     def delete_relations_by_snapshot(self, document_snapshot_id: str) -> int:
-        with self._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM asset_raw_segment_relations WHERE document_snapshot_id = %s",
-                    (document_snapshot_id,),
-                )
-                return cur.rowcount
+        return self._run(
+            "DELETE FROM asset_raw_segment_relations WHERE document_snapshot_id = %s",
+            (document_snapshot_id,),
+            fetch="rowcount",
+        )
 
     def get_relations_by_snapshot(self, document_snapshot_id: str) -> list[dict[str, Any]]:
         return self._fetchall(
@@ -445,13 +511,11 @@ class AssetCoreDB(_DB):
         return unit_id
 
     def delete_retrieval_units_by_snapshot(self, document_snapshot_id: str) -> int:
-        with self._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM asset_retrieval_units WHERE document_snapshot_id = %s",
-                    (document_snapshot_id,),
-                )
-                return cur.rowcount
+        return self._run(
+            "DELETE FROM asset_retrieval_units WHERE document_snapshot_id = %s",
+            (document_snapshot_id,),
+            fetch="rowcount",
+        )
 
     def get_retrieval_units_by_snapshot(self, document_snapshot_id: str) -> list[dict[str, Any]]:
         return self._fetchall(
@@ -638,29 +702,13 @@ class MiningRuntimeDB(_DB):
     # -- mining runs --
 
     def insert_run(self, data: MiningRunData) -> str:
-        """Upsert a run row.
-
-        The API layer pre-inserts a minimal run row (status='running',
-        total_documents=0) so the UI can list the task instantly. When the
-        background thread reaches this point after ingest_directory(), the
-        row already exists — ON CONFLICT updates only the fields known after
-        ingest (source_batch_id, total_documents, metadata_json), preserving
-        the pre-inserted started_at/status.
-
-        Standalone callers (demo, tests) that don't pre-insert hit the normal
-        INSERT path.
-        """
         self._execute(
             """INSERT INTO mining_runs
                    (id, source_batch_id, input_path, domain, channel, status, build_id,
                     total_documents, new_count, updated_count, skipped_count,
                     failed_count, committed_count, started_at, finished_at,
                     error_summary, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (id) DO UPDATE SET
-                   source_batch_id = EXCLUDED.source_batch_id,
-                   total_documents = EXCLUDED.total_documents,
-                   metadata_json = EXCLUDED.metadata_json""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 data.id, data.source_batch_id, data.input_path, data.domain, data.channel,
                 data.status, data.build_id,
@@ -679,6 +727,8 @@ class MiningRuntimeDB(_DB):
         error_summary: str | None = None,
         build_id: str | None = None,
         metadata_json: dict | None = None,
+        subloop_stage: str | None = None,
+        ontology_version_id: str | None = None,
         **counters: int,
     ) -> None:
         parts = ["status = %s"]
@@ -695,6 +745,12 @@ class MiningRuntimeDB(_DB):
         if metadata_json is not None:
             parts.append("metadata_json = %s")
             params.append(_json_dumps(metadata_json))
+        if subloop_stage is not None:
+            parts.append("subloop_stage = %s")
+            params.append(subloop_stage)
+        if ontology_version_id is not None:
+            parts.append("ontology_version_id = %s")
+            params.append(ontology_version_id)
         for col in ("total_documents", "new_count", "updated_count", "skipped_count", "failed_count", "committed_count"):
             if col in counters:
                 parts.append(f"{col} = %s")
@@ -707,6 +763,17 @@ class MiningRuntimeDB(_DB):
 
     def get_interrupted_runs(self) -> list[dict[str, Any]]:
         return self._fetchall("SELECT * FROM mining_runs WHERE status = 'interrupted' ORDER BY started_at")
+
+    def get_awaiting_review_runs(self, domain: str | None = None) -> list[dict[str, Any]]:
+        """列出停在人审 Gate 的 run（B6 暂停态）。domain 可选过滤。"""
+        if domain:
+            return self._fetchall(
+                "SELECT * FROM mining_runs WHERE status = 'awaiting_review' AND domain = %s "
+                "ORDER BY started_at",
+                (domain,),
+            )
+        return self._fetchall(
+            "SELECT * FROM mining_runs WHERE status = 'awaiting_review' ORDER BY started_at")
 
     # -- run documents --
 
@@ -735,12 +802,16 @@ class MiningRuntimeDB(_DB):
         error_message: str | None = None,
         finished_at: str | None = None,
         metadata_json: dict | None = None,
+        action: str | None = None,
     ) -> None:
         parts: list[str] = []
         params: list[Any] = []
         if status is not None:
             parts.append("status = %s")
             params.append(status)
+        if action is not None:
+            parts.append("action = %s")
+            params.append(action)
         if document_id is not None:
             parts.append("document_id = %s")
             params.append(document_id)

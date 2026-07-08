@@ -2,15 +2,10 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from knowledge_mining.mining.infra.pg_config import MiningDbConfig
@@ -51,12 +46,7 @@ class CancelRunResponse(BaseModel):
 
 @router.post("", response_model=RunResponse, status_code=202)
 async def create_run(body: CreateRunRequest, request: Request) -> dict:
-    """Submit a mining run (async, returns immediately).
-
-    Pre-inserts the mining_runs row so the UI can list the task instantly,
-    without waiting for the background thread to finish pool/LLM/ingest setup.
-    The thread later upserts source_batch_id/total_documents/metadata.
-    """
+    """Submit a mining run (async, returns immediately)."""
     pool = request.app.state.pg_pool
     db_config: MiningDbConfig = request.app.state.db_config
 
@@ -71,24 +61,6 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
     if not _run_lock.acquire(blocking=False):
         raise HTTPException(409, "A mining run is already in progress. Please wait for it to complete.")
 
-    # Pre-generate run_id and pre-insert a minimal run row so the UI sees the
-    # task instantly. The background thread upserts the ingest results later
-    # (MiningRuntimeDB.insert_run uses ON CONFLICT DO UPDATE).
-    run_id = uuid.uuid4().hex
-    started_at = datetime.now(timezone.utc).isoformat()
-    try:
-        async with pool.connection() as conn:
-            await conn.execute(
-                """INSERT INTO mining_runs
-                       (id, source_batch_id, input_path, domain, channel, status,
-                        total_documents, started_at, metadata_json)
-                   VALUES (%s, NULL, %s, %s, NULL, 'running', 0, %s, '{}'::jsonb)""",
-                (run_id, body.input_path, resolved_domain, started_at),
-            )
-    except Exception:
-        _run_lock.release()
-        raise
-
     def _run_in_thread():
         try:
             from knowledge_mining.mining.jobs.run import run as mining_run
@@ -100,21 +72,35 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
                 llm_base_url=llm_base_url,
                 max_workers=body.max_workers,
                 domain=resolved_domain,
-                run_id=run_id,
             )
         except Exception as e:
             logger.error("Mining run failed: %s", e, exc_info=True)
         finally:
             _run_lock.release()
 
+    # Pre-create run to get run_id — but the actual run() creates its own.
+    # We start the thread and query the run table after.
     thread = threading.Thread(target=_run_in_thread, daemon=True)
     thread.start()
 
-    return {
-        "run_id": run_id,
-        "status": "running",
-        "started_at": started_at,
-    }
+    # Poll for the run to appear in DB (up to 10s)
+    import asyncio
+    for _ in range(20):
+        await asyncio.sleep(0.5)
+        async with pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT id, status, started_at FROM mining_runs "
+                "ORDER BY started_at DESC LIMIT 1"
+            )
+            row = await cur.fetchone()
+            if row:
+                return {
+                    "run_id": row["id"],
+                    "status": row["status"],
+                    "started_at": row["started_at"],
+                }
+
+    return {"run_id": "pending", "status": "starting"}
 
 
 @router.get("")
@@ -237,7 +223,7 @@ async def get_run_documents(
         cur = await conn.execute(
             f"SELECT d.id, d.run_id, d.document_key, d.action, d.status, "
             f"d.document_id, d.document_snapshot_id, d.error_message, "
-            f"d.raw_content_hash, d.normalized_content_hash "
+            f"d.raw_content_hash, d.normalized_content_hash, d.metadata_json "
             f"FROM mining_run_documents d WHERE {where} "
             f"ORDER BY d.document_key LIMIT %s OFFSET %s",
             params + [page_size, offset],
@@ -285,6 +271,9 @@ async def get_run_documents(
             doc["document_name"] = dk.replace("doc:/", "", 1) if dk.startswith("doc:/") else dk
             doc["current_stage"] = stage_lookup.get(doc["id"])
             doc["duration_ms"] = duration_lookup.get(doc["id"])
+            # file_size: 摄取时存进 metadata_json 的原始文件字节大小（JSONB → dict）
+            meta = doc.pop("metadata_json", None) or {}
+            doc["file_size"] = meta.get("file_size") if isinstance(meta, dict) else None
             documents.append(doc)
 
     return {
@@ -352,13 +341,36 @@ async def get_run_progress(run_id: str, request: Request) -> dict:
         current_stage_row = await current_stage_cur.fetchone()
         current_stage = current_stage_row["stage"] if current_stage_row else None
 
+        # 全局尾段（run_document_id IS NULL）：落图 + 建库/发布。这些阶段在所有文档
+        # 提交之后才整体跑一次，进度条必须把它们算进去——否则会出现"文档 100%、整轮
+        # 其实还在落图/构建"的误导性满格。
+        global_cur = await conn.execute(
+            "SELECT stage FROM mining_run_stage_events "
+            "WHERE run_id = %s AND run_document_id IS NULL AND status = 'completed' "
+            "GROUP BY stage",
+            [run_id],
+        )
+        global_done_stages = {r["stage"] for r in await global_cur.fetchall()}
+
     total = run["total_documents"] or 0
     completed = status_counts.get("committed", 0)
     failed = status_counts.get("failed", 0)
     skipped = status_counts.get("skipped", 0)
     processing = status_counts.get("processing", 0) + status_counts.get("pending", 0)
 
-    progress_percent = round((completed + failed + skipped) / total * 100, 1) if total else 0.0
+    # 进度 = 文档单元 + 全局尾段单元。每篇文档算 1 个单元，每个全局尾段也算 1 个单元，
+    # 这样"18 篇全提交"只到 ~82%，落图/建库/发布各自完成才继续往上爬到 100%。
+    GLOBAL_TAIL_STAGES = ("graph_write", "assemble_build", "validate_build", "publish_release")
+    done_global = sum(1 for s in GLOBAL_TAIL_STAGES if s in global_done_stages)
+    total_units = total + len(GLOBAL_TAIL_STAGES)
+    done_units = completed + failed + skipped + done_global
+    progress_percent = round(done_units / total_units * 100, 1) if total_units else 0.0
+    # 只有整轮真正结束（status=completed）才显示 100%；尾段还在跑、或尾段被跳过
+    # （如无 active 本体跳过落图）导致分子凑不满时，封顶在 99.9% 以免误导。
+    if run["status"] == "completed":
+        progress_percent = 100.0
+    elif progress_percent >= 100.0:
+        progress_percent = 99.9
 
     return {
         "run_id": run_id,
@@ -370,6 +382,7 @@ async def get_run_progress(run_id: str, request: Request) -> dict:
         "progress_percent": progress_percent,
         "current_stage": current_stage,
         "stage_summary": stage_summary,
+        "global_done_stages": sorted(global_done_stages),
     }
 
 
@@ -397,127 +410,6 @@ async def get_run_document(run_id: str, doc_id: str, request: Request) -> dict:
         result["document_name"] = dk.replace("doc:/", "", 1) if dk.startswith("doc:/") else dk
 
     return result
-
-
-_RENDERABLE_EXTS = {".md", ".markdown", ".txt", ".html", ".htm"}
-_MAX_RAW_CONTENT_SIZE = 10 * 1024 * 1024  # 10 MB
-
-
-def _decode_html_bytes(raw: bytes) -> str:
-    """Decode HTML bytes to UTF-8 string, handling GBK/GB2312/GB18030."""
-    if raw[:3] == b'\xef\xbb\xbf':
-        return raw[3:].decode("utf-8", errors="replace")
-    head = raw[:4000].lower()
-    charset_match = re.search(rb'charset=["\']?\s*([a-z0-9_-]+)', head)
-    if charset_match:
-        charset = charset_match.group(1).decode("ascii")
-        try:
-            return raw.decode(charset, errors="replace")
-        except (LookupError, UnicodeDecodeError):
-            pass
-    try:
-        raw.decode("utf-8")
-        return raw.decode("utf-8", errors="replace")
-    except UnicodeDecodeError:
-        return raw.decode("gbk", errors="replace")
-
-
-def _find_file_in_uploads(relative_path: str) -> Path | None:
-    """Search UPLOAD_ROOT/domain/*/relative_path for a file."""
-    from knowledge_mining.mining.infra.upload_config import UploadConfig
-    upload_root = UploadConfig().upload_root_path
-    if not relative_path or not upload_root.is_dir():
-        return None
-    for domain_dir in upload_root.iterdir():
-        if not domain_dir.is_dir():
-            continue
-        for batch_dir in domain_dir.iterdir():
-            if not batch_dir.is_dir():
-                continue
-            candidate = batch_dir / relative_path
-            if candidate.is_file():
-                return candidate
-    return None
-
-
-@router.get("/{run_id}/documents/{doc_id}/raw-content")
-async def get_run_document_raw_content(run_id: str, doc_id: str, request: Request):
-    """Return the original file content for a run document (md/txt/html)."""
-    pool = request.app.state.pg_pool
-
-    async with pool.connection() as conn:
-        # Get document_key and run's input_path
-        cur = await conn.execute(
-            "SELECT d.document_key, r.input_path "
-            "FROM mining_run_documents d "
-            "JOIN mining_runs r ON r.id = d.run_id "
-            "WHERE d.id = %s AND d.run_id = %s",
-            [doc_id, run_id],
-        )
-        row = await cur.fetchone()
-        if not row:
-            raise HTTPException(404, f"Document {doc_id} not found in run {run_id}")
-
-    document_key = row["document_key"] or ""
-    input_path = row["input_path"]
-
-    # document_key format: "doc:/relative/path/file.md" or just "relative/path/file.md"
-    if document_key.startswith("doc:/"):
-        rel_path = document_key[5:]
-    else:
-        rel_path = document_key
-
-    file_path: Path | None = None
-
-    # Strategy 1: input_path + rel_path (same-environment)
-    if input_path and rel_path:
-        base_path = Path(input_path).resolve()
-        candidate = (base_path / rel_path).resolve()
-        if candidate.is_file() and candidate.is_relative_to(base_path):
-            file_path = candidate
-
-    # Strategy 2: Search UPLOAD_ROOT for relative_path (cross-environment fallback)
-    if file_path is None and rel_path:
-        file_path = _find_file_in_uploads(rel_path)
-
-    if file_path is None:
-        raise HTTPException(404, f"Source file not found: {rel_path}")
-
-    ext = file_path.suffix.lower()
-    if ext not in _RENDERABLE_EXTS:
-        raise HTTPException(
-            400,
-            f"File type '{ext}' is not renderable. Supported: {', '.join(sorted(_RENDERABLE_EXTS))}",
-        )
-
-    file_size = file_path.stat().st_size
-    if file_size > _MAX_RAW_CONTENT_SIZE:
-        raise HTTPException(413, "File too large for inline rendering")
-
-    try:
-        content_bytes = file_path.read_bytes()
-    except OSError as exc:
-        logger.error("Failed to read file %s: %s", file_path, exc)
-        raise HTTPException(500, "Failed to read source file") from exc
-
-    if ext in (".html", ".htm"):
-        html_text = _decode_html_bytes(content_bytes)
-        return HTMLResponse(
-            content=html_text.encode("utf-8"),
-            status_code=200,
-            headers={"X-Content-Format": "html"},
-        )
-
-    content = content_bytes.decode("utf-8", errors="replace")
-
-    if ext in (".md", ".markdown"):
-        return PlainTextResponse(
-            content=content,
-            status_code=200,
-            headers={"X-Content-Format": "markdown"},
-        )
-
-    return PlainTextResponse(content=content, status_code=200)
 
 
 @router.get("/{run_id}/documents/{doc_id}/stages")
@@ -853,6 +745,149 @@ async def publish_run(run_id: str, request: Request, body: PublishRunRequest | N
         raise HTTPException(400, str(e))
     except Exception as e:
         raise HTTPException(500, f"Publish failed: {e}")
+
+
+@router.get("/{run_id}/trace")
+async def get_run_trace(run_id: str, request: Request) -> dict:
+    """B7 挖掘过程透视：在常规 run 详情之上叠加本体/图谱视角的概览。
+
+    返回 run 状态（含 awaiting_review 的 subloop_stage）+ 两道检查点的待办数 +
+    该 run 落图的对象/边规模，供前端"透明前端"页一屏看清这次挖掘干了什么。
+    """
+    pool = request.app.state.pg_pool
+
+    async with pool.connection() as conn:
+        run_cur = await conn.execute(
+            "SELECT id, domain, status, subloop_stage, ontology_version_id, "
+            "total_documents, committed_count, new_count, updated_count, "
+            "failed_count, skipped_count, started_at, finished_at "
+            "FROM mining_runs WHERE id = %s", [run_id]
+        )
+        run = await run_cur.fetchone()
+        if not run:
+            raise HTTPException(404, f"Run {run_id} not found")
+        domain = run["domain"]
+
+        # 本体确认: 该领域待审本体候选数
+        cand_cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM ontology_candidates "
+            "WHERE domain_id = %s AND status = 'proposed'", [domain]
+        )
+        proposed_candidates = (await cand_cur.fetchone())["n"]
+
+        # 本体线 entity_extract 产出：逃生口候选数（source='escape_hatch'，含待审/已处理）
+        esc_cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM ontology_candidates "
+            "WHERE domain_id = %s AND source = 'escape_hatch'", [domain]
+        )
+        escape_hatch_candidates = (await esc_cur.fetchone())["n"]
+
+        # 实体确认: 该 run 处理快照下的待审 mention 数
+        ment_cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM asset_segment_entity_mentions m "
+            "JOIN mining_run_documents d ON d.document_snapshot_id = m.document_snapshot_id "
+            "WHERE d.run_id = %s AND m.resolve_status = 'pending'", [run_id]
+        )
+        pending_mentions = (await ment_cur.fetchone())["n"]
+
+        # 该 run 落图规模（对象/边按 domain 计；MVP 不按 snapshot 精确切分）
+        ent_cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM ontology_entities WHERE domain_id = %s", [domain]
+        )
+        entity_count = (await ent_cur.fetchone())["n"]
+        rel_cur = await conn.execute(
+            "SELECT COUNT(*) AS n FROM ontology_entity_relations WHERE domain_id = %s", [domain]
+        )
+        relation_count = (await rel_cur.fetchone())["n"]
+
+    return {
+        "run_id": run_id,
+        "domain": domain,
+        "status": run["status"],
+        "subloop_stage": run["subloop_stage"],
+        "ontology_version_id": run["ontology_version_id"],
+        "awaiting_review": run["status"] == "awaiting_review",
+        "active_gate": run["subloop_stage"] if run["status"] == "awaiting_review" else None,
+        "counts": {
+            "total_documents": run["total_documents"],
+            "committed": run["committed_count"],
+            "new": run["new_count"],
+            "updated": run["updated_count"],
+            "failed": run["failed_count"],
+            "skipped": run["skipped_count"],
+        },
+        "ontology_proposed_candidates": proposed_candidates,
+        "entity_pending_mentions": pending_mentions,
+        "entity_count": entity_count,
+        "relation_count": relation_count,
+        "escape_hatch_candidates": escape_hatch_candidates,
+    }
+
+
+class ResumeRunRequest(BaseModel):
+    domain: str | None = None
+    publish_on_partial_failure: bool = False
+
+
+@router.post("/{run_id}/resume")
+async def resume_run(run_id: str, request: Request, body: ResumeRunRequest | None = None) -> dict:
+    """B6/B7：人审提交后续跑一个 awaiting_review 的 run。
+
+    重新评估两道检查点：仍有待办 → 保持 awaiting_review 刷新 subloop_stage；
+    都清空 → 从 graph_write 之后续跑（建库 + 发布），不重抽文档。
+
+    **异步执行**：续跑要跑 LLM 归纳 + 建库发布，可能耗时数分钟。若同步等结果，
+    上游网关会先超时（504），用户重试又撞上已变更的状态（400）。所以这里只做快速校验，
+    重活丢后台线程，立即返回 status=resuming，让前端轮询 run 状态看进度（与初始挖掘一致）。
+    """
+    db_config: MiningDbConfig = request.app.state.db_config
+    pool = request.app.state.pg_pool
+
+    # 快速读当前 run 状态（同时拿 domain，避免再查一次）
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT domain, status, subloop_stage, finished_at FROM mining_runs WHERE id = %s",
+            [run_id],
+        )
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(404, f"Run {run_id} not found")
+
+    resume_domain = (body.domain if body and body.domain else None) or row["domain"] or "cloud_core_network"
+    status = row["status"]
+    stage = row["subloop_stage"]
+    finished = row["finished_at"]
+
+    # 已完成：别报错，直接告诉前端"无需继续"——重试已跑完的 run 不应是错误。
+    if status == "completed":
+        return {"run_id": run_id, "status": "completed", "message": "该 run 已完成，无需继续"}
+
+    # 可续跑：① 人审暂停；② 收尾中断卡在 running/done（finished_at 仍空）的恢复。
+    resumable = status == "awaiting_review" or (status == "running" and stage == "done" and finished is None)
+    if not resumable:
+        raise HTTPException(
+            400, f"Run {run_id} 当前状态为 {status}{f'/{stage}' if stage else ''}，无法继续挖掘")
+
+    publish_partial = body.publish_on_partial_failure if body else False
+
+    # 防并发：和初始挖掘共用一把锁，避免续跑与新挖掘互相踩。
+    if not _run_lock.acquire(blocking=False):
+        raise HTTPException(409, "已有挖掘任务在进行中，请稍候再试")
+
+    def _resume_in_thread():
+        try:
+            from knowledge_mining.mining.jobs.run import resume as resume_run_job
+            resume_run_job(
+                run_id, domain=resume_domain, db_config=db_config,
+                publish_on_partial_failure=publish_partial,
+            )
+        except Exception as e:
+            logger.error("Resume run failed: %s", e, exc_info=True)
+        finally:
+            _run_lock.release()
+
+    threading.Thread(target=_resume_in_thread, daemon=True).start()
+    return {"run_id": run_id, "status": "resuming", "message": "已开始继续挖掘，请稍候查看进度"}
 
 
 def _utcnow() -> str:

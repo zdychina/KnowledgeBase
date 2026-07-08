@@ -1,0 +1,33 @@
+# knowledge_mining 运行时依赖
+# 由代码 import 扫描生成（仅含第三方库，标准库/内部模块不列）
+# Python: >=3.11
+# 安装： pip install -r requirements.txt
+
+# ---- Web 框架 / ASGI ----
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9        # 网页文件上传（uploads.py 的 UploadFile/File/Form 依赖它）
+
+# ---- 校验 / 配置 ----
+pydantic>=2.7
+pydantic-settings>=2.3
+PyYAML>=6.0                     # domain_pack.py 读 YAML
+
+# ---- HTTP 客户端 ----
+httpx>=0.27                    # llm_client.py / embedding.py 调用模型与向量服务
+
+# ---- 数据库（PostgreSQL）----
+psycopg[binary]>=3.1
+psycopg-pool>=3.2
+
+# ---- 文档解析 ----
+markdown-it-py>=3.0            # structure 解析 Markdown
+pdfminer.six>=20231228         # PDF 解析
+python-docx>=1.1              # Word(.docx) 解析
+
+# ---- 中文分词（可选，缺失时搜索降级为不分词）----
+jieba>=0.42
+
+# ---- 开发 / 测试（运行时不需要）----
+# pytest>=8.0
+# pytest-asyncio>=0.23

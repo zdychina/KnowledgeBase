@@ -166,14 +166,27 @@ class TestPerDomainDbConnection:
 # ---------------------------------------------------------------------------
 
 class TestDomainEntitySchema:
-    def test_cloud_schema_has_entity_types(self, cloud_profile):
+    def test_segment_understanding_has_semantic_role_enum(self, cloud_profile):
+        """实体抽取已拆出（L4 §15）：segment-understanding 只剩篇章字段，注入 semantic_role enum。"""
         from knowledge_mining.mining.infra.llm_templates import build_templates_from_profile
         templates = build_templates_from_profile(cloud_profile)
         seg_tpl = next(t for t in templates if t["template_key"] == "mining-segment-understanding")
         schema = json.loads(seg_tpl["output_schema_json"])
-        entity_type_enum = schema["properties"]["entities"]["items"]["properties"]["type"]["enum"]
-        assert "command" in entity_type_enum
-        assert "network_element" in entity_type_enum
+        # 实体不再在 segment-understanding 里
+        assert "entities" not in schema["properties"]
+        if cloud_profile.semantic_roles:
+            assert "enum" in schema["properties"]["semantic_role"]
+
+    def test_entity_extraction_template_dual_channel(self, cloud_profile):
+        """新 mining-entity-extraction：双通道 schema（entities + out_of_schema）。"""
+        from knowledge_mining.mining.infra.llm_templates import build_templates_from_profile
+        templates = build_templates_from_profile(cloud_profile)
+        ent_tpl = next(t for t in templates if t["template_key"] == "mining-entity-extraction")
+        schema = json.loads(ent_tpl["output_schema_json"])
+        props = schema["properties"]
+        assert "entities" in props and "out_of_schema" in props
+        oos_props = props["out_of_schema"]["items"]["properties"]
+        assert "proposed_type" in oos_props
 
     def test_generic_schema_no_templates(self, generic_profile):
         """Generic pack has no LLM templates."""

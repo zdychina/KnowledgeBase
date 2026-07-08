@@ -96,7 +96,10 @@ class PipelineConfig:
 
     parser_factory: Callable[[str], Any] = field(default=None)
     segmenter: Segmenter | None = None
-    enricher: Any | None = None  # Enricher Protocol
+    enricher: Any | None = None  # Enricher Protocol（篇章本职：语义角色 + 内容质量）
+    entity_extractor: Any | None = None  # EntityExtractor（本体线：双通道实体抽取，L4 §15）
+    resolver: Any | None = None  # EntityResolver (B3 实体归一 + 人审分流)
+    entity_relation_builder: Any | None = None  # EntityRelationBuilder (B4 概念关系抽取)
     question_generator: Any | None = None  # QuestionGenerator Protocol
     embedding_generator: Any | None = None  # EmbeddingGenerator Protocol
     discourse_relation_builder: Any | None = None  # DiscourseRelationBuilder
@@ -176,6 +179,30 @@ class MiningPipeline:
             enriched = enricher.enrich_batch(list(ctx.segments))
             ctx = ctx.with_updates(segments=tuple(enriched))
 
+        # Stage 3a: Entity extract (本体线：双通道实体抽取，独立 LLM 调用)
+        extractor = cfg.entity_extractor
+        if extractor is not None and ctx.segments:
+            if stage_callback:
+                stage_callback("entity_extract", ctx)
+            extracted = extractor.extract_batch(list(ctx.segments))
+            ctx = ctx.with_updates(segments=tuple(extracted))
+
+        # Stage 3b: Resolve (实体归一 + 人审分流)
+        resolver = cfg.resolver
+        if resolver is not None and ctx.segments:
+            if stage_callback:
+                stage_callback("resolve", ctx)
+            resolved = resolver.resolve_batch(list(ctx.segments))
+            ctx = ctx.with_updates(segments=tuple(resolved))
+
+        # Stage 3c: Entity relations (pattern 约束抽概念关系)
+        rel_builder = cfg.entity_relation_builder
+        if rel_builder is not None and ctx.segments:
+            if stage_callback:
+                stage_callback("entity_relations", ctx)
+            built = rel_builder.build_batch(list(ctx.segments))
+            ctx = ctx.with_updates(segments=tuple(built))
+
         # Stage 4: Assign segment UUIDs
         if ctx.segments:
             from knowledge_mining.mining.stages.relations import build_seg_ids
@@ -222,12 +249,18 @@ def _worker(
     out_q: Queue,
     run_id: str | None,
     tracker: Any | None,
+    summary_fn: Callable[[DocumentContext], str | None] | None = None,
 ) -> None:
     """Worker thread: pull from in_q, run fn, emit start/end stage events, push to out_q.
 
     Stage events are emitted only when both run_id and tracker are provided AND
     the ctx carries a run_document_id. This keeps StreamingPipeline usable in
     test contexts where no tracker is wired.
+
+    summary_fn (optional) maps a completed stage's result ctx to a short
+    output_summary string (e.g. "segments=12") recorded on the end event — used
+    by the run-document detail view to show per-stage产出计数. Failures inside
+    summary_fn never break the pipeline (summary falls back to None).
     """
     while True:
         item = in_q.get()
@@ -268,7 +301,13 @@ def _worker(
 
         if evt_id is not None:
             try:
-                tracker.end_stage(evt_id, run_id, stage_name)
+                summary = None
+                if summary_fn is not None:
+                    try:
+                        summary = summary_fn(result)
+                    except Exception:
+                        summary = None
+                tracker.end_stage(evt_id, run_id, stage_name, output_summary=summary)
             except Exception:
                 logger.exception("tracker.end_stage failed for stage=%s", stage_name)
         out_q.put(result)
@@ -290,23 +329,25 @@ class StreamingPipeline:
 
     def __init__(
         self,
-        stages: list[tuple[str, Callable[[DocumentContext], DocumentContext], int]],
+        stages: list[tuple],
         *,
         run_id: str | None = None,
         tracker: Any | None = None,
-        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
+        """stages 元素为 (name, fn, n_workers) 或可选带第 4 项
+        (name, fn, n_workers, summary_fn)，summary_fn 把完成 ctx 映射成 output_summary。"""
         self._stages = stages
         self._queues: list[Queue] = [Queue() for _ in range(len(stages) + 1)]
         self._threads: list[list[Thread]] = []
-        self._cancel_check = cancel_check
 
-        for i, (name, fn, n) in enumerate(stages):
+        for i, spec in enumerate(stages):
+            name, fn, n = spec[0], spec[1], spec[2]
+            summary_fn = spec[3] if len(spec) > 3 else None
             stage_threads = []
             for w in range(n):
                 t = Thread(
                     target=_worker,
-                    args=(name, fn, self._queues[i], self._queues[i + 1], run_id, tracker),
+                    args=(name, fn, self._queues[i], self._queues[i + 1], run_id, tracker, summary_fn),
                     name=f"mining-{name}-{w}",
                     daemon=True,
                 )
@@ -315,19 +356,10 @@ class StreamingPipeline:
             self._threads.append(stage_threads)
 
     def process_all(self, items: list[DocumentContext]) -> list[DocumentContext]:
-        """Submit all items, wait for completion, return results in input order.
-
-        If a cancel_check is set, stops submitting remaining items once it
-        returns True. Items already in flight still complete so workers and
-        queues drain cleanly.
-        """
-        submitted = 0
+        """Submit all items, wait for completion, return results in input order."""
+        n = len(items)
         for i, item in enumerate(items):
-            if self._cancel_check and self._cancel_check():
-                logger.info("Pipeline cancelled: %d/%d items submitted", submitted, len(items))
-                break
             self._queues[0].put(item.with_updates(sequence_id=i))
-            submitted += 1
 
         # Send sentinels stage-by-stage to shut down workers
         for i, stage_threads in enumerate(self._threads):
@@ -337,7 +369,7 @@ class StreamingPipeline:
                 t.join()
 
         results: list[DocumentContext] = []
-        while len(results) < submitted:
+        while len(results) < n:
             results.append(self._queues[-1].get())
         results.sort(key=lambda ctx: ctx.sequence_id)
         return results
@@ -386,6 +418,33 @@ def enrich_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
         return ctx
     enriched = enricher.enrich_batch(list(ctx.segments))
     return ctx.with_updates(segments=tuple(enriched))
+
+
+def entity_extract_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
+    """Stage 3a: 本体线实体抽取（双通道，独立 LLM 调用，L4 §15）。"""
+    extractor = cfg.entity_extractor
+    if extractor is None or not ctx.segments:
+        return ctx
+    extracted = extractor.extract_batch(list(ctx.segments))
+    return ctx.with_updates(segments=tuple(extracted))
+
+
+def resolve_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
+    """Stage 3b: 实体归一 + 人审分流（给每个 mention 打 canonical_name + resolve_status）。"""
+    resolver = cfg.resolver
+    if resolver is None or not ctx.segments:
+        return ctx
+    resolved = resolver.resolve_batch(list(ctx.segments))
+    return ctx.with_updates(segments=tuple(resolved))
+
+
+def entity_relations_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
+    """Stage 3c: 概念关系抽取（pattern 约束，产候选边写进 segment metadata）。"""
+    builder = cfg.entity_relation_builder
+    if builder is None or not ctx.segments:
+        return ctx
+    built = builder.build_batch(list(ctx.segments))
+    return ctx.with_updates(segments=tuple(built))
 
 
 def discourse_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
@@ -489,122 +548,156 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
         seg_id_map = ctx.seg_ids
         retrieval_units = list(ctx.retrieval_units)
 
-        # --- select_snapshot ---
+        # --- empty-content guard: 0 segments → skip, do NOT create a snapshot ---
+        # A document that parsed but produced no segments must not leave an empty
+        # snapshot behind (that is exactly what triggered the "Snapshot has no
+        # segments" build failure). Skip it; the runtime ledger records it.
+        if not segments:
+            if tracker and rd_id:
+                tracker.skip_document(rd_id)
+                try:
+                    cfg.runtime_db.commit()
+                except Exception:
+                    pass
+            return ctx
+
+        # --- resolve run_id (runtime DB, outside the asset transaction) ---
         if tracker and rd_id:
             _run_id = tracker._db._fetchone(
                 "SELECT run_id FROM mining_run_documents WHERE id = %s", (rd_id,)
             )
             run_id = _run_id["run_id"] if _run_id else None
 
-        document_id, snapshot_id, link_id = select_or_create_snapshot(
-            asset_db, raw, doc_profile, batch_id=batch_id,
-        )
-        asset_db.commit()
-
-        # --- UPDATE cleanup: remove old snapshot data ---
         action = ctx.action
         existing_doc = ctx.existing_doc
-        if action == "UPDATE" and existing_doc is not None:
-            old_links = asset_db._fetchall(
-                "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-                "WHERE document_id = %s ORDER BY linked_at DESC",
-                (existing_doc["id"],),
-            )
-            for old_link in old_links[1:] if len(old_links) > 1 else []:
-                old_snap_id = old_link["document_snapshot_id"]
-                asset_db.delete_retrieval_units_by_snapshot(old_snap_id)
-                asset_db.delete_relations_by_snapshot(old_snap_id)
-                asset_db.delete_segments_by_snapshot(old_snap_id)
-            asset_db.commit()
+        ru_id_map: dict[str, str] = {}  # declared before the transaction for use by embeddings
 
-        # --- commit_segments ---
-        for seg in segments:
-            seg_key = f"{seg.document_key}#{seg.segment_index}"
-            seg_id = seg_id_map.get(seg_key, uuid.uuid4().hex)
-            asset_db.insert_raw_segment(
-                segment_id=seg_id,
-                document_snapshot_id=snapshot_id,
-                segment_key=seg_key,
-                segment_index=seg.segment_index,
-                block_type=seg.block_type,
-                semantic_role=seg.semantic_role,
-                section_path=seg.section_path,
-                section_title=seg.section_title,
-                raw_text=seg.raw_text,
-                normalized_text=seg.normalized_text,
-                content_hash=seg.content_hash,
-                normalized_hash=seg.normalized_hash,
-                token_count=seg.token_count,
-                structure_json=seg.structure_json,
-                source_offsets_json=seg.source_offsets_json,
-                entity_refs_json=seg.entity_refs_json,
-                metadata_json=seg.metadata_json,
+        # ===================== atomic per-document write =====================
+        # Everything that lands in asset_core for this document happens inside one
+        # transaction: snapshot/link, old-snapshot cleanup, segments, relations,
+        # retrieval units. On any error the whole block rolls back, leaving no
+        # half-written ("snapshot but no segments") state behind.
+        with asset_db.transaction():
+            document_id, snapshot_id, link_id = select_or_create_snapshot(
+                asset_db, raw, doc_profile, batch_id=batch_id,
             )
 
-        # --- build_relations ---
-        for rel in relations:
-            src_id = seg_id_map.get(rel.source_segment_key, "")
-            tgt_id = seg_id_map.get(rel.target_segment_key, "")
-            if src_id and tgt_id:
-                asset_db.insert_segment_relation(
-                    relation_id=uuid.uuid4().hex,
-                    document_snapshot_id=snapshot_id,
-                    source_segment_id=src_id,
-                    target_segment_id=tgt_id,
-                    relation_type=rel.relation_type,
-                    weight=rel.weight,
-                    confidence=rel.confidence,
-                    distance=rel.distance,
-                    metadata_json=rel.metadata_json,
+            # --- UPDATE cleanup: remove stale snapshot data (same transaction) ---
+            if action == "UPDATE" and existing_doc is not None:
+                old_links = asset_db._fetchall(
+                    "SELECT document_snapshot_id FROM asset_document_snapshot_links "
+                    "WHERE document_id = %s ORDER BY linked_at DESC",
+                    (existing_doc["id"],),
+                )
+                for old_link in old_links[1:] if len(old_links) > 1 else []:
+                    old_snap_id = old_link["document_snapshot_id"]
+                    if old_snap_id == snapshot_id:
+                        continue  # never wipe the snapshot we are about to fill
+                    asset_db.delete_retrieval_units_by_snapshot(old_snap_id)
+                    asset_db.delete_relations_by_snapshot(old_snap_id)
+                    asset_db.delete_segments_by_snapshot(old_snap_id)
+
+            # --- only write content when the snapshot is empty ---
+            # existing_count > 0 means this exact content (same hash) was already
+            # ingested by another document; the snapshot is shared, so we reuse it
+            # and keep only the freshly-created link. existing_count == 0 covers
+            # both brand-new snapshots and self-healing of prior empty shells.
+            existing_count = asset_db.count_segments_by_snapshot(snapshot_id)
+            if existing_count == 0:
+                # --- commit_segments ---
+                for seg in segments:
+                    seg_key = f"{seg.document_key}#{seg.segment_index}"
+                    seg_id = seg_id_map.get(seg_key, uuid.uuid4().hex)
+                    asset_db.insert_raw_segment(
+                        segment_id=seg_id,
+                        document_snapshot_id=snapshot_id,
+                        segment_key=seg_key,
+                        segment_index=seg.segment_index,
+                        block_type=seg.block_type,
+                        semantic_role=seg.semantic_role,
+                        section_path=seg.section_path,
+                        section_title=seg.section_title,
+                        raw_text=seg.raw_text,
+                        normalized_text=seg.normalized_text,
+                        content_hash=seg.content_hash,
+                        normalized_hash=seg.normalized_hash,
+                        token_count=seg.token_count,
+                        structure_json=seg.structure_json,
+                        source_offsets_json=seg.source_offsets_json,
+                        entity_refs_json=seg.entity_refs_json,
+                        metadata_json=seg.metadata_json,
+                    )
+
+                # --- build_relations ---
+                for rel in relations:
+                    src_id = seg_id_map.get(rel.source_segment_key, "")
+                    tgt_id = seg_id_map.get(rel.target_segment_key, "")
+                    if src_id and tgt_id:
+                        asset_db.insert_segment_relation(
+                            relation_id=uuid.uuid4().hex,
+                            document_snapshot_id=snapshot_id,
+                            source_segment_id=src_id,
+                            target_segment_id=tgt_id,
+                            relation_type=rel.relation_type,
+                            weight=rel.weight,
+                            confidence=rel.confidence,
+                            distance=rel.distance,
+                            metadata_json=rel.metadata_json,
+                        )
+
+                # --- build_retrieval_units ---
+                for ru in retrieval_units:
+                    unit_id = uuid.uuid4().hex
+                    ru_id_map[ru.unit_key] = unit_id
+                    asset_db.insert_retrieval_unit(
+                        unit_id=unit_id,
+                        document_snapshot_id=snapshot_id,
+                        unit_key=ru.unit_key,
+                        unit_type=ru.unit_type,
+                        target_type=ru.target_type,
+                        target_ref_json=ru.target_ref_json,
+                        title=ru.title,
+                        text=ru.text,
+                        search_text=ru.search_text,
+                        block_type=ru.block_type,
+                        semantic_role=ru.semantic_role,
+                        facets_json=ru.facets_json,
+                        entity_refs_json=ru.entity_refs_json,
+                        source_refs_json=ru.source_refs_json,
+                        llm_result_refs_json=ru.llm_result_refs_json,
+                        source_segment_id=ru.source_segment_id,
+                        weight=ru.weight,
+                        metadata_json=ru.metadata_json,
+                    )
+        # ===================== transaction committed here ====================
+
+        # --- insert embeddings (outside the transaction, best-effort) ---
+        # Embeddings are an auxiliary product: a document is valid without them,
+        # so a failure here must NOT fail the document. Skipped on snapshot reuse
+        # (ru_id_map empty) because those embeddings already exist.
+        if ctx.embeddings and ru_id_map:
+            try:
+                for emb in ctx.embeddings:
+                    unit_key = emb["unit_key"]
+                    embedding_vec = emb["vector"]
+                    if unit_key in ru_id_map and embedding_vec:
+                        asset_db.insert_retrieval_embedding(
+                            embedding_id=uuid.uuid4().hex,
+                            retrieval_unit_id=ru_id_map[unit_key],
+                            embedding_model="managed",
+                            embedding_provider="llm_service",
+                            text_kind="full",
+                            embedding_dim=len(embedding_vec),
+                            embedding_vector=_json.dumps(embedding_vec),
+                            content_hash="",
+                        )
+            except Exception as emb_err:
+                logger.warning(
+                    "Embedding insert failed for %s (document still committed): %s",
+                    getattr(raw, "file_path", "?"), emb_err,
                 )
 
-        # --- build_retrieval_units ---
-        ru_id_map: dict[str, str] = {}
-        for ru in retrieval_units:
-            unit_id = uuid.uuid4().hex
-            ru_id_map[ru.unit_key] = unit_id
-            asset_db.insert_retrieval_unit(
-                unit_id=unit_id,
-                document_snapshot_id=snapshot_id,
-                unit_key=ru.unit_key,
-                unit_type=ru.unit_type,
-                target_type=ru.target_type,
-                target_ref_json=ru.target_ref_json,
-                title=ru.title,
-                text=ru.text,
-                search_text=ru.search_text,
-                block_type=ru.block_type,
-                semantic_role=ru.semantic_role,
-                facets_json=ru.facets_json,
-                entity_refs_json=ru.entity_refs_json,
-                source_refs_json=ru.source_refs_json,
-                llm_result_refs_json=ru.llm_result_refs_json,
-                source_segment_id=ru.source_segment_id,
-                weight=ru.weight,
-                metadata_json=ru.metadata_json,
-            )
-
-        asset_db.commit()
-
-        # --- insert embeddings ---
-        if ctx.embeddings:
-            for emb in ctx.embeddings:
-                unit_key = emb["unit_key"]
-                embedding_vec = emb["vector"]
-                if unit_key in ru_id_map and embedding_vec:
-                    asset_db.insert_retrieval_embedding(
-                        embedding_id=uuid.uuid4().hex,
-                        retrieval_unit_id=ru_id_map[unit_key],
-                        embedding_model="managed",
-                        embedding_provider="llm_service",
-                        text_kind="full",
-                        embedding_dim=len(embedding_vec),
-                        embedding_vector=_json.dumps(embedding_vec),
-                        content_hash="",
-                    )
-            asset_db.commit()
-
-        # --- commit_document ---
+        # --- commit_document (runtime ledger) ---
         if tracker and rd_id:
             tracker.commit_document(rd_id, document_id, snapshot_id)
             cfg.runtime_db.commit()

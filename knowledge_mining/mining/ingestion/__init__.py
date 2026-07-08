@@ -1,8 +1,7 @@
 """Ingestion module: recursive folder scan for v1.1.
 
-Discovers md/txt/html/htm/pdf/doc/docx files.
-Archives (.zip / .chm / .hdx) are extracted at upload time, so their contents
-appear as individual files in the scan directory.
+Discovers md/txt/html/htm/pdf/doc/docx files plus compiled-help archives
+(.chm / .hdx) which are auto-extracted and converted to markdown on the fly.
 Produces RawFileData objects with raw_content_hash and normalized_content_hash.
 """
 from __future__ import annotations
@@ -13,8 +12,13 @@ from typing import Any
 
 from knowledge_mining.mining.contracts.models import BatchParams, RawFileData
 from knowledge_mining.mining.infra.hash_utils import compute_raw_hash, compute_snapshot_hash
-from knowledge_mining.mining.ingestion.preprocessing import html_to_markdown
+from knowledge_mining.mining.ingestion.preprocessing import (
+    SUPPORTED_ARCHIVE_EXTS,
+    archive_to_markdown,
+    html_to_markdown,
+)
 from knowledge_mining.mining.ingestion.pdf_preprocessing import pdf_to_text
+from knowledge_mining.mining.ingestion.doc_preprocessing import doc_to_docx
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +31,16 @@ _EXTENSION_MAP: dict[str, str] = {
     ".pdf": "pdf",
     ".doc": "doc",
     ".docx": "docx",
+    # Compiled-help archives — extracted + converted to markdown during ingest.
+    ".chm": "markdown",
+    ".hdx": "markdown",
 }
 
 PARSABLE_EXTENSIONS = {".md", ".markdown", ".txt"}
 PDF_EXTENSIONS = {".pdf"}
 HTML_EXTENSIONS = {".html", ".htm"}
 DOCX_EXTENSIONS = {".doc", ".docx"}
+PREPROCESS_EXTENSIONS = SUPPORTED_ARCHIVE_EXTS  # {".chm", ".hdx"}
 
 _SKIP_NAMES = {
     "manifest.jsonl", "manifest.json",
@@ -89,8 +97,31 @@ def ingest_directory(
             content_bytes = file_path.read_bytes()
             raw_hash = compute_raw_hash(content_bytes)
             metadata_json: dict[str, Any] = {}
+            # Path the parser opens. Differs from file_path only for .doc, which
+            # is converted to a sidecar .docx; provenance (source_uri/relative_
+            # path/file_name) still points at the original .doc.
+            parse_path = file_path
 
-            if ext in PDF_EXTENSIONS:
+            if ext in PREPROCESS_EXTENSIONS:
+                # .chm / .hdx — extract + convert to markdown on the fly.
+                try:
+                    content = archive_to_markdown(
+                        file_path,
+                        doc_title=file_path.stem,
+                    )
+                    summary["parsed_documents"] += 1
+                    summary["preprocessed_archives"] += 1
+                    metadata_json["source_format"] = ext.lstrip(".")
+                except Exception as e:
+                    logger.warning(
+                        "preprocess failed for %s: %s; registering without content",
+                        file_path, e,
+                    )
+                    content = ""
+                    summary["unparsed_documents"] += 1
+                    metadata_json["source_format"] = ext.lstrip(".")
+                    metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
+            elif ext in PDF_EXTENSIONS:
                 # .pdf — extract text via pdfminer.six on the fly.
                 try:
                     content = pdf_to_text(file_path)
@@ -122,8 +153,28 @@ def ingest_directory(
                     summary["unparsed_documents"] += 1
                     metadata_json["source_format"] = "html"
                     metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
+            elif ext == ".doc":
+                # Legacy binary .doc — python-docx cannot read it ("Package not
+                # found"). Convert to .docx (LibreOffice/Word backend) so it
+                # flows through the structural DocxParser instead of being
+                # flattened to plain text.
+                try:
+                    parse_path = doc_to_docx(file_path)
+                    file_type = "docx"  # converted, will use DocxParser
+                    content = ""  # docx parsed from file, like native .docx
+                    summary["parsed_documents"] += 1
+                    metadata_json["source_format"] = "doc"
+                except Exception as e:
+                    logger.warning(
+                        "doc->docx conversion failed for %s: %s; registering without content",
+                        file_path, e,
+                    )
+                    content = ""
+                    summary["unparsed_documents"] += 1
+                    metadata_json["source_format"] = "doc"
+                    metadata_json["preprocess_error"] = f"{type(e).__name__}: {e}"
             elif ext in DOCX_EXTENSIONS:
-                # .doc / .docx — binary; DocxParser reads file_path directly.
+                # .docx — zip package; DocxParser reads file_path directly.
                 content = ""
                 summary["parsed_documents"] += 1
                 metadata_json["source_format"] = ext.lstrip(".")
@@ -137,13 +188,14 @@ def ingest_directory(
             normalized_hash = compute_snapshot_hash(content) if content else raw_hash
 
             doc = RawFileData(
-                file_path=str(file_path),
+                file_path=str(parse_path),
                 relative_path=str(rel_path).replace("\\", "/"),
                 file_name=file_path.name,
                 file_type=file_type,
                 content=content,
                 raw_content_hash=raw_hash,
                 normalized_content_hash=normalized_hash,
+                file_size=len(content_bytes),
                 source_uri=str(file_path),
                 source_type=batch_params.default_source_type,
                 document_type=batch_params.default_document_type,

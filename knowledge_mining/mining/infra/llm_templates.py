@@ -35,27 +35,20 @@ def build_templates_from_profile(
         if knowledge_domain and "knowledge_domain" not in tpl_copy:
             tpl_copy["knowledge_domain"] = knowledge_domain
 
-        # Dynamically inject entity type enum into segment-understanding schema
+        # Dynamically inject semantic_role enum into segment-understanding schema.
+        # 实体类型 enum 不再在此注入：实体抽取已拆到 mining-entity-extraction，
+        # 其 entities[].type 故意不设 enum（双通道靠 prompt + 阶段内后置过滤约束），
+        # 以免静态 enum 与运行期 active 本体类型漂移、堵死通道 B 发现新类型。
         if tpl_copy.get("template_key") == "mining-segment-understanding":
             schema_str = tpl_copy.get("output_schema_json", "")
-            if schema_str and profile.entity_types:
+            if schema_str and profile.semantic_roles:
                 try:
                     schema = json.loads(schema_str)
-                    entity_items = schema.get("properties", {}).get("entities", {}).get("items", {})
-                    type_prop = entity_items.get("properties", {}).get("type", {})
-                    if "enum" not in type_prop:
-                        type_prop["enum"] = sorted(profile.entity_types)
-                        entity_items["properties"]["type"] = type_prop
-                        schema["properties"]["entities"]["items"] = entity_items
-
-                    # Inject semantic_role enum from profile
-                    if profile.semantic_roles:
-                        role_prop = schema.get("properties", {}).get("semantic_role", {})
-                        if "enum" not in role_prop:
-                            role_prop["enum"] = sorted(profile.semantic_roles)
-                            schema["properties"]["semantic_role"] = role_prop
-
-                    tpl_copy["output_schema_json"] = json.dumps(schema)
+                    role_prop = schema.get("properties", {}).get("semantic_role", {})
+                    if "enum" not in role_prop:
+                        role_prop["enum"] = sorted(profile.semantic_roles)
+                        schema["properties"]["semantic_role"] = role_prop
+                        tpl_copy["output_schema_json"] = json.dumps(schema)
                 except (json.JSONDecodeError, KeyError):
                     pass
 

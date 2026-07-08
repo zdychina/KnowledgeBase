@@ -18,6 +18,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _ASSET_DDL = _REPO_ROOT / "databases" / "asset_core" / "schemas" / "002_asset_core_postgresql.sql"
 _RUNTIME_DDL = _REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "002_mining_runtime_postgresql.sql"
 _RUNTIME_DDL_V3 = _REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "003_mining_runtime_domain.sql"
+# Ontology concept layer — must apply AFTER asset/runtime (FKs target asset_* and mining_runs).
+_ONTOLOGY_DDL = _REPO_ROOT / "databases" / "ontology" / "schemas" / "001_ontology_concept_postgresql.sql"
 
 
 def ensure_database(cfg: MiningDbConfig) -> None:
@@ -43,7 +45,7 @@ def ensure_schema(cfg: MiningDbConfig) -> None:
 
     conn = psycopg.connect(cfg.conninfo, autocommit=True)
     try:
-        for ddl_path in (_ASSET_DDL, _RUNTIME_DDL, _RUNTIME_DDL_V3):
+        for ddl_path in (_ASSET_DDL, _RUNTIME_DDL, _RUNTIME_DDL_V3, _ONTOLOGY_DDL):
             ddl = ddl_path.read_text(encoding="utf-8")
             # Execute statement-by-statement for idempotency
             _execute_ddl(conn, ddl)

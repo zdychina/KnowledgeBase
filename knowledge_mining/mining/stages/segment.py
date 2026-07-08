@@ -124,6 +124,13 @@ def segment_document(
     if cross_section:
         segments = _absorb_orphan_segments(segments, min_chunk, max_chunk)
 
+    # Phase 3.5: Fold small lead-in paragraphs FORWARD into the next segment.
+    # Fills the gap left by Phase 2 (same-section only) and Phase 3 (ancestor
+    # only): a short intro like "总体分为如下三个部分：" whose content lives in a
+    # CHILD subsection.
+    if cross_section:
+        segments = _merge_lead_in_segments(segments, min_chunk, max_chunk)
+
     # Phase 4: Split large segments at paragraph/sentence boundaries
     segments = _split_large_segments(segments, max_tokens=max_chunk)
 
@@ -402,6 +409,96 @@ def _absorb_orphan_segments(
 
     # Filter out removed orphans
     return [seg for idx, seg in enumerate(segments) if idx not in removed]
+
+
+def _path_titles(section_path: list[dict[str, Any]]) -> tuple[str, ...]:
+    """Extract the ordered title tuple from a section_path."""
+    return tuple(p.get("title", "") for p in section_path)
+
+
+def _is_lineage(a: tuple[str, ...], b: tuple[str, ...]) -> bool:
+    """True when one path is a prefix of the other (ancestor/descendant)."""
+    n = min(len(a), len(b))
+    return a[:n] == b[:n]
+
+
+def _prepend_text(seg: RawSegmentData, prefix_text: str) -> RawSegmentData:
+    """Return a copy of seg with prefix_text prepended, hashes/counts recomputed."""
+    new_text = prefix_text + "\n\n" + seg.raw_text
+    meta = dict(seg.metadata_json)
+    meta["merged_lead_in"] = True
+    return RawSegmentData(
+        document_key=seg.document_key,
+        segment_index=seg.segment_index,
+        block_type=seg.block_type,
+        semantic_role=seg.semantic_role,
+        section_path=seg.section_path,
+        section_title=seg.section_title,
+        raw_text=new_text,
+        normalized_text=new_text.lower().strip(),
+        content_hash=content_hash(new_text),
+        normalized_hash=normalized_hash(new_text),
+        token_count=token_count(new_text),
+        structure_json=seg.structure_json,
+        source_offsets_json=seg.source_offsets_json,
+        entity_refs_json=seg.entity_refs_json,
+        metadata_json=meta,
+    )
+
+
+def _merge_lead_in_segments(
+    segments: list[RawSegmentData],
+    min_tokens: int,
+    max_tokens: int,
+) -> list[RawSegmentData]:
+    """Fold a small lead-in paragraph forward into the following segment.
+
+    Phase 2 only merges within a section; Phase 3 only merges UP into ancestor
+    sections. Neither handles a short intro paragraph whose content lives in a
+    CHILD subsection — e.g. "网络搬迁流程总体分为如下三个部分：" immediately
+    followed by ## subsections.
+
+    Rules:
+    1. A lead-in candidate is a paragraph segment with token_count < min_tokens.
+    2. It merges into the NEXT segment only when they share a section lineage
+       (one section_path is a prefix of the other) but are NOT the same section
+       (same-section cases are already handled by Phase 2).
+    3. Never prepend prose into a table/code block; combined ≤ max_tokens.
+    """
+    if len(segments) < 2:
+        return segments
+
+    result: list[RawSegmentData] = []
+    pending: RawSegmentData | None = None
+
+    for seg in segments:
+        if pending is not None:
+            p_tc = pending.token_count if pending.token_count is not None else 0
+            s_tc = seg.token_count if seg.token_count is not None else 0
+            pending_path = _path_titles(pending.section_path)
+            seg_path = _path_titles(seg.section_path)
+            can_merge = (
+                seg.block_type not in ("table", "html_table", "code")
+                and (p_tc + s_tc) <= max_tokens
+                and pending_path != seg_path
+                and _is_lineage(pending_path, seg_path)
+            )
+            if can_merge:
+                seg = _prepend_text(seg, pending.raw_text)
+            else:
+                result.append(pending)
+            pending = None
+
+        tc = seg.token_count if seg.token_count is not None else 0
+        if tc < min_tokens and seg.block_type == "paragraph":
+            pending = seg
+            continue
+        result.append(seg)
+
+    if pending is not None:
+        result.append(pending)
+
+    return result
 
 
 def _inject_structural_context(

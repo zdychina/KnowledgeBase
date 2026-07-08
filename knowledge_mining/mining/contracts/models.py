@@ -177,6 +177,7 @@ class RawFileData:
     content: str
     raw_content_hash: str
     normalized_content_hash: str
+    file_size: int = 0  # 原始文件字节大小（上传/扫描时读到的 raw bytes 长度）
     source_uri: str = ""
     source_type: str | None = None
     document_type: str | None = None

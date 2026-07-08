@@ -1,18 +1,23 @@
-"""Enrich stage: LLM-driven segment understanding (v1.2+).
+"""Enrich stage: LLM-driven segment understanding (篇章本职).
 
 LlmEnricher submits segments to llm_service for:
-- Entity extraction (commands, network elements, parameters)
 - Semantic role classification
 - Content quality assessment (is_substantive, is_navigation)
+
+实体抽取已拆出到独立的 entity_extract 阶段（L4 §15）；本阶段只管段落理解，
+不再读本体类型、不再产实体 / 逃生口。
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, TYPE_CHECKING
 
 from knowledge_mining.mining.contracts.models import RawSegmentData
 
 if TYPE_CHECKING:
     from knowledge_mining.mining.infra.domain_pack import DomainProfile
+
+logger = logging.getLogger(__name__)
 
 
 class LlmEnricher:
@@ -23,7 +28,7 @@ class LlmEnricher:
     """
 
     stage_name = "enrich"
-    stage_version = "2"
+    stage_version = "3"
 
     def __init__(
         self,
@@ -54,7 +59,6 @@ class LlmEnricher:
             return []
 
         profile = self._profile
-        allowed_entity_types = profile.entity_types if profile else frozenset()
         # Use domain-specific semantic_roles when available; empty set means no filtering
         valid_roles = profile.semantic_roles if profile and profile.semantic_roles else None
         min_enrich_tokens = (
@@ -98,7 +102,7 @@ class LlmEnricher:
 
         # Phase 3: Apply results to substantial segments
         enriched_substantial = [
-            _apply_llm_result(seg, llm_results[sub_idx], allowed_entity_types, valid_roles)
+            _apply_llm_result(seg, llm_results[sub_idx], valid_roles)
             if sub_idx in llm_results
             else seg
             for sub_idx, seg in enumerate(substantial_segments)
@@ -143,27 +147,10 @@ class LlmEnricher:
 def _apply_llm_result(
     seg: RawSegmentData,
     result: dict[str, Any],
-    allowed_entity_types: frozenset[str],
     valid_roles: frozenset[str] | None,
 ) -> RawSegmentData:
-    """Apply LLM enrichment result to a segment."""
+    """Apply LLM enrichment result to a segment（仅语义角色 + 文档类型 + 内容质量）。"""
     changes: dict[str, Any] = {}
-
-    entities = result.get("entities", [])
-    if entities and isinstance(entities, list):
-        entity_refs = [
-            {"type": e.get("type", "unknown"), "name": e.get("name", "")}
-            for e in entities
-            if e.get("name") and (
-                not allowed_entity_types or e.get("type") in allowed_entity_types
-            )
-        ]
-        existing = {(r["type"], r["name"]) for r in seg.entity_refs_json}
-        merged_refs = list(seg.entity_refs_json) + [
-            ref for ref in entity_refs
-            if (ref["type"], ref["name"]) not in existing
-        ]
-        changes["entity_refs_json"] = merged_refs
 
     role = result.get("semantic_role", "")
     if role and role != seg.semantic_role:

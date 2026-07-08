@@ -24,7 +24,7 @@ def _ensure_schema(db_config):
 
 
 def _truncate_all(conn):
-    """Truncate all mining tables (asset + runtime) for clean test isolation."""
+    """Truncate all mining tables (asset + runtime + ontology) for clean test isolation."""
     conn.execute("TRUNCATE TABLE mining_run_stage_events CASCADE")
     conn.execute("TRUNCATE TABLE mining_run_documents CASCADE")
     conn.execute("TRUNCATE TABLE mining_runs CASCADE")
@@ -39,6 +39,26 @@ def _truncate_all(conn):
     conn.execute("TRUNCATE TABLE asset_document_snapshots CASCADE")
     conn.execute("TRUNCATE TABLE asset_documents CASCADE")
     conn.execute("TRUNCATE TABLE asset_source_batches CASCADE")
+
+    # 本体/图谱表是 domain 维度（不随 run 销毁），不清会让上批测试残留的待审
+    # 候选/实体在下批测试里触发"本体确认"闸口暂停，污染端到端流水线断言。
+    # asset_segment_entity_mentions 存待审 mention（按 run 关联）。
+    # 这些表在更老的测试库里可能不存在，逐个 try 以保持向后兼容。
+    for tbl in (
+        "asset_segment_entity_mentions",
+        "ontology_candidates",
+        "ontology_evidence_nodes",
+        "ontology_entity_relations",
+        "ontology_entities",
+        "ontology_alias_dictionary",
+        "ontology_relation_types",
+        "ontology_node_types",
+        "ontology_versions",
+    ):
+        try:
+            conn.execute(f"TRUNCATE TABLE {tbl} CASCADE")
+        except Exception:
+            pass
 
 
 @pytest.fixture
