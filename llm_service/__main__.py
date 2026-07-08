@@ -3,9 +3,11 @@ import asyncio
 import sys
 
 # Windows: psycopg async requires SelectorEventLoop, not ProactorEventLoop.
+# Set the policy so uvicorn's internal asyncio.run() builds a SelectorEventLoop.
+# (uvicorn 0.29's asyncio_setup only switches the policy when use_subprocess=True,
+# so we must set it ourselves here.)
 if sys.platform == "win32":
-    import uvicorn.loops.asyncio as _uv_loop  # noqa: E402
-    _uv_loop.asyncio_loop_factory = lambda use_subprocess=False: asyncio.SelectorEventLoop
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 import uvicorn  # noqa: E402
 

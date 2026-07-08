@@ -20,3 +20,15 @@ domains:
     database_url_env: COREMASTERKB_DB_GENERIC
     scenario_pack: generic
     default_channel: prod
+
+  odn:
+    enabled: true
+    database_url_env: COREMASTERKB_DB_ODN
+    scenario_pack: odn
+    default_channel: prod
+
+  civil_engineering:
+    enabled: true
+    database_url_env: COREMASTERKB_DB
+    scenario_pack: civil_engineering
+    default_channel: prod
