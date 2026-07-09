@@ -142,20 +142,28 @@ WHERE e.domain_id = #{domain}
           WHERE a.domain_id = #{domain} AND a.alias_normalized IN (<names>) ) )
 ```
 
-**B. 多跳邻域（递归 CTE，限深 + 置信剪枝）**
+**B. 多跳邻域（递归 CTE，限深 + 置信剪枝 + 防环）**
 ```sql
-WITH RECURSIVE nb(entity_id, hop, conf) AS (
-    SELECT id, 0, 1.0 FROM ontology_entities WHERE id IN (<seedIds>)
+WITH RECURSIVE nb(entity_id, hop, conf, path) AS (
+    SELECT id, 0, 1.0, ARRAY[id] FROM ontology_entities WHERE id IN (<seedIds>)
   UNION ALL
-    SELECT CASE WHEN r.head_entity_id = nb.entity_id THEN r.tail_entity_id
-                ELSE r.head_entity_id END,
-           nb.hop + 1, nb.conf * r.confidence
-    FROM nb JOIN ontology_entity_relations r
+    SELECT nxt.next_id, nb.hop + 1, nb.conf * r.confidence, nb.path || nxt.next_id
+    FROM nb
+    JOIN ontology_entity_relations r
       ON (r.head_entity_id = nb.entity_id OR r.tail_entity_id = nb.entity_id)
-    WHERE nb.hop < #{maxHop} AND r.confidence >= #{minRelConf}
+    CROSS JOIN LATERAL (
+      SELECT CASE WHEN r.head_entity_id = nb.entity_id
+                  THEN r.tail_entity_id ELSE r.head_entity_id END AS next_id) nxt
+    WHERE nb.hop < #{maxHop}
+      AND r.confidence >= #{minRelConf}
+      AND NOT nxt.next_id = ANY(nb.path)          -- 防环：不重访路径上已出现的实体
 )
 SELECT entity_id, min(hop) AS hop, max(conf) AS conf FROM nb GROUP BY entity_id
 ```
+> **防环**：本体关系按 head/tail 双向扩展，`A↔B` 类环若用朴素 `UNION ALL` 会在 hop 上限内反复绕、
+> 稠密图上行数膨胀。故 CTE 携带 `path` 数组，用 `NOT next_id = ANY(path)` 排除已访问实体。`maxHop`
+> 建议 ≤ 3；若需进一步控爆炸，可在 `LATERAL` 内对每个实体的扩展出度设上限
+> （`ORDER BY r.confidence DESC LIMIT k`）。
 
 **C. 实体 → 出处段 → 检索单元（同库一次 JOIN）**
 ```sql
@@ -168,6 +176,14 @@ WHERE ev.domain_id = #{domain} AND ev.target_kind = 'entity'
   AND ru.document_snapshot_id IN (<snapshotIds>)
 ```
 复用现成 `FtsResultRow` 承载行（已含 `source_segment_id/unit_type/document_snapshot_id`）。
+
+> **两个已核验的落地细节**：
+> 1. `asset_retrieval_units.source_segment_id` 是**可空**列（`init.sql:151`，非 NOT NULL）——
+>    没有源段的单元（如跨段/纯生成单元）join 不上、自然不被图召回，可接受；
+> 2. **一段多单元的扇出**：一个 `source_segment_id` 通常对应**多个单元**（`raw_text` / `entity_card` /
+>    `generated_question` 共享同一源段），且一个单元可能是多个实体的证据 → SQL-C 会产生多行。
+>    需在 Java 侧**按 `ru.id` 聚合、取 max 分**（见 §4.2 打分），可选按 `unit_type` 偏好
+>    （如优先 `entity_card` / `raw_text`）以控每段候选数。
 
 ### 4.2 打分
 
