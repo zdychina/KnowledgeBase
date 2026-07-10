@@ -154,6 +154,22 @@
 
 **结论**：范式输出类型由终点算子决定（PRD 决策 5），同一套算子因此服务两类消费者——`collect` 用来测（评测系统算指标），`assemble` 用来上线（喂 LLM / 前端）。缺了 `collect`，系统就只能"出成品上下文"，失去量化检索质量的能力，而那正是这套系统要解决的头号问题。
 
+### 4.7 范式与 domain 的关系
+
+**简短结论：范式定义本身不区分 domain，但每次执行会绑定一个 domain。** 两层分开看：
+
+**① 定义 / 存储 —— 域无关（全局）**
+- 范式表 `operator_paradigm` / `operator_paradigm_version` 存在 `defaultDataSource` 控制库，是域无关的全局配置（见 §7）。
+- `ParadigmMapper` 的 CRUD 都在**未设 `DomainContext`** 的线程上跑，路由 DataSource 回落到控制库。
+- 范式 DAG 里没有任何 domain 字段，是一份**跨域可复用的模板**，所有 domain 共享同一份定义。
+
+**② 执行 —— domain 是每次调用的运行时参数**
+- domain 由请求 body 传入（`RunArgs.domain`），缺省用 `serving.default-domain`。
+- `ParadigmExecutor` 每个节点执行前 `DomainContext.set(ctx.domain())`，检索算子（`entity_graph` / `fts` / `dense_vector` / `entity_exact`）因此打到**该 domain 自己的库**；`domainPoolManager.getDataSource(domain)` 先做连通性校验。
+- domain 还驱动：`scope_resolve`（`domain + channel` → 生效 release / 快照范围）、`query_understanding`（按 domain 取 profile）、LLM `setKnowledgeDomain(domain)`。
+
+**一句话**：范式 = 跨 domain 通用的检索流程模板；domain = 调用时注入的执行上下文，决定"这套流程跑在哪个域的数据上"。同一个范式可对多个 domain 分别 `search`，无需复制。若要"不同 domain 用不同流程"，当前做法是**建多个范式**（按 name 区分），而非在单个范式内分域配置。
+
 ---
 
 ## 5. 如何调用

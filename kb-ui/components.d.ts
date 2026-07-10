@@ -43,6 +43,7 @@ declare module 'vue' {
     ForceGraph: typeof import('./src/components/charts/ForceGraph.vue')['default']
     Header: typeof import('./src/components/layout/Header.vue')['default']
     LineChart: typeof import('./src/components/charts/LineChart.vue')['default']
+    OntologyDiGraph: typeof import('./src/components/charts/OntologyDiGraph.vue')['default']
     OperatorNode: typeof import('./src/components/paradigm/OperatorNode.vue')['default']
     OperatorPalette: typeof import('./src/components/paradigm/OperatorPalette.vue')['default']
     ParamForm: typeof import('./src/components/paradigm/ParamForm.vue')['default']
