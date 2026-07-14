@@ -60,6 +60,17 @@
 | `minRelConf` | number | 0.5 | 0–1 | 关系置信下限，低于此值的边不遍历 |
 | `decay` | number | 0.6 | 0–1 | 跳数衰减系数，用于打分 |
 
+> **算子路径 vs legacy 路径**：以上 4 参数在**算子路径**（`EntityGraphOperator.execute`）经节点 `params` 全量生效，构造 `Options(topK, maxHop, minRelConf, decay)`。而 legacy `/api/v1/search` 路由路径（`EntityGraphRouteRetriever`）因 `Retriever` 接口签名带不了图参数，`maxHop / minRelConf / decay` 用**写死的默认值**（与本 schema 默认一致），仅 `topK` 来自路由的 `top_k`——即该路径下实际只有 `topK` 可配。
+
+参数速查（作用阶段 / 性质 / 调整效果）：
+
+| 参数 | 作用阶段 | 性质 | 调大 | 调小 |
+|------|---------|------|------|------|
+| `topK` | 结果输出 | 数量上限 | 召回更多候选 | 只留最优少数 |
+| `maxHop` | 遍历 | 深度上限 | 扩得更远更全，噪声/耗时增 | 只看近邻，精准保守 |
+| `minRelConf` | 遍历 | 硬门槛（剪边） | 更精准、覆盖窄 | 覆盖广、噪声多 |
+| `decay` | 打分 | 软衰减 | 远处实体也能冒头 | 强压远跳，突出近邻 |
+
 ### 3.3 错误策略
 
 `ErrorPolicy.SKIP_WITH_EMPTY`：无本体、链不到实体、遍历无果或异常时返回空候选，不影响同范式其它检索路。
@@ -148,6 +159,19 @@ serving 侧的检索单元表，是本算子最终产出的候选实体。
 | `text` / `title` / `block_type` / `semantic_role` / `unit_type` | 单元内容与元数据 | 写入候选 metadata；`unit_type='entity_card'` 触发打分加权 |
 
 > `source_segment_id` 可空：无源段的跨段/纯生成单元 JOIN 不上，不会被图召回。
+
+`unit_type` 是**表中实存的 `TEXT` 列**（非计算值），DDL 带 `CHECK` 约束，取值限定为 7 种枚举之一（`databases/asset_core/schemas/002_asset_core_postgresql.sql`）：
+
+```sql
+unit_type TEXT NOT NULL CHECK (
+    unit_type IN (
+        'raw_text', 'contextual_text', 'summary', 'generated_question',
+        'entity_card', 'table_row', 'other'
+    )
+),
+```
+
+且建有索引 `idx_asset_retrieval_units_unit_type`。数据流：挖掘期 retrieval_units 阶段写库时定死 `unit_type`（构建实体卡片写 `'entity_card'`）→ `graphRecall` 直接 `SELECT ru.unit_type` 读出 → 映射到 `OntologyGraphRow.unitType` → 打分时 `"entity_card".equals(...)` 判定加权（§7 的 `entityCardBoost`）。即：一条单元是不是 `entity_card` 在写库时就确定，检索仅读取该真实存储值作为加权依据。
 
 ---
 
@@ -241,7 +265,7 @@ WITH RECURSIVE nb(entity_id, hop, conf, path) AS (
 - **锚**：种子实体，`hop=0`、`conf=1.0`、`path=ARRAY[id]`。
 - **双向遍历**：边有向存储，但 `ON (head = cur OR tail = cur)` 两方向都匹配，`LATERAL` 里的 `CASE` 取对端实体作为下一跳，等价于无向图遍历。
 - **路径置信**：`conf = nb.conf * r.confidence`，即沿途各边置信之积；跳得越远、经过的边越不确定，`conf` 越小。
-- **限深与剪枝**：`nb.hop < maxHop` 限制跳数，`r.confidence >= minRelConf` 剪掉低置信边。
+- **限深与剪枝**：`nb.hop < maxHop` 限制跳数，`r.confidence >= minRelConf` 剪掉低置信边——这是**遍历阶段的硬门槛**（布尔筛选），置信低于门槛的边彻底不走，对端实体这条路就到不了。例：`发动机—包含—活塞`(0.92) 与 `发动机—可能导致—噪音`(0.35)，`minRelConf=0.5` 时前者走通、后者被剪，「噪音」相关证据段不由此路径召回。注意它与路径置信 `conf` 的分工——`minRelConf` 卡**单条边**是否可走，`conf` 是**整条路径**各边置信的连乘积（软权重，参与打分排序）；一条路径即便每条边都过门槛，多跳连乘后整体 `conf` 仍明显衰减、排序靠后。调高 `minRelConf` → 精准但覆盖窄，调低 → 覆盖广但噪声多（多跳时噪声顺链放大）。
 - **防环**：每行携带已访问实体的 `path` 数组，`NOT next_id = ANY(nb.path)` 排除路径上已出现的实体，避免稠密无向图上环导致的行数膨胀。
 
 **② 聚合 `nb_agg`：每实体收敛为最短跳 / 最优置信**
@@ -302,8 +326,17 @@ score = BASE × decay^hop × conf × entityCardBoost
 | `BASE` | `0.85` | hop=0、满置信单元的基分，略低于 `entity_exact` 的 0.95（图召回精度天然较低） |
 | `decay^hop` | `decay` 默认 0.6，指数取 `max(0, hop)` | 每远一跳打折：hop0=1、hop1=0.6、hop2=0.36 |
 | `conf` | `conf<=0 → 0.01`，否则 `min(1.0, conf)` | 钳到 (0,1] |
-| `entityCardBoost` | `unit_type == "entity_card"` → 1.1，否则 1.0 | 实体卡片轻微加权 |
+| `entityCardBoost` | `unit_type == "entity_card"` → 1.1，否则 1.0 | 实体卡片轻微加权；公式里唯一可能超过 BASE 的因子 |
 | `decay` 兜底 | `decay<=0 或 >1 → 0.6` | 参数越界回退默认 |
+
+各因子含义：`decay^hop` 按最短跳距指数衰减（decay=0.6 时 hop0=1、hop1=0.6、hop2=0.36），越远越弱；`conf` 是路径各边置信连乘积（多路径取 MAX），越可靠越短越接近 1。`entity_card` 命中时 hop=0、conf=1 的上界为 `0.85×1×1×1.1=0.935`，仍压在 `entity_exact` 的 0.95 之下。
+
+数值示例：
+
+- `entity_card`，hop=1，单边置信 0.8：`0.85 × 0.6^1 × 0.8 × 1.1 ≈ 0.449`
+- 普通段落单元，hop=2，路径置信 0.5×0.9=0.45：`0.85 × 0.6^2 × 0.45 × 1.0 ≈ 0.138`
+
+跳得越远、路径越弱、单元质量越低，三重折扣叠乘拉开层次。分数经 `source="entity_graph"` 的候选进入多路融合，与 `fts`/`dense_vector`/`entity_exact` 通道一起排序去重——BASE 压在 0.95 之下正是为让各通道分数量纲可比。
 
 产出 `RetrievalCandidate`：
 

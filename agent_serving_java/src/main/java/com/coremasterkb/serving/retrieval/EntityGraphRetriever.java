@@ -53,11 +53,30 @@ public class EntityGraphRetriever {
      */
     public List<RetrievalCandidate> retrieve(QueryUnderstanding u, List<String> snapshotIds,
                                              String domain, Options opts) {
-        if (u == null || snapshotIds == null || snapshotIds.isEmpty()
+        if (u == null) {
+            return List.of();
+        }
+        return retrieve(u.entities(), u.keywords(), snapshotIds, domain, opts);
+    }
+
+    /**
+     * Same recall, but driven directly by entities + keywords rather than a full
+     * {@link QueryUnderstanding}. Lets the legacy {@code /api/v1/search} route path (which only
+     * carries a {@code RetrievalQuery}) reuse this retriever via an adapter.
+     *
+     * @param entities    query entities (may be empty)
+     * @param keywords    fallback keywords used only when no entity links
+     * @param snapshotIds document snapshots in scope
+     * @param domain      domain id (drives {@code domain_id} filter; DB is already domain-routed)
+     * @param opts        topK / maxHop / minRelConf / decay
+     */
+    public List<RetrievalCandidate> retrieve(List<EntityRef> entities, List<String> keywords,
+                                             List<String> snapshotIds, String domain, Options opts) {
+        if (snapshotIds == null || snapshotIds.isEmpty()
                 || domain == null || domain.isBlank()) {
             return List.of();
         }
-        List<String> names = collectNames(u);
+        List<String> names = collectNames(entities, keywords);
         if (names.isEmpty()) {
             return List.of();
         }
@@ -77,14 +96,16 @@ public class EntityGraphRetriever {
     }
 
     /** Query entity names (name + normalizedName), lower-cased/trimmed; keywords as fallback. */
-    private static List<String> collectNames(QueryUnderstanding u) {
+    private static List<String> collectNames(List<EntityRef> entities, List<String> keywords) {
         Set<String> names = new LinkedHashSet<>();
-        for (EntityRef ref : u.entities()) {
-            addName(names, ref.name());
-            addName(names, ref.normalizedName());
+        if (entities != null) {
+            for (EntityRef ref : entities) {
+                addName(names, ref.name());
+                addName(names, ref.normalizedName());
+            }
         }
-        if (names.isEmpty()) {
-            for (String kw : u.keywords()) {
+        if (names.isEmpty() && keywords != null) {
+            for (String kw : keywords) {
                 if (kw != null && kw.length() >= 2) {
                     addName(names, kw);
                 }

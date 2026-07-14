@@ -33,7 +33,8 @@ public class RetrievalRouter {
         cr.put("complex", Map.of(
                 "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
                 "dense_vector", Map.of("weight", 0.9, "top_k", 50.0),
-                "entity_exact", Map.of("weight", 0.7, "top_k", 20.0)
+                "entity_exact", Map.of("weight", 0.7, "top_k", 20.0),
+                "entity_graph", Map.of("weight", 0.6, "top_k", 20.0)
         ));
         COMPLEXITY_ROUTES = Collections.unmodifiableMap(cr);
     }
@@ -59,11 +60,13 @@ public class RetrievalRouter {
         routes.put("troubleshooting", Map.of(
                 "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
                 "dense_vector", Map.of("weight", 0.8, "top_k", 40.0),
-                "entity_exact", Map.of("weight", 0.7, "top_k", 15.0)
+                "entity_exact", Map.of("weight", 0.7, "top_k", 15.0),
+                "entity_graph", Map.of("weight", 0.6, "top_k", 20.0)
         ));
         routes.put("comparison", Map.of(
                 "lexical_bm25", Map.of("weight", 1.0, "top_k", 50.0),
-                "dense_vector", Map.of("weight", 1.0, "top_k", 50.0)
+                "dense_vector", Map.of("weight", 1.0, "top_k", 50.0),
+                "entity_graph", Map.of("weight", 0.7, "top_k", 20.0)
         ));
         BUILTIN_ROUTES = Collections.unmodifiableMap(routes);
     }
