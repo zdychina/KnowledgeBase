@@ -54,6 +54,9 @@
 *.sqlite-shm
 *.sqlite-wal
 
+# Large evaluation demo DB (112MB, exceeds GitHub 100MB limit; keep local only)
+data/evaluation/telecom_eval_demo.db
+
 # === Python cache (redundant safety) ===
 __pycache__/
 *.pyc
