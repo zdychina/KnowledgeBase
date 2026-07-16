@@ -202,7 +202,31 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    import copy
+    import logging
+
     import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
+
+    _DATEFMT = "%Y-%m-%d %H:%M:%S"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt=_DATEFMT,
+    )
+    _log_config = copy.deepcopy(LOGGING_CONFIG)
+    _log_config["formatters"]["default"]["fmt"] = "%(asctime)s %(levelprefix)s %(message)s"
+    _log_config["formatters"]["default"]["datefmt"] = _DATEFMT
+    _log_config["formatters"]["access"]["fmt"] = (
+        '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    _log_config["formatters"]["access"]["datefmt"] = _DATEFMT
 
     cfg = MainControlSettings()
-    uvicorn.run("main_control_service.main:app", host=cfg.host, port=cfg.port, reload=False)
+    uvicorn.run(
+        "main_control_service.main:app",
+        host=cfg.host,
+        port=cfg.port,
+        reload=False,
+        log_config=_log_config,
+    )

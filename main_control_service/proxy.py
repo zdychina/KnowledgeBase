@@ -18,6 +18,7 @@ SERVICE_MAP: dict[str, str] = {
     "llm": "llm_url",
     "mining": "mining_url",
     "serving": "serving_url",
+    "eval": "eval_url",
 }
 
 # Headers stripped before forwarding to backend (hop-by-hop + sensitive)
