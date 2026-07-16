@@ -9,7 +9,7 @@
 import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{
-  status: 'completed' | 'running' | 'failed' | 'cancelled' | 'pending' | 'queued' | 'succeeded' | 'dead_letter' | 'committed' | 'processing' | 'skipped'
+  status: 'completed' | 'running' | 'failed' | 'cancelled' | 'pending' | 'queued' | 'succeeded' | 'dead_letter' | 'committed' | 'processing' | 'skipped' | 'awaiting_review' | 'interrupted'
   size?: 'small' | 'default'
 }>(), {
   size: 'default',
@@ -82,15 +82,26 @@ const sizeClass = computed(() => `status-badge--${props.size}`)
 .status-badge--cancelled,
 .status-badge--pending,
 .status-badge--processing,
-.status-badge--skipped {
+.status-badge--skipped,
+.status-badge--interrupted {
   background: var(--kb-accent-soft);
   color: var(--kb-accent);
 }
 .status-badge--cancelled .status-badge__dot,
 .status-badge--pending .status-badge__dot,
 .status-badge--processing .status-badge__dot,
-.status-badge--skipped .status-badge__dot {
+.status-badge--skipped .status-badge__dot,
+.status-badge--interrupted .status-badge__dot {
   background: var(--kb-accent);
+}
+
+.status-badge--awaiting_review {
+  background: var(--kb-warning-soft);
+  color: var(--kb-warning);
+}
+.status-badge--awaiting_review .status-badge__dot {
+  background: var(--kb-warning);
+  animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
 @keyframes pulse-dot {

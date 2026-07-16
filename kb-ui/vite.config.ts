@@ -25,6 +25,7 @@ export default defineConfig({
     proxy: {
       '/api/control-plane': {
         target: 'http://localhost:8910',
+        changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/control-plane/, ''),
       },
     },

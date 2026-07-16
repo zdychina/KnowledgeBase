@@ -57,6 +57,33 @@ const router = createRouter({
           component: () => import('@/views/knowledge/GraphView.vue'),
         },
         {
+          path: 'entities',
+          name: 'entities',
+          component: () => import('@/views/knowledge/EntityGraphView.vue'),
+        },
+        {
+          path: 'ontology',
+          name: 'ontology',
+          component: () => import('@/views/knowledge/OntologyView.vue'),
+        },
+        {
+          path: 'ontology/graph',
+          name: 'ontology-graph',
+          component: () => import('@/views/knowledge/OntologyGraphView.vue'),
+        },
+        {
+          // 本体确认评审：挖掘流程的临时子页面（仿实体确认的 mentions/review）。
+          // 刻意不放在 /ontology/ 下，避免左侧"本体版本"导航被点亮、误以为离开了挖掘流程。
+          path: 'candidates/review',
+          name: 'ontology-review',
+          component: () => import('@/views/knowledge/OntologyReviewView.vue'),
+        },
+        {
+          path: 'mentions/review',
+          name: 'mentions-review',
+          component: () => import('@/views/knowledge/MentionReviewView.vue'),
+        },
+        {
           path: 'llm',
           name: 'llm',
           component: () => import('@/views/LlmView.vue'),
@@ -65,6 +92,17 @@ const router = createRouter({
           path: 'llm/:taskId',
           name: 'llm-task-detail',
           component: () => import('@/views/llm/LlmTaskDetailView.vue'),
+          props: true,
+        },
+        {
+          path: 'paradigm',
+          name: 'paradigm',
+          component: () => import('@/views/paradigm/ParadigmListView.vue'),
+        },
+        {
+          path: 'paradigm/:id',
+          name: 'paradigm-edit',
+          component: () => import('@/views/paradigm/ParadigmEditorView.vue'),
           props: true,
         },
         {
