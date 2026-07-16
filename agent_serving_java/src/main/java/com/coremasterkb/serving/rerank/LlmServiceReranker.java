@@ -86,11 +86,23 @@ public class LlmServiceReranker implements Reranker {
 
     @SuppressWarnings("unchecked")
     private List<RetrievalCandidate> rerankSingle(String query, List<RetrievalCandidate> candidates) {
-        List<String> documents = buildDocuments(candidates);
+        // Skip candidates whose text/title are both blank: llm_service rejects the whole batch
+        // if any document is an empty string (422). docIndex maps each sent document back to its
+        // candidate index so the API's returned indices resolve to the right candidates.
+        List<String> documents = new ArrayList<>();
+        List<Integer> docIndex = new ArrayList<>();
+        for (int i = 0; i < candidates.size(); i++) {
+            String doc = buildDocument(candidates.get(i));
+            if (!doc.isBlank()) {
+                documents.add(doc);
+                docIndex.add(i);
+            }
+        }
+        if (documents.isEmpty()) return null;  // nothing rerankable → signal fallback
 
         Map<String, Object> response;
         try {
-            response = llmClient.rerank(query, documents, candidates.size());
+            response = llmClient.rerank(query, documents, documents.size());
         } catch (Exception e) {
             log.warn("LLM service rerank call failed: {}", e.getMessage());
             return null;
@@ -112,8 +124,10 @@ public class LlmServiceReranker implements Reranker {
             Object scoreObj = entry.get("relevance_score");
             if (!(idxObj instanceof Number) || !(scoreObj instanceof Number)) continue;
 
-            int idx = ((Number) idxObj).intValue();
-            if (idx < 0 || idx >= candidates.size() || seenIndices.contains(idx)) continue;
+            int docIdx = ((Number) idxObj).intValue();
+            if (docIdx < 0 || docIdx >= docIndex.size()) continue;
+            int idx = docIndex.get(docIdx);  // map document position back to candidate index
+            if (seenIndices.contains(idx)) continue;
 
             seenIndices.add(idx);
             double score = ((Number) scoreObj).doubleValue();
@@ -140,22 +154,19 @@ public class LlmServiceReranker implements Reranker {
         return reordered;
     }
 
-    private List<String> buildDocuments(List<RetrievalCandidate> candidates) {
-        List<String> documents = new ArrayList<>();
-        for (RetrievalCandidate c : candidates) {
-            String text = stringFromMetadata(c, "text");
-            String title = stringFromMetadata(c, "title");
-            String doc;
-            if (text != null && !text.isEmpty()) {
-                doc = (title != null && !title.isEmpty()) ? title + ": " + text : text;
-            } else {
-                doc = (title != null && !title.isEmpty()) ? title : "";
-            }
-            // No per-document truncation: llm_service batches by total length budget.
-            // Oversized single documents are isolated into their own batch there.
-            documents.add(doc);
+    /**
+     * Build the rerank document for one candidate: {@code "title: text"}, or whichever of
+     * title/text is present. Returns "" when both are blank — callers skip such documents
+     * (llm_service rejects empty strings). No per-document truncation: llm_service batches by
+     * total length budget and isolates oversized single documents into their own batch.
+     */
+    private String buildDocument(RetrievalCandidate c) {
+        String text = stringFromMetadata(c, "text");
+        String title = stringFromMetadata(c, "title");
+        if (text != null && !text.isEmpty()) {
+            return (title != null && !title.isEmpty()) ? title + ": " + text : text;
         }
-        return documents;
+        return (title != null && !title.isEmpty()) ? title : "";
     }
 
     private String resolveQuery(QueryUnderstanding understanding) {

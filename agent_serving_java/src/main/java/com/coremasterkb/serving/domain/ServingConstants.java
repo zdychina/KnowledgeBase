@@ -25,9 +25,10 @@ public final class ServingConstants {
     public static final String ROUTE_LEXICAL_BM25 = "lexical_bm25";
     public static final String ROUTE_ENTITY_EXACT = "entity_exact";
     public static final String ROUTE_DENSE_VECTOR = "dense_vector";
+    public static final String ROUTE_ENTITY_GRAPH = "entity_graph";
 
     public static final List<String> ALL_ROUTE_NAMES = List.of(
-            ROUTE_LEXICAL_BM25, ROUTE_ENTITY_EXACT, ROUTE_DENSE_VECTOR
+            ROUTE_LEXICAL_BM25, ROUTE_ENTITY_EXACT, ROUTE_DENSE_VECTOR, ROUTE_ENTITY_GRAPH
     );
 
     // ---- Role constants ----

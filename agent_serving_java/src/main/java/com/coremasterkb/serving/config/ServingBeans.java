@@ -14,6 +14,8 @@ import com.coremasterkb.serving.pipeline.RetrievalOrchestrator;
 import com.coremasterkb.serving.rerank.*;
 import com.coremasterkb.serving.retrieval.DenseVectorRetriever;
 import com.coremasterkb.serving.retrieval.EntityExactRetriever;
+import com.coremasterkb.serving.retrieval.EntityGraphRetriever;
+import com.coremasterkb.serving.retrieval.EntityGraphRouteRetriever;
 import com.coremasterkb.serving.retrieval.FtsRetriever;
 import com.coremasterkb.serving.retrieval.GraphExpander;
 import com.coremasterkb.serving.retrieval.Retriever;
@@ -170,6 +172,15 @@ public class ServingBeans {
         return new GraphExpander(relationMapper, segmentMapper);
     }
 
+    /**
+     * Adapts the {@code @Component} {@link EntityGraphRetriever} to the {@link Retriever} contract
+     * so ontology-graph recall can run as the {@code entity_graph} route in the legacy orchestrator.
+     */
+    @Bean
+    public EntityGraphRouteRetriever entityGraphRouteRetriever(EntityGraphRetriever entityGraphRetriever) {
+        return new EntityGraphRouteRetriever(entityGraphRetriever);
+    }
+
     @Bean
     public Executor pipelineExecutor() {
         return Executors.newVirtualThreadPerTaskExecutor();
@@ -180,11 +191,13 @@ public class ServingBeans {
             FtsRetriever ftsRetriever,
             DenseVectorRetriever denseVectorRetriever,
             EntityExactRetriever entityExactRetriever,
+            EntityGraphRouteRetriever entityGraphRouteRetriever,
             Executor pipelineExecutor) {
         Map<String, Retriever> retrievers = new LinkedHashMap<>();
         retrievers.put("lexical_bm25", ftsRetriever);
         retrievers.put("dense_vector", denseVectorRetriever);
         retrievers.put("entity_exact", entityExactRetriever);
+        retrievers.put("entity_graph", entityGraphRouteRetriever);
         return new RetrievalOrchestrator(retrievers, pipelineExecutor);
     }
 

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coremasterkb.serving.operator.paradigm.mapper.ParadigmMapper">
+
+    <resultMap id="paradigmMap" type="com.coremasterkb.serving.operator.paradigm.ParadigmEntity">
+        <id     column="id"               property="id"/>
+        <result column="name"             property="name"/>
+        <result column="description"      property="description"/>
+        <result column="draft_graph_json" property="draftGraphJson"/>
+        <result column="current_version"  property="currentVersion"/>
+        <result column="status"           property="status"/>
+        <result column="created_at"       property="createdAt"/>
+        <result column="updated_at"       property="updatedAt"/>
+    </resultMap>
+
+    <sql id="cols">
+        id, name, description, draft_graph_json, current_version, status,
+        created_at::text AS created_at, updated_at::text AS updated_at
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO operator_paradigm (id, name, description, draft_graph_json, current_version, status)
+        VALUES (#{id}, #{name}, #{description},
+                #{draftGraphJson,jdbcType=VARCHAR}::jsonb, #{currentVersion}, #{status})
+    </insert>
+
+    <select id="selectById" resultMap="paradigmMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm WHERE id = #{id}
+    </select>
+
+    <select id="selectByName" resultMap="paradigmMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm WHERE name = #{name}
+    </select>
+
+    <select id="selectAll" resultMap="paradigmMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm ORDER BY updated_at DESC
+    </select>
+
+    <select id="selectPublished" resultMap="paradigmMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm
+        WHERE status = 'active' AND current_version &gt;= 1
+        ORDER BY name
+    </select>
+
+    <update id="updateDraft">
+        UPDATE operator_paradigm
+        SET draft_graph_json = #{draftGraphJson,jdbcType=VARCHAR}::jsonb,
+            updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <update id="updatePublish">
+        UPDATE operator_paradigm
+        SET current_version = #{version}, status = #{status}, updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM operator_paradigm WHERE id = #{id}
+    </delete>
+
+</mapper>

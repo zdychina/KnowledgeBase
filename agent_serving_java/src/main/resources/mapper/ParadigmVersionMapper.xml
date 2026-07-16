@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coremasterkb.serving.operator.paradigm.mapper.ParadigmVersionMapper">
+
+    <resultMap id="versionMap" type="com.coremasterkb.serving.operator.paradigm.ParadigmVersionEntity">
+        <id     column="id"             property="id"/>
+        <result column="paradigm_id"    property="paradigmId"/>
+        <result column="version"        property="version"/>
+        <result column="graph_json"     property="graphJson"/>
+        <result column="schema_version" property="schemaVersion"/>
+        <result column="created_at"     property="createdAt"/>
+        <result column="created_by"     property="createdBy"/>
+    </resultMap>
+
+    <sql id="cols">
+        id, paradigm_id, version, graph_json, schema_version,
+        created_at::text AS created_at, created_by
+    </sql>
+
+    <insert id="insert">
+        INSERT INTO operator_paradigm_version
+            (id, paradigm_id, version, graph_json, schema_version, created_by)
+        VALUES (#{id}, #{paradigmId}, #{version},
+                #{graphJson,jdbcType=VARCHAR}::jsonb, #{schemaVersion}, #{createdBy})
+    </insert>
+
+    <select id="selectByParadigmAndVersion" resultMap="versionMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm_version
+        WHERE paradigm_id = #{paradigmId} AND version = #{version}
+    </select>
+
+    <select id="selectVersionsByParadigm" resultMap="versionMap">
+        SELECT <include refid="cols"/> FROM operator_paradigm_version
+        WHERE paradigm_id = #{paradigmId} ORDER BY version DESC
+    </select>
+
+    <select id="selectMaxVersion" resultType="java.lang.Integer">
+        SELECT MAX(version) FROM operator_paradigm_version WHERE paradigm_id = #{paradigmId}
+    </select>
+
+    <delete id="deleteByParadigm">
+        DELETE FROM operator_paradigm_version WHERE paradigm_id = #{paradigmId}
+    </delete>
+
+</mapper>

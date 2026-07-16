@@ -1,0 +1,116 @@
+package com.coremasterkb.serving.operator.api;
+
+import com.coremasterkb.serving.config.ServingProperties;
+import com.coremasterkb.serving.domain.ContextPack;
+import com.coremasterkb.serving.domain.RetrievalCandidate;
+import com.coremasterkb.serving.domainpack.DomainPoolManager;
+import com.coremasterkb.serving.domainpack.DomainRegistry;
+import com.coremasterkb.serving.operator.core.ExecContext;
+import com.coremasterkb.serving.operator.engine.ParadigmCompiler;
+import com.coremasterkb.serving.operator.engine.ParadigmExecutor;
+import com.coremasterkb.serving.operator.engine.ParadigmGraph;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Shared compile + execute + response-shaping for both inline ({@code /paradigm/run}) and stored
+ * ({@code /paradigm/{id}/search}, {@code /dryrun}) paradigm execution. Centralises domain/channel
+ * resolution, DB-reachability validation, and result shaping so the two surfaces stay consistent.
+ */
+@Service
+public class ParadigmExecutionService {
+
+    private static final Logger log = LoggerFactory.getLogger(ParadigmExecutionService.class);
+
+    /** Per-call execution arguments (from the HTTP request body). */
+    public record RunArgs(String query, String domain, String channel, boolean debug) {}
+
+    private final ParadigmCompiler compiler;
+    private final ParadigmExecutor executor;
+    private final DomainRegistry domainRegistry;
+    private final DomainPoolManager domainPoolManager;
+    private final String defaultDomain;
+
+    public ParadigmExecutionService(
+            ParadigmCompiler compiler,
+            ParadigmExecutor executor,
+            DomainRegistry domainRegistry,
+            DomainPoolManager domainPoolManager,
+            ServingProperties properties) {
+        this.compiler = compiler;
+        this.executor = executor;
+        this.domainRegistry = domainRegistry;
+        this.domainPoolManager = domainPoolManager;
+        this.defaultDomain = properties.defaultDomain();
+    }
+
+    /**
+     * Compile and execute a paradigm graph, returning a shaped response map.
+     * Throws {@code ParadigmCompileException} (compile error) or {@code OperatorException} (runtime),
+     * mapped to HTTP by {@code OperatorExceptionHandler}.
+     */
+    public Map<String, Object> run(JsonNode paradigmJson, RunArgs args) {
+        if (args.query() == null || args.query().isBlank()) {
+            throw new IllegalArgumentException("query_required");
+        }
+        String domain = (args.domain() != null && !args.domain().isBlank())
+                ? args.domain() : defaultDomain;
+        String channel = (args.channel() != null && !args.channel().isBlank())
+                ? args.channel() : domainRegistry.getDefaultChannel(domain);
+
+        ParadigmGraph graph = compiler.compile(paradigmJson);
+
+        // Validate DB reachable (lazy pool build + connectivity check) before executing.
+        domainPoolManager.getDataSource(domain);
+
+        ExecContext ctx = new ExecContext(UUID.randomUUID().toString(), domain, channel, args.debug());
+        ctx.setQuery(args.query());
+        Object result = executor.execute(graph, ctx, Map.of("query", args.query()));
+
+        log.info("[paradigm/exec] domain={} channel={} output={}",
+                domain, channel, result instanceof List<?> l ? (l.size() + " candidates") : "contextPack");
+        return shape(result, ctx, args.debug(), domain, channel);
+    }
+
+    private static Map<String, Object> shape(
+            Object result, ExecContext ctx, boolean debug, String domain, String channel) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (result instanceof ContextPack pack) {
+            resp.put("contextPack", pack);
+        } else if (result instanceof List<?> list) {
+            resp.put("candidates", toCandidateDtos(list));
+        } else {
+            resp.put("result", result);
+        }
+        if (debug) {
+            resp.put("trace", ctx.nodeTraces());
+            resp.put("domain", domain);
+            resp.put("channel", channel);
+        }
+        return resp;
+    }
+
+    private static List<Map<String, Object>> toCandidateDtos(List<?> list) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (o instanceof RetrievalCandidate c) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", c.retrievalUnitId());
+                m.put("score", c.score());
+                m.put("source", c.source());
+                m.put("scoreChain", c.scoreChain());
+                m.put("metadata", c.metadata());
+                out.add(m);
+            }
+        }
+        return out;
+    }
+}

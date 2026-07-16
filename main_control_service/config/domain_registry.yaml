@@ -7,7 +7,7 @@ domains:
     database:
       host: 121.89.90.178
       port: 5432
-      dbname: kb_db
+      dbname: coremasterkb
       user: kb_user
       password: nis123qwe
       sslmode: disable
@@ -18,8 +18,54 @@ domains:
       mining_url: http://localhost:8901
       serving_url: http://localhost:8081
       llm_url: http://localhost:8900
+      eval_url: http://localhost:8810
   generic:
     display_name: Generic
     enabled: true
     default_channel: prod
     scenario_pack: generic
+    services:
+      mining_url: http://localhost:8901
+      serving_url: http://localhost:8081
+      llm_url: http://localhost:8900
+      eval_url: http://localhost:8810
+  civil_engineering:
+    display_name: civil_engineering
+    enabled: true
+    default_channel: prod
+    scenario_pack: civil_engineering
+    database:
+      host: 121.89.90.178
+      port: 5432
+      dbname: coremasterkb
+      user: kb_user
+      password: nis123qwe
+      sslmode: disable
+      gssencmode: disable
+      pool_min: 2
+      pool_max: 10
+    services:
+      mining_url: http://localhost:8901
+      serving_url: http://localhost:8081
+      llm_url: http://localhost:8900
+      eval_url: http://localhost:8810
+  odn:
+    display_name: ODN
+    enabled: true
+    default_channel: prod
+    scenario_pack: odn
+    database:
+      host: 121.89.90.178
+      port: 5432
+      dbname: coremasterkb
+      user: kb_user
+      password: nis123qwe
+      sslmode: disable
+      gssencmode: disable
+      pool_min: 2
+      pool_max: 10
+    services:
+      mining_url: http://localhost:8901
+      serving_url: http://localhost:8081
+      llm_url: http://localhost:8900
+      eval_url: http://localhost:8810
