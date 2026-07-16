@@ -31,11 +31,19 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
     metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
+
 CREATE TABLE IF NOT EXISTS asset_documents (
     id             TEXT PRIMARY KEY,
     document_key   TEXT NOT NULL UNIQUE,
     document_name  TEXT,
-    document_type  TEXT,
+    document_type  TEXT CHECK (
+        document_type IS NULL OR
+        document_type IN (
+            'command', 'feature', 'procedure', 'troubleshooting', 'alarm',
+            'constraint', 'checklist', 'expert_note', 'project_note',
+            'standard', 'training', 'reference', 'other'
+        )
+    ),
     metadata_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at     TEXT NOT NULL
 );
@@ -99,7 +107,12 @@ CREATE TABLE IF NOT EXISTS asset_raw_segments (
     block_type          TEXT NOT NULL DEFAULT 'unknown' CHECK (
         block_type IN ('paragraph', 'heading', 'table', 'list', 'code', 'blockquote', 'html_table', 'raw_html', 'unknown')
     ),
-    semantic_role       TEXT NOT NULL DEFAULT 'unknown',
+    semantic_role       TEXT NOT NULL DEFAULT 'unknown' CHECK (
+        semantic_role IN (
+            'concept', 'parameter', 'example', 'note', 'procedure_step',
+            'troubleshooting_step', 'constraint', 'alarm', 'checklist', 'unknown'
+        )
+    ),
     raw_text            TEXT NOT NULL,
     normalized_text     TEXT NOT NULL,
     content_hash        TEXT NOT NULL,
@@ -175,7 +188,12 @@ CREATE TABLE IF NOT EXISTS asset_retrieval_units (
     block_type           TEXT NOT NULL DEFAULT 'unknown' CHECK (
         block_type IN ('paragraph', 'heading', 'table', 'list', 'code', 'blockquote', 'html_table', 'raw_html', 'unknown')
     ),
-    semantic_role        TEXT NOT NULL DEFAULT 'unknown',
+    semantic_role        TEXT NOT NULL DEFAULT 'unknown' CHECK (
+        semantic_role IN (
+            'concept', 'parameter', 'example', 'note', 'procedure_step',
+            'troubleshooting_step', 'constraint', 'alarm', 'checklist', 'unknown'
+        )
+    ),
     facets_json          JSONB NOT NULL DEFAULT '{}'::jsonb,
     entity_refs_json     JSONB NOT NULL DEFAULT '[]'::jsonb,
     source_refs_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -207,10 +225,6 @@ CREATE INDEX IF NOT EXISTS idx_asset_retrieval_units_search_vector_gin
 -- Trigram GIN index for similarity/Chinese text search
 CREATE INDEX IF NOT EXISTS idx_asset_retrieval_units_text_trgm_gin
     ON asset_retrieval_units USING GIN (text gin_trgm_ops);
-
--- Entity refs GIN index for JSONB @> containment queries
-CREATE INDEX IF NOT EXISTS idx_asset_ru_entity_refs_gin
-    ON asset_retrieval_units USING GIN (entity_refs_json);
 
 CREATE TABLE IF NOT EXISTS asset_retrieval_embeddings (
     id                 TEXT PRIMARY KEY,
@@ -256,12 +270,13 @@ CREATE INDEX IF NOT EXISTS idx_asset_builds_status
 CREATE INDEX IF NOT EXISTS idx_asset_builds_source_batch
     ON asset_builds(source_batch_id);
 
+
 CREATE TABLE IF NOT EXISTS asset_build_document_snapshots (
     build_id              TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE CASCADE,
     document_id           TEXT NOT NULL REFERENCES asset_documents(id) ON DELETE CASCADE,
     document_snapshot_id  TEXT NOT NULL REFERENCES asset_document_snapshots(id) ON DELETE RESTRICT,
-    selection_status      TEXT NOT NULL CHECK (selection_status IN ('active', 'removed', 'skipped_empty')),
-    reason                TEXT NOT NULL CHECK (reason IN ('add', 'update', 'retain', 'remove', 'no_segments')),
+    selection_status      TEXT NOT NULL CHECK (selection_status IN ('active', 'removed')),
+    reason                TEXT NOT NULL CHECK (reason IN ('add', 'update', 'retain', 'remove')),
     metadata_json         JSONB NOT NULL DEFAULT '{}'::jsonb,
     PRIMARY KEY (build_id, document_id)
 );
@@ -273,8 +288,8 @@ CREATE TABLE IF NOT EXISTS asset_publish_releases (
     id                   TEXT PRIMARY KEY,
     release_code         TEXT NOT NULL UNIQUE,
     build_id             TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE RESTRICT,
-    domain               TEXT NOT NULL DEFAULT 'default',
     channel              TEXT NOT NULL DEFAULT 'prod',
+    domain               TEXT NOT NULL DEFAULT 'default',
     status               TEXT NOT NULL CHECK (status IN ('staging', 'active', 'retired', 'failed')),
     previous_release_id  TEXT REFERENCES asset_publish_releases(id) ON DELETE SET NULL,
     released_by          TEXT,
@@ -284,15 +299,8 @@ CREATE TABLE IF NOT EXISTS asset_publish_releases (
     metadata_json        JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_channel_active
-    ON asset_publish_releases(domain, channel)
-    WHERE status = 'active';
-
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_build
     ON asset_publish_releases(build_id);
-
-CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_channel_status
-    ON asset_publish_releases(domain, channel, status);
 
 -- Function to auto-update search_vector from text + title + search_text
 CREATE OR REPLACE FUNCTION asset_retrieval_units_search_vector_update() RETURNS trigger AS $$
@@ -326,3 +334,39 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_populate_embedding_vector
     BEFORE INSERT OR UPDATE OF embedding_vector ON asset_retrieval_embeddings
     FOR EACH ROW EXECUTE FUNCTION populate_embedding_vector_vec();
+
+-- =============================================================================
+-- Idempotent upgrade for existing v1 databases (mirrors migrate_v1_to_zdy.sql)
+-- These statements are no-ops on a freshly created schema.
+-- =============================================================================
+
+ALTER TABLE asset_source_batches
+    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+ALTER TABLE asset_builds
+    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+ALTER TABLE asset_publish_releases
+    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+ALTER TABLE asset_publish_releases
+    ALTER COLUMN channel SET DEFAULT 'prod';
+
+DROP INDEX IF EXISTS uq_asset_publish_releases_channel_active;
+DROP INDEX IF EXISTS idx_asset_publish_releases_channel_status;
+DROP INDEX IF EXISTS uq_asset_publish_releases_domain_channel_active;
+DROP INDEX IF EXISTS idx_asset_publish_releases_domain_channel_status;
+
+CREATE INDEX IF NOT EXISTS idx_asset_source_batches_domain
+    ON asset_source_batches(domain);
+
+CREATE INDEX IF NOT EXISTS idx_asset_builds_domain_status
+    ON asset_builds(domain, status);
+
+-- channel is a reserved field with default prod -- uniqueness is enforced per-domain only
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_active
+    ON asset_publish_releases(domain)
+    WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_status
+    ON asset_publish_releases(domain, status);

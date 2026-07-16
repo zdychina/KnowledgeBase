@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS mining_runs (
     source_batch_id  TEXT,
     input_path       TEXT NOT NULL,
     status           TEXT NOT NULL CHECK (
-        status IN ('queued', 'running', 'completed', 'interrupted', 'failed', 'cancelled')
+        status IN ('queued', 'running', 'completed', 'interrupted', 'failed', 'cancelled',
+                   'awaiting_review')
     ),
     build_id         TEXT,
     total_documents  INTEGER NOT NULL DEFAULT 0,
@@ -57,6 +58,12 @@ CREATE TABLE IF NOT EXISTS mining_run_stage_events (
             'parse',
             'segment',
             'enrich',
+            'entity_extract',
+            'resolve',
+            'entity_relations',
+            'graph_write',
+            'ontology_induction',
+            'graph_write_final',
             'commit_segments',
             'build_relations',
             'build_retrieval_units',

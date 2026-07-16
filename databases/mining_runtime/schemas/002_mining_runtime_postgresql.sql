@@ -9,8 +9,11 @@ CREATE TABLE IF NOT EXISTS mining_runs (
     source_batch_id  TEXT,
     input_path       TEXT NOT NULL,
     status           TEXT NOT NULL CHECK (
-        status IN ('queued', 'running', 'completed', 'interrupted', 'failed', 'cancelled')
+        status IN ('queued', 'running', 'completed', 'interrupted', 'failed', 'cancelled',
+                   'awaiting_review')
     ),
+    domain           TEXT NOT NULL DEFAULT 'default',
+    channel          TEXT NOT NULL DEFAULT 'prod',
     build_id         TEXT,
     total_documents  INTEGER NOT NULL DEFAULT 0,
     new_count        INTEGER NOT NULL DEFAULT 0,
@@ -26,6 +29,15 @@ CREATE TABLE IF NOT EXISTS mining_runs (
 
 CREATE INDEX IF NOT EXISTS idx_mining_runs_status
     ON mining_runs(status);
+
+ALTER TABLE mining_runs
+    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+ALTER TABLE mining_runs
+    ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'prod';
+
+CREATE INDEX IF NOT EXISTS idx_mining_runs_domain_status
+    ON mining_runs(domain, status);
 
 CREATE TABLE IF NOT EXISTS mining_run_documents (
     id                    TEXT PRIMARY KEY,
@@ -58,8 +70,9 @@ CREATE TABLE IF NOT EXISTS mining_run_stage_events (
     run_document_id  TEXT REFERENCES mining_run_documents(id) ON DELETE CASCADE,
     stage            TEXT NOT NULL CHECK (
         stage IN (
-            'parse', 'segment', 'enrich', 'discourse', 'retrieval_units',
+            'parse', 'segment', 'enrich', 'entity_extract', 'resolve', 'discourse', 'retrieval_units',
             'embedding', 'db_write',
+            'entity_relations', 'graph_write', 'ontology_induction', 'graph_write_final',
             'commit_segments', 'build_relations', 'build_retrieval_units', 'select_snapshot',
             'assemble_build', 'validate_build', 'publish_release',
             'discourse_relations'
