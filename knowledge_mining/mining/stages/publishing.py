@@ -191,11 +191,9 @@ def validate_build(asset_db: AssetCoreDB, build_id: str) -> None:
     """Validate that a build meets quality requirements.
 
     Checks:
-    1. Build has at least one active snapshot with segments
-    2. Incremental builds must have a valid parent build
-
-    Snapshots with zero segments (e.g. empty pages from CHM extraction)
-    are logged as warnings and skipped rather than causing a failure.
+    1. Build has at least one active snapshot
+    2. Each active snapshot has at least one segment
+    3. Incremental builds must have a valid parent build
     """
     build = asset_db.get_build(build_id)
     if build is None:
@@ -213,26 +211,12 @@ def validate_build(asset_db: AssetCoreDB, build_id: str) -> None:
     active = [s for s in snapshots if s["selection_status"] == "active"]
     if not active:
         raise ValueError(f"Build {build_id} has no active snapshots")
-
-    # Filter out empty snapshots (common in CHM/archive extractions)
-    non_empty = []
     for snap in active:
         count = asset_db.count_segments_by_snapshot(snap["document_snapshot_id"])
         if count == 0:
-            logger.warning(
-                "Skipping snapshot %s in build %s: no segments (empty content)",
-                snap["document_snapshot_id"], build_id,
+            raise ValueError(
+                f"Snapshot {snap['document_snapshot_id']} has no segments"
             )
-            snap["selection_status"] = "skipped_empty"
-            asset_db.upsert_build_document_snapshot(
-                build_id, snap["document_id"], snap["document_snapshot_id"],
-                selection_status="skipped_empty", reason="no_segments",
-            )
-        else:
-            non_empty.append(snap)
-
-    if not non_empty:
-        raise ValueError(f"Build {build_id} has no active snapshots with segments")
 
 
 def publish_release(

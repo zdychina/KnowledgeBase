@@ -24,7 +24,19 @@ def _ensure_schema(db_config):
 
 
 def _truncate_all(conn):
-    """Truncate all mining tables (asset + runtime) for clean test isolation."""
+    """Truncate all mining tables (asset + runtime + ontology) for clean test isolation.
+
+    安全护栏（默认彻底关闭自动清表）：除非显式设置环境变量
+    ``KB_ALLOW_TEST_TRUNCATE=1``，否则本函数直接返回、不删任何表——
+    防止误删 ``.env`` 指向的真实库（尤其生产库 coremasterkb）。
+    需要自动清测试库时，自行 ``export KB_ALLOW_TEST_TRUNCATE=1`` 再跑；
+    平时一律手动清库。
+    """
+    import os
+
+    if os.environ.get("KB_ALLOW_TEST_TRUNCATE") != "1":
+        return
+
     conn.execute("TRUNCATE TABLE mining_run_stage_events CASCADE")
     conn.execute("TRUNCATE TABLE mining_run_documents CASCADE")
     conn.execute("TRUNCATE TABLE mining_runs CASCADE")
@@ -39,6 +51,26 @@ def _truncate_all(conn):
     conn.execute("TRUNCATE TABLE asset_document_snapshots CASCADE")
     conn.execute("TRUNCATE TABLE asset_documents CASCADE")
     conn.execute("TRUNCATE TABLE asset_source_batches CASCADE")
+
+    # 本体/图谱表是 domain 维度（不随 run 销毁），不清会让上批测试残留的待审
+    # 候选/实体在下批测试里触发"本体确认"闸口暂停，污染端到端流水线断言。
+    # asset_segment_entity_mentions 存待审 mention（按 run 关联）。
+    # 这些表在更老的测试库里可能不存在，逐个 try 以保持向后兼容。
+    for tbl in (
+        "asset_segment_entity_mentions",
+        "ontology_candidates",
+        "ontology_evidence_nodes",
+        "ontology_entity_relations",
+        "ontology_entities",
+        "ontology_alias_dictionary",
+        "ontology_relation_types",
+        "ontology_node_types",
+        "ontology_versions",
+    ):
+        try:
+            conn.execute(f"TRUNCATE TABLE {tbl} CASCADE")
+        except Exception:
+            pass
 
 
 @pytest.fixture

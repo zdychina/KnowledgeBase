@@ -10,7 +10,14 @@ import uuid
 from typing import Any, TYPE_CHECKING
 
 from knowledge_mining.mining.contracts.models import RawSegmentData, SegmentRelationData
-from knowledge_mining.mining.contracts.rst_relations import LLM_TO_DB_RELATION, RST_DB_VALUES
+from knowledge_mining.mining.contracts.rst_relations import (
+    LLM_TO_DB_RELATION,
+    MONO_POST,
+    MONO_PREV,
+    MULTINUCLEAR,
+    RST_DB_VALUES,
+    RST_NUCLEARITY,
+)
 
 if TYPE_CHECKING:
     from knowledge_mining.mining.infra.domain_pack import DomainProfile
@@ -25,6 +32,54 @@ def build_seg_ids(segments: list[RawSegmentData]) -> dict[str, str]:
 
 def _make_segment_key(seg: RawSegmentData) -> str:
     return f"{seg.document_key}#{seg.segment_index}"
+
+
+def _segment_index_of(seg_key: str) -> int:
+    """Recover segment_index from a '{document_key}#{segment_index}' key."""
+    return int(seg_key.rsplit("#", 1)[-1])
+
+
+def infer_discourse_roles(
+    segments: list[RawSegmentData],
+    relations: list[SegmentRelationData],
+) -> dict[str, str]:
+    """Derive each segment's discourse role from RST relations.
+
+    Returns {segment_key: 'nucleus' | 'satellite' | 'standalone'}.
+    Aggregation: a segment that is a nucleus in ANY relation is 'nucleus';
+    otherwise 'satellite' if it appears as a satellite; 'standalone' if it never
+    participates in an RST relation. Direction is resolved by segment order, not
+    the LLM source/target labels.
+    """
+    roles: dict[str, str] = {_make_segment_key(seg): "standalone" for seg in segments}
+
+    for rel in relations:
+        nuc = RST_NUCLEARITY.get(rel.relation_type)
+        if nuc is None:
+            continue  # structural edges (previous/next/...) carry no discourse role
+        src, tgt = rel.source_segment_key, rel.target_segment_key
+        if src not in roles or tgt not in roles:
+            continue
+
+        if nuc == MULTINUCLEAR:
+            nucleus_keys: tuple[str, ...] = (src, tgt)
+            satellite_keys: tuple[str, ...] = ()
+        else:
+            earlier, later = (
+                (src, tgt) if _segment_index_of(src) <= _segment_index_of(tgt) else (tgt, src)
+            )
+            if nuc == MONO_PREV:
+                nucleus_keys, satellite_keys = (earlier,), (later,)
+            else:  # MONO_POST
+                nucleus_keys, satellite_keys = (later,), (earlier,)
+
+        for k in nucleus_keys:
+            roles[k] = "nucleus"
+        for k in satellite_keys:
+            if roles[k] != "nucleus":
+                roles[k] = "satellite"
+
+    return roles
 
 
 class DiscourseRelationBuilder:

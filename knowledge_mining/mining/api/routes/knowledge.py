@@ -73,7 +73,11 @@ def _resolve_source_file(source_uri: str, relative_path: str) -> Path | None:
 
 
 @router.get("/stats")
-async def knowledge_stats(request: Request) -> dict:
+async def knowledge_stats(
+    request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
+) -> dict:
     """Global statistics across all asset tables."""
     pool = request.app.state.pg_pool
 
@@ -90,12 +94,19 @@ async def knowledge_stats(request: Request) -> dict:
             ("releases", "asset_publish_releases"),
         ]
         for key, table in tables:
-            cur = await conn.execute(f"SELECT COUNT(*) as c FROM {table}")
+            domain_filter = _domain_filter_for_table(table, domain)
+            from_expr = "asset_documents d" if table == "asset_documents" and domain else table
+            cur = await conn.execute(
+                f"SELECT COUNT(*) as c FROM {from_expr} {domain_filter.where}",
+                domain_filter.params(channel),
+            )
             counts[key] = (await cur.fetchone())["c"]
 
         # Retrieval units by type
+        unit_filter = _domain_filter_for_table("asset_retrieval_units", domain)
         cur = await conn.execute(
-            "SELECT unit_type, COUNT(*) as c FROM asset_retrieval_units GROUP BY unit_type"
+            f"SELECT unit_type, COUNT(*) as c FROM asset_retrieval_units {unit_filter.where} GROUP BY unit_type",
+            unit_filter.params(channel),
         )
         type_dist = {r["unit_type"]: r["c"] for r in await cur.fetchall()}
 
@@ -115,6 +126,8 @@ async def knowledge_stats(request: Request) -> dict:
 @router.get("/documents")
 async def list_documents(
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     type: str | None = None,
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -123,17 +136,26 @@ async def list_documents(
     pool = request.app.state.pg_pool
 
     async with pool.connection() as conn:
-        where = "WHERE document_type = %s" if type else ""
-        params: list[str] = [type] if type else []
+        conditions = []
+        params: list[str] = []
+        domain_filter = _domain_filter_for_table("asset_documents", domain)
+        if domain_filter.condition:
+            conditions.append(domain_filter.condition)
+            params.extend(domain_filter.params(channel))
+        if type:
+            conditions.append("d.document_type = %s")
+            params.append(type)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         count_cur = await conn.execute(
-            f"SELECT COUNT(*) as c FROM asset_documents {where}", params
+            f"SELECT COUNT(DISTINCT d.id) as c FROM asset_documents d {where}", params
         )
         total = (await count_cur.fetchone())["c"]
 
         cur = await conn.execute(
             f"SELECT d.id, d.document_key, d.document_name, d.document_type, d.created_at "
             f"FROM asset_documents d {where} "
+            f"GROUP BY d.id, d.document_key, d.document_name, d.document_type, d.created_at "
             f"ORDER BY d.created_at DESC LIMIT %s OFFSET %s",
             params + [limit, offset],
         )
@@ -148,28 +170,53 @@ async def list_documents(
 
 
 @router.get("/documents/{document_id}")
-async def get_document(document_id: str, request: Request) -> dict:
+async def get_document(
+    document_id: str,
+    request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
+) -> dict:
     """Get document detail with snapshot history."""
     pool = request.app.state.pg_pool
 
     async with pool.connection() as conn:
+        domain_filter = _domain_filter_for_table("asset_documents", domain)
+        conditions = ["d.id = %s"]
+        params: list[str] = [document_id]
+        if domain_filter.condition:
+            conditions.append(domain_filter.condition)
+            params.extend(domain_filter.params(channel))
         cur = await conn.execute(
-            "SELECT id, document_key, document_name, document_type, "
+            "SELECT d.id, d.document_key, d.document_name, d.document_type, "
             "created_at "
-            "FROM asset_documents WHERE id = %s", [document_id]
+            f"FROM asset_documents d WHERE {' AND '.join(conditions)} "
+            "GROUP BY d.id, d.document_key, d.document_name, d.document_type, d.created_at",
+            params,
         )
         doc = await cur.fetchone()
         if not doc:
             raise HTTPException(404, f"Document {document_id} not found")
 
+        snapshot_conditions = ["dsl.document_id = %s"]
+        snapshot_params: list[str] = [document_id]
+        if domain:
+            snapshot_conditions.append(
+                "EXISTS ("
+                "SELECT 1 FROM asset_publish_releases apr "
+                "JOIN asset_build_document_snapshots abds ON abds.build_id = apr.build_id "
+                "WHERE apr.status = 'active' AND apr.domain = %s AND apr.channel = %s "
+                "AND abds.document_snapshot_id = dsl.document_snapshot_id"
+                ")"
+            )
+            snapshot_params.extend([domain, channel])
         cur = await conn.execute(
             "SELECT ds.id, ds.title, ds.normalized_content_hash, ds.mime_type, "
             "ds.created_at, dsl.linked_at, dsl.relative_path, dsl.source_uri "
             "FROM asset_document_snapshot_links dsl "
             "JOIN asset_document_snapshots ds ON dsl.document_snapshot_id = ds.id "
-            "WHERE dsl.document_id = %s "
+            f"WHERE {' AND '.join(snapshot_conditions)} "
             "ORDER BY dsl.linked_at DESC",
-            [document_id],
+            snapshot_params,
         )
         snapshots = [dict(r) for r in await cur.fetchall()]
 
@@ -243,6 +290,8 @@ async def get_document_raw_content(document_id: str, request: Request):
 async def get_document_segments(
     document_id: str,
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -251,10 +300,14 @@ async def get_document_segments(
 
     async with pool.connection() as conn:
         # Find latest snapshot
+        domain_clause = _snapshot_domain_exists_clause(domain)
+        link_params: list[str] = [document_id]
+        if domain:
+            link_params.extend([domain, channel])
         cur = await conn.execute(
             "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-            "WHERE document_id = %s ORDER BY linked_at DESC LIMIT 1",
-            [document_id],
+            f"WHERE document_id = %s {domain_clause} ORDER BY linked_at DESC LIMIT 1",
+            link_params,
         )
         link = await cur.fetchone()
         if not link:
@@ -289,6 +342,8 @@ async def get_document_segments(
 async def get_document_units(
     document_id: str,
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     unit_type: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -297,10 +352,14 @@ async def get_document_units(
     pool = request.app.state.pg_pool
 
     async with pool.connection() as conn:
+        domain_clause = _snapshot_domain_exists_clause(domain)
+        link_params: list[str] = [document_id]
+        if domain:
+            link_params.extend([domain, channel])
         cur = await conn.execute(
             "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-            "WHERE document_id = %s ORDER BY linked_at DESC LIMIT 1",
-            [document_id],
+            f"WHERE document_id = %s {domain_clause} ORDER BY linked_at DESC LIMIT 1",
+            link_params,
         )
         link = await cur.fetchone()
         if not link:
@@ -337,6 +396,8 @@ async def get_document_units(
 async def get_document_relations(
     document_id: str,
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
@@ -344,10 +405,14 @@ async def get_document_relations(
     pool = request.app.state.pg_pool
 
     async with pool.connection() as conn:
+        domain_clause = _snapshot_domain_exists_clause(domain)
+        link_params: list[str] = [document_id]
+        if domain:
+            link_params.extend([domain, channel])
         cur = await conn.execute(
             "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-            "WHERE document_id = %s ORDER BY linked_at DESC LIMIT 1",
-            [document_id],
+            f"WHERE document_id = %s {domain_clause} ORDER BY linked_at DESC LIMIT 1",
+            link_params,
         )
         link = await cur.fetchone()
         if not link:
@@ -385,6 +450,8 @@ async def get_document_relations(
 @router.get("/segments")
 async def list_segments(
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     role: str | None = None,
     type: str | None = None,
     limit: int = Query(50, ge=1, le=500),
@@ -395,6 +462,10 @@ async def list_segments(
 
     conditions = []
     params: list[str] = []
+    domain_filter = _domain_filter_for_table("asset_raw_segments", domain)
+    if domain_filter.condition:
+        conditions.append(domain_filter.condition)
+        params.extend(domain_filter.params(channel))
     if role:
         conditions.append("semantic_role = %s")
         params.append(role)
@@ -423,9 +494,101 @@ async def list_segments(
     return {"total": total, "limit": limit, "offset": offset, "items": [dict(r) for r in rows]}
 
 
+class _DomainFilter:
+    def __init__(self, condition: str = "") -> None:
+        self.condition = condition
+        self.where = f"WHERE {condition}" if condition else ""
+
+    def params(self, channel: str) -> list[str]:
+        return []
+
+
+class _ActiveBuildDomainFilter(_DomainFilter):
+    def __init__(self, domain: str, snapshot_expr: str) -> None:
+        self._domain = domain
+        super().__init__(
+            "EXISTS ("
+            "SELECT 1 FROM asset_publish_releases apr "
+            "JOIN asset_build_document_snapshots abds ON abds.build_id = apr.build_id "
+            f"WHERE apr.status = 'active' AND apr.domain = %s AND apr.channel = %s "
+            f"AND abds.document_snapshot_id = {snapshot_expr}"
+            ")"
+        )
+
+    def params(self, channel: str) -> list[str]:
+        return [self._domain, channel]
+
+
+class _SimpleDomainFilter(_DomainFilter):
+    def __init__(self, domain: str, condition: str) -> None:
+        self._domain = domain
+        super().__init__(condition)
+
+    def params(self, channel: str) -> list[str]:
+        return [self._domain]
+
+
+class _DocumentDomainFilter(_ActiveBuildDomainFilter):
+    def __init__(self, domain: str) -> None:
+        self._domain = domain
+        _DomainFilter.__init__(
+            self,
+            "EXISTS ("
+            "SELECT 1 FROM asset_document_snapshot_links dsl "
+            "JOIN asset_publish_releases apr ON apr.status = 'active' "
+            "JOIN asset_build_document_snapshots abds ON abds.build_id = apr.build_id "
+            "WHERE dsl.document_id = d.id "
+            "AND apr.domain = %s AND apr.channel = %s "
+            "AND abds.document_snapshot_id = dsl.document_snapshot_id"
+            ")",
+        )
+
+
+def _domain_filter_for_table(table: str, domain: str | None) -> _DomainFilter:
+    if not domain:
+        return _DomainFilter()
+    if table == "asset_source_batches":
+        return _SimpleDomainFilter(domain, "domain = %s")
+    if table == "asset_builds":
+        return _SimpleDomainFilter(domain, "domain = %s")
+    if table == "asset_publish_releases":
+        return _SimpleDomainFilter(domain, "domain = %s")
+    if table == "asset_documents":
+        return _DocumentDomainFilter(domain)
+    if table == "asset_document_snapshots":
+        return _ActiveBuildDomainFilter(domain, "id")
+    if table == "asset_raw_segments":
+        return _ActiveBuildDomainFilter(domain, "document_snapshot_id")
+    if table == "asset_raw_segment_relations":
+        return _ActiveBuildDomainFilter(domain, "document_snapshot_id")
+    if table == "asset_retrieval_units":
+        return _ActiveBuildDomainFilter(domain, "document_snapshot_id")
+    if table == "asset_retrieval_embeddings":
+        return _ActiveBuildDomainFilter(
+            domain,
+            "(SELECT ru.document_snapshot_id FROM asset_retrieval_units ru WHERE ru.id = retrieval_unit_id)",
+        )
+    return _DomainFilter()
+
+
+def _snapshot_domain_exists_clause(domain: str | None) -> str:
+    if not domain:
+        return ""
+    return (
+        "AND EXISTS ("
+        "SELECT 1 FROM asset_publish_releases apr "
+        "JOIN asset_build_document_snapshots abds ON abds.build_id = apr.build_id "
+        "WHERE apr.status = 'active' AND apr.domain = %s AND apr.channel = %s "
+        "AND abds.document_snapshot_id = asset_document_snapshot_links.document_snapshot_id"
+        ")"
+    )
+
+
 @router.get("/units")
 async def list_units(
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     unit_type: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -435,6 +598,10 @@ async def list_units(
 
     conditions = []
     params: list[str] = []
+    domain_filter = _domain_filter_for_table("asset_retrieval_units", domain)
+    if domain_filter.condition:
+        conditions.append(domain_filter.condition)
+        params.extend(domain_filter.params(channel))
     if unit_type:
         conditions.append("unit_type = %s")
         params.append(unit_type)
@@ -463,6 +630,8 @@ async def list_units(
 @router.get("/relations")
 async def list_relations(
     request: Request,
+    domain: str | None = None,
+    channel: str = Query("prod"),
     type: str | None = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -472,6 +641,10 @@ async def list_relations(
 
     conditions = []
     params: list[str] = []
+    if domain:
+        domain_filter = _ActiveBuildDomainFilter(domain, "r.document_snapshot_id")
+        conditions.append(domain_filter.condition)
+        params.extend(domain_filter.params(channel))
     if type:
         conditions.append("r.relation_type = %s")
         params.append(type)
@@ -480,7 +653,7 @@ async def list_relations(
 
     async with pool.connection() as conn:
         count_cur = await conn.execute(
-            "SELECT COUNT(*) as c FROM asset_raw_segment_relations", []
+            f"SELECT COUNT(*) as c FROM asset_raw_segment_relations r {where}", params
         )
         total = (await count_cur.fetchone())["c"]
 

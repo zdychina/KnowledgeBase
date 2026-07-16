@@ -31,8 +31,9 @@ async def get_config(request: Request) -> dict:
 @router.get("/domain-packs")
 async def list_domain_packs(request: Request) -> dict:
     """List available domain packs."""
-    from pathlib import Path
-    packs_dir = Path(__file__).resolve().parents[4] / "scenario_packs"
+    from knowledge_mining.mining.infra.domain_pack import _SCENARIO_PACKS_ROOT
+
+    packs_dir = _SCENARIO_PACKS_ROOT
     packs = []
     if packs_dir.exists():
         for f in sorted(packs_dir.iterdir()):

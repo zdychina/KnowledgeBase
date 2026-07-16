@@ -31,9 +31,10 @@ logger = logging.getLogger(__name__)
 # Repository root (knowledge_mining/mining/infra/ -> CoreMasterKB/)
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Single source of truth paths
-_REGISTRY_PATH = _REPO_ROOT / "domain_registry.yaml"
-_SCENARIO_PACKS_ROOT = _REPO_ROOT / "scenario_packs"
+# Single source of truth paths. main_control_service owns the active config.
+_MAIN_CONTROL_CONFIG_ROOT = _REPO_ROOT / "main_control_service" / "config"
+_REGISTRY_PATH = _MAIN_CONTROL_CONFIG_ROOT / "domain_registry.yaml"
+_SCENARIO_PACKS_ROOT = _MAIN_CONTROL_CONFIG_ROOT / "scenario_packs"
 
 
 

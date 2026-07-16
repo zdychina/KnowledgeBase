@@ -528,8 +528,17 @@ class TestLlmTemplates:
 
         tpl = next(t for t in TEMPLATES if t["template_key"] == "mining-segment-understanding")
         assert tpl["expected_output_type"] == "json_object"
-        assert "entities" in tpl["user_prompt_template"]
+        # 实体抽取已拆到 mining-entity-extraction（L4 §15），此处只剩篇章字段
         assert "semantic_role" in tpl["user_prompt_template"]
+        assert "content_assessment" in tpl["user_prompt_template"]
+
+    def test_entity_extraction_template_exists(self):
+        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
+
+        tpl = next(t for t in TEMPLATES if t["template_key"] == "mining-entity-extraction")
+        assert tpl["expected_output_type"] == "json_object"
+        assert "$allowed_types" in tpl["user_prompt_template"]
+        assert "out_of_schema" in tpl["user_prompt_template"]
 
 
 # ===================================================================

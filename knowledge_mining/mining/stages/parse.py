@@ -148,7 +148,7 @@ def create_parser(file_type: str, **kwargs: Any) -> DocumentParser:
         )
     elif file_type == "pdf":
         return PdfParser()
-    elif file_type in ("doc", "docx"):
+    elif file_type == "docx":
         return DocxParser()
     else:
         return PassthroughParser()

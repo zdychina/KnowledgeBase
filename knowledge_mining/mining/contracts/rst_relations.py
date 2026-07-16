@@ -35,3 +35,30 @@ RST_RELATIONS: dict[str, tuple[str, str]] = {
 LLM_TO_DB_RELATION: dict[str, str] = {k: v[0] for k, v in RST_RELATIONS.items()}
 RST_DB_VALUES: frozenset[str] = frozenset(LLM_TO_DB_RELATION.values())
 RST_LLM_LABELS: frozenset[str] = frozenset(LLM_TO_DB_RELATION.keys())
+
+
+# Nuclearity per RST relation, keyed by the lowercase DB value. Decides which
+# segment is the discourse nucleus (core info) vs satellite (supporting), used to
+# derive asset_raw_segments.metadata_json["discourse_role"]. Direction is resolved
+# against segment order (segment_index), not the LLM source/target labels.
+MULTINUCLEAR = "multinuclear"  # both ends are nucleus (no core/support asymmetry)
+MONO_PREV = "mono_prev"        # earlier segment (smaller segment_index) is nucleus
+MONO_POST = "mono_post"        # later segment (larger segment_index) is nucleus
+
+RST_NUCLEARITY: dict[str, str] = {
+    "elaborates":     MONO_PREV,   # 前段是被详述的主干
+    "exemplifies":    MONO_PREV,   # 前段是被举例的主干
+    "evidences":      MONO_PREV,   # 前段是被佐证的论断
+    "justifies":      MONO_PREV,   # 前段是被解释的设计/操作
+    "purposes":       MONO_PREV,   # 前段是操作本身
+    "results_in":     MONO_PREV,   # 前段是产生结果的操作  ⚠ 方向待与 serving 对齐
+    "backgrounds":    MONO_POST,   # 后段是被铺垫的主体
+    "conditions":     MONO_POST,   # 后段是受条件触发的主体
+    "enables":        MONO_POST,   # 后段是被使能的能力     ⚠ 方向待与 serving 对齐
+    "causes":         MONO_POST,   # 后段是结果/现象        ⚠ 方向待与 serving 对齐
+    "concedes":       MONO_POST,   # 后段是被强调的一方      ⚠ 方向待与 serving 对齐
+    "summarizes":     MULTINUCLEAR, # ⚠ 方向待与 serving 对齐
+    "sequences":      MULTINUCLEAR,
+    "contrasts_with": MULTINUCLEAR,
+    "parallels":      MULTINUCLEAR,
+}
