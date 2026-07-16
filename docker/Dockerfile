@@ -49,6 +49,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     "fastapi>=0.110" \
     "uvicorn[standard]>=0.29" \
+    "python-multipart>=0.0.9" \
     "pydantic>=2.7" \
     "pydantic-settings>=2.3" \
     "aiosqlite>=0.20" \
@@ -59,6 +60,8 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     "httpx>=0.27" \
     "psycopg[binary,pool]>=3.1" \
     "pdfminer.six>=20231228" \
+    "python-docx>=1.1" \
+    "jieba>=0.42" \
     "fastmcp>=2.0"
 
 # ── 从构建阶段复制产物 ──
