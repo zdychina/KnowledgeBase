@@ -33,7 +33,7 @@ export const useMiningStore = defineStore('mining', () => {
     if (!options?.silent) loading.value = true
     error.value = null
     try {
-      runs.value = await miningApi.getRuns()
+      runs.value = await miningApi.getRuns(domainStore.currentDomain)
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to fetch runs'
     } finally {

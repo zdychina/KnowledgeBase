@@ -26,8 +26,8 @@ export function useMiningApi() {
     },
 
     // Runs
-    async getRuns(params?: { status?: string; limit?: number }): Promise<MiningRun[]> {
-      const { data } = await client.get('/api/runs', { params })
+    async getRuns(domain: string, params?: { status?: string; limit?: number }): Promise<MiningRun[]> {
+      const { data } = await client.get('/api/runs', { params: { ...params, domain } })
       return extractItems<MiningRun>(data, ['stages'])
     },
 
