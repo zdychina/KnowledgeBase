@@ -2,10 +2,12 @@ package com.coremasterkb.serving.application;
 
 import com.coremasterkb.serving.domain.*;
 import com.coremasterkb.serving.config.ServingProperties;
+import com.coremasterkb.serving.domainpack.DatabaseConfig;
 import com.coremasterkb.serving.domainpack.DomainContext;
 import com.coremasterkb.serving.domainpack.DomainPackReader;
 import com.coremasterkb.serving.domainpack.DomainPoolManager;
 import com.coremasterkb.serving.domainpack.DomainRegistry;
+import com.coremasterkb.serving.domainpack.DomainRegistryEntry;
 import com.coremasterkb.serving.domainpack.ServingDomainProfile;
 import com.coremasterkb.serving.infrastructure.EmbeddingClient;
 import com.coremasterkb.serving.infrastructure.LlmClient;
@@ -201,10 +203,12 @@ public class SearchService {
                 "routes=" + routePlan.routes().size()
                         + ", fusion=" + routePlan.fusion().method());
 
-        String dbEnvVar = domainRegistry.findEntry(effectiveDomain)
-                .map(e -> e.databaseUrlEnv() != null ? e.databaseUrlEnv() : "default(shared)")
+        String dbLabel = domainRegistry.findEntry(effectiveDomain)
+                .map(DomainRegistryEntry::database)
+                .filter(DatabaseConfig::isUsable)
+                .map(SearchService::describeDatabase)
                 .orElse("default(shared)");
-        log.info("[search] routing domain={} channel={} db={}", effectiveDomain, channel, dbEnvVar);
+        log.info("[search] routing domain={} channel={} db={}", effectiveDomain, channel, dbLabel);
 
         trace.startStage("resolve_scope");
         try {
@@ -551,19 +555,22 @@ public class SearchService {
         return map;
     }
 
+    /** Human-readable DB label for logs/debug — host:port/dbname only, never credentials. */
+    private static String describeDatabase(DatabaseConfig db) {
+        if (db.jdbcUrl() != null && !db.jdbcUrl().isBlank()) return db.jdbcUrl();
+        return db.host() + ":" + (db.port() != null ? db.port() : 5432) + "/" + db.dbname();
+    }
+
     private Map<String, Object> domainContextToMap(String domain, String channel, ActiveScope scope) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("domain", domain);
         map.put("channel", channel);
         domainRegistry.findEntry(domain).ifPresentOrElse(
-                entry -> {
-                    map.put("database", entry.databaseUrlEnv() != null ? entry.databaseUrlEnv() : "n/a");
-                    map.put("scenario_pack", entry.scenarioPack());
-                },
-                () -> {
-                    map.put("database", "n/a");
-                    map.put("scenario_pack", domain);
-                }
+                entry -> map.put("database",
+                        entry.database() != null && entry.database().isUsable()
+                                ? describeDatabase(entry.database())
+                                : "default(shared)"),
+                () -> map.put("database", "n/a")
         );
         map.put("release_id", scope.releaseId());
         map.put("build_id", scope.buildId());

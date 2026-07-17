@@ -19,8 +19,14 @@ mybatis:
   type-aliases-package: com.coremasterkb.serving.entity
 
 serving:
-  scenario-packs-dir: ${SCENARIO_PACKS_DIR:../scenario_packs}
-  domain-registry-path: ${DOMAIN_REGISTRY_PATH:../domain_registry.yaml}
+  # 配置来源：serving 启动时从 main_control 拉取 per-domain 配置（GET /api/v1/serving-config），
+  # 并可经 POST /api/v1/admin/reload-config 热重载。
+  main-control:
+    base-url: ${SERVING_MAIN_CONTROL_BASEURL:http://localhost:8910}
+  # 本地文件兜底：仅当 main_control 不可达时使用（IntelliJ / 测试）。
+  # 指向 main_control 所拥有的同一份文件 —— main_control_service/config 是唯一真相源。
+  scenario-packs-dir: ${SCENARIO_PACKS_DIR:../main_control_service/config/scenario_packs}
+  domain-registry-path: ${DOMAIN_REGISTRY_PATH:../main_control_service/config/domain_registry.yaml}
   default-domain: ${COREMASTERKB_DOMAIN:${DEFAULT_DOMAIN:cloud_core_network}}
   llm:
     base-url: ${LLM_SERVICE_URL:http://localhost:8900}

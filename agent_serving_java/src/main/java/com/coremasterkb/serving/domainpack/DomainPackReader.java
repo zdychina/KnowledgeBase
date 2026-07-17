@@ -1,66 +1,56 @@
 package com.coremasterkb.serving.domainpack;
 
 import com.coremasterkb.serving.config.ServingProperties;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.yaml.snakeyaml.Yaml;
 
-import java.io.*;
-import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Holds per-domain {@link ServingDomainProfile}s built from each domain's scenario-pack
+ * {@code serving:} block (route_policy / query_understanding / extractor_rules /
+ * intent_strategy). Sourced from main_control's serving-config snapshot and replaced
+ * atomically on hot-reload via {@link #apply(ServingConfigSnapshot)}.
+ *
+ * <p>Note: this class no longer scans the packs directory itself. The old scan keyed
+ * profiles by directory name, which was wrong whenever a domain's {@code scenario_pack}
+ * differs from its domain id; the snapshot is keyed by domain id and resolves that
+ * mapping on the main_control side.
+ */
 @Component
 public class DomainPackReader {
 
     private static final Logger log = LoggerFactory.getLogger(DomainPackReader.class);
 
-    private final Map<String, ServingDomainProfile> cache = new ConcurrentHashMap<>();
-    private final String packsDir;
+    /** Replaced wholesale on reload — volatile so readers see a consistent map. */
+    private volatile Map<String, ServingDomainProfile> cache = Map.of();
     private final String defaultDomain;
     private final DomainRegistry domainRegistry;
-    /** True only when the packs directory was found and scanned at startup. */
-    private boolean packsDirectoryFound = false;
 
     public DomainPackReader(ServingProperties props, DomainRegistry domainRegistry) {
-        this.packsDir = props.scenarioPacksDir();
         this.defaultDomain = props.defaultDomain();
         this.domainRegistry = domainRegistry;
     }
 
-    @PostConstruct
-    public void init() {
-        Path root = Paths.get(packsDir);
-        if (!Files.isDirectory(root)) {
-            log.info("Scenario packs directory not found: {}, using defaults", packsDir);
-            return;
+    /** Rebuild the profile cache from a snapshot, replacing the previous view atomically. */
+    public void apply(ServingConfigSnapshot snapshot) {
+        Map<String, ServingDomainProfile> next = new LinkedHashMap<>();
+        for (var e : snapshot.domains().entrySet()) {
+            try {
+                next.put(e.getKey(), parseProfile(e.getKey(), e.getValue().serving()));
+            } catch (Exception ex) {
+                log.warn("Failed to build profile for domain {}: {}", e.getKey(), ex.getMessage());
+            }
         }
-        packsDirectoryFound = true;
-        try (var dirs = Files.list(root)) {
-            dirs.filter(Files::isDirectory).forEach(dir -> {
-                Path yamlPath = dir.resolve("domain.yaml");
-                if (Files.exists(yamlPath)) {
-                    String domainId = dir.getFileName().toString();
-                    try {
-                        ServingDomainProfile profile = parseYaml(domainId, yamlPath);
-                        cache.put(domainId, profile);
-                        log.info("Loaded domain pack: {}", domainId);
-                    } catch (Exception e) {
-                        log.warn("Failed to parse domain pack {}: {}", domainId, e.getMessage());
-                    }
-                }
-            });
-        } catch (Exception e) {
-            log.warn("Failed to scan scenario packs directory: {}", e.getMessage());
-        }
+        this.cache = Collections.unmodifiableMap(next);
+        log.info("Domain packs applied: {} — {}", next.size(), next.keySet());
     }
 
     public ServingDomainProfile getProfile(String domainId) {
         String effectiveDomain = (domainId == null || domainId.isBlank()) ? defaultDomain : domainId;
 
-        // Registry validation: throws unknown_domain / domain_disabled if registry is loaded
+        // Registry validation: throws unknown_domain / domain_disabled when registry is non-empty
         domainRegistry.resolve(effectiveDomain);
 
         ServingDomainProfile profile = cache.get(effectiveDomain);
@@ -68,54 +58,33 @@ public class DomainPackReader {
             return profile;
         }
 
-        // Registry not loaded, fall back to cache-based enforcement
+        // Registry empty (lenient mode) but some packs known → treat unknown domain as error
         if (!domainRegistry.isLoaded() && !cache.isEmpty()) {
             log.warn("Unknown domain '{}', known domains: {}", effectiveDomain, cache.keySet());
             throw new IllegalArgumentException("unknown_domain");
-        }
-
-        // Registry IS loaded and packs directory was found — missing pack is a deployment error
-        if (domainRegistry.isLoaded() && packsDirectoryFound) {
-            log.error("Scenario pack missing for domain '{}' — packs directory '{}' was scanned but no pack found",
-                    effectiveDomain, packsDir);
-            throw new IllegalStateException("scenario_pack_missing");
         }
 
         log.debug("No scenario pack for domain '{}', using defaults", effectiveDomain);
         return ServingDomainProfile.defaults(effectiveDomain);
     }
 
-    private ServingDomainProfile parseYaml(String domainId, Path yamlPath) throws IOException {
-        Yaml yaml = new Yaml();
-        try (InputStream is = Files.newInputStream(yamlPath)) {
-            Map<String, Object> data = yaml.load(is);
+    /**
+     * Build a profile from a scenario pack's {@code serving:} block. The block is the root
+     * here — route_policy / query_understanding / extractor_rules / intent_strategy all sit
+     * at the same level (no nesting under ontology/mining).
+     */
+    ServingDomainProfile parseProfile(String domainId, Map<String, Object> serving) {
+        Map<String, Object> s = serving != null ? serving : Map.of();
+        Map<String, Map<String, Map<String, Double>>> routePolicy = parseRoutePolicy(s);
+        List<Map<String, Object>> extractorRules = toListOfMaps(s.get("extractor_rules"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> queryUnderstanding =
+                s.get("query_understanding") instanceof Map<?, ?> qu ? (Map<String, Object>) qu : Map.of();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> intentStrategy =
+                s.get("intent_strategy") instanceof Map<?, ?> is ? (Map<String, Object>) is : Map.of();
 
-            Set<String> entityTypes = toSet(data.get("entity_types"));
-            Set<String> strongEntityTypes = toSet(data.get("strong_entity_types"));
-            List<Map<String, Object>> extractorRules = toListOfMaps(data.get("extractor_rules"));
-            List<Map<String, Object>> evalQuestions = toListOfMaps(data.get("eval_questions"));
-
-            @SuppressWarnings("unchecked")
-            Map<String, Object> serving = (Map<String, Object>) data.getOrDefault("serving", Map.of());
-            Map<String, Map<String, Map<String, Double>>> routePolicy = parseRoutePolicy(serving);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> queryUnderstanding =
-                    (Map<String, Object>) serving.getOrDefault("query_understanding", Map.of());
-            @SuppressWarnings("unchecked")
-            Map<String, Object> intentStrategy =
-                    (Map<String, Object>) serving.getOrDefault("intent_strategy", Map.of());
-
-            return new ServingDomainProfile(
-                    domainId, entityTypes, strongEntityTypes, routePolicy,
-                    extractorRules, evalQuestions, queryUnderstanding, intentStrategy
-            );
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Set<String> toSet(Object obj) {
-        if (obj instanceof List) return new HashSet<>((List<String>) obj);
-        return Set.of();
+        return new ServingDomainProfile(domainId, routePolicy, extractorRules, queryUnderstanding, intentStrategy);
     }
 
     @SuppressWarnings("unchecked")

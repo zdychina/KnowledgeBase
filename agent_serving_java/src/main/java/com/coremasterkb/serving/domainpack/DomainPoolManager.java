@@ -2,104 +2,116 @@ package com.coremasterkb.serving.domainpack;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Manages per-domain DataSource instances.
+ * Manages per-domain DataSource instances built from each domain's inline
+ * {@link DatabaseConfig} (sourced from main_control). When a domain has a usable DB
+ * config a dedicated HikariCP pool is created; otherwise the default DataSource is reused.
  *
- * <p>When a domain's {@code database_url_env} resolves to a JDBC URL that differs
- * from the default connection, a dedicated HikariCP pool is created for that domain.
- * When the env var is absent the default DataSource is reused transparently.
+ * <p>Pools are created lazily on first access and cached. {@link #invalidate()} is called
+ * after a config reload: pools whose DB signature changed (or whose domain was removed)
+ * are closed and dropped so the next request rebuilds them from the new config; unchanged
+ * pools are left untouched to avoid needless reconnects.
  *
- * <p>Pools are created lazily on first access and cached for the lifetime of the
- * application. The registry is consulted once at startup to warn about misconfigured
- * domains, but pool creation does not block startup.
- *
- * <p>Call {@link #getDataSource(String)} before any DB operation for a domain.
- * It throws {@code IllegalStateException("domain_database_unavailable")} when the
- * domain's configured database cannot be reached.
+ * <p>{@link #getDataSource(String)} throws {@code IllegalStateException("domain_database_unavailable")}
+ * when the domain's configured database cannot be reached.</p>
  */
 @Component
 public class DomainPoolManager {
 
     private static final Logger log = LoggerFactory.getLogger(DomainPoolManager.class);
 
+    private static final String DEFAULT_SIGNATURE = "__default__";
+
     private final DomainRegistry domainRegistry;
     private final DataSource defaultDataSource;
-    private final Environment environment;
 
     /** domain → resolved DataSource (may be the default for unconfigured domains). */
     private final Map<String, DataSource> pools = new ConcurrentHashMap<>();
-    /** Tracks HikariDataSources we own so we can close them on shutdown. */
-    private final List<HikariDataSource> ownedPools = new ArrayList<>();
+    /** domain → DB signature backing its current pool (for change detection on reload). */
+    private final Map<String, String> poolSignatures = new ConcurrentHashMap<>();
+    /** Dedicated Hikari pools we own so we can close them. */
+    private final Map<String, HikariDataSource> ownedPools = new ConcurrentHashMap<>();
 
     public DomainPoolManager(DomainRegistry domainRegistry,
-                              @Qualifier("defaultDataSource") DataSource defaultDataSource,
-                              Environment environment) {
+                             @Qualifier("defaultDataSource") DataSource defaultDataSource) {
         this.domainRegistry = domainRegistry;
         this.defaultDataSource = defaultDataSource;
-        this.environment = environment;
-    }
-
-    @PostConstruct
-    public void init() {
-        if (!domainRegistry.isLoaded()) {
-            log.info("Domain registry not loaded — DomainPoolManager running in single-datasource mode");
-            return;
-        }
-        // Log registered domains without connecting — pools are created lazily on first request
-        // to avoid blocking startup when many domain databases exist.
-        for (String domain : domainRegistry.knownDomains()) {
-            log.info("Domain registered: {} (pool will be created on first request)", domain);
-        }
     }
 
     /**
-     * Returns the DataSource to use for the given domain.
+     * Returns the DataSource for the given domain, creating a dedicated pool on first use.
      *
-     * @throws IllegalStateException("domain_database_unavailable") if the domain's configured DB
-     *         is unreachable
+     * @throws IllegalStateException("domain_database_unavailable") if the configured DB is unreachable
      */
     public DataSource getDataSource(String domain) {
         return pools.computeIfAbsent(domain, this::resolveDataSource);
     }
 
     private DataSource resolveDataSource(String domain) {
-        return domainRegistry.findEntry(domain)
-                .filter(e -> e.databaseUrlEnv() != null && !e.databaseUrlEnv().isBlank())
-                .map(entry -> {
-                    String jdbcUrl = environment.getProperty(entry.databaseUrlEnv());
-                    if (jdbcUrl == null || jdbcUrl.isBlank()) {
-                        log.debug("Env var '{}' not set for domain '{}' — using default DataSource",
-                                entry.databaseUrlEnv(), domain);
-                        return defaultDataSource;
-                    }
-                    log.info("Creating dedicated pool for domain '{}' from env var '{}'",
-                            domain, entry.databaseUrlEnv());
-                    return createHikariPool(domain, jdbcUrl);
-                })
-                .orElse(defaultDataSource);
+        DatabaseConfig db = domainRegistry.findEntry(domain)
+                .map(DomainRegistryEntry::database)
+                .orElse(null);
+
+        if (db == null || !db.isUsable()) {
+            poolSignatures.put(domain, DEFAULT_SIGNATURE);
+            return defaultDataSource;
+        }
+
+        log.info("Creating dedicated pool for domain '{}'", domain);
+        HikariDataSource ds = createHikariPool(domain, db);
+        ownedPools.put(domain, ds);
+        poolSignatures.put(domain, db.signature());
+        return ds;
     }
 
-    private DataSource createHikariPool(String domain, String jdbcUrl) {
+    /**
+     * Drop pools whose backing DB config changed (or whose domain was removed) so the next
+     * request rebuilds them from the freshly-applied registry. Unchanged pools are kept.
+     * Must be called AFTER {@link DomainRegistry#apply} so lookups see the new config.
+     */
+    public void invalidate() {
+        for (String domain : Map.copyOf(poolSignatures).keySet()) {
+            DatabaseConfig db = domainRegistry.findEntry(domain)
+                    .map(DomainRegistryEntry::database)
+                    .orElse(null);
+            String desired = (db != null && db.isUsable()) ? db.signature() : DEFAULT_SIGNATURE;
+            String current = poolSignatures.get(domain);
+            if (!Objects.equals(desired, current)) {
+                pools.remove(domain);
+                poolSignatures.remove(domain);
+                HikariDataSource owned = ownedPools.remove(domain);
+                if (owned != null) {
+                    try {
+                        owned.close();
+                        log.info("Closed stale pool for domain '{}'", domain);
+                    } catch (Exception e) {
+                        log.warn("Error closing pool for '{}': {}", domain, e.getMessage());
+                    }
+                }
+            }
+        }
+    }
+
+    private HikariDataSource createHikariPool(String domain, DatabaseConfig db) {
         HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl(jdbcUrl);
+        cfg.setJdbcUrl(db.resolvedJdbcUrl());
+        if (db.user() != null) cfg.setUsername(db.user());
+        if (db.password() != null) cfg.setPassword(db.password());
         cfg.setPoolName("hikari-" + domain);
-        cfg.setMinimumIdle(2);
-        cfg.setMaximumPoolSize(10);
+        cfg.setMinimumIdle(db.poolMin() != null ? db.poolMin() : 2);
+        cfg.setMaximumPoolSize(db.poolMax() != null ? db.poolMax() : 10);
         cfg.setConnectionTimeout(5_000);
         cfg.setInitializationFailTimeout(5_000);
         try {
@@ -110,9 +122,6 @@ public class DomainPoolManager {
                     ds.close();
                     throw new IllegalStateException("domain_database_unavailable");
                 }
-            }
-            synchronized (ownedPools) {
-                ownedPools.add(ds);
             }
             return ds;
         } catch (IllegalStateException e) {
@@ -125,16 +134,16 @@ public class DomainPoolManager {
 
     @PreDestroy
     public void shutdown() {
-        synchronized (ownedPools) {
-            for (HikariDataSource ds : ownedPools) {
-                try {
-                    ds.close();
-                    log.info("Closed pool: {}", ds.getPoolName());
-                } catch (Exception e) {
-                    log.warn("Error closing pool {}: {}", ds.getPoolName(), e.getMessage());
-                }
+        for (var entry : ownedPools.entrySet()) {
+            try {
+                entry.getValue().close();
+                log.info("Closed pool: {}", entry.getValue().getPoolName());
+            } catch (Exception e) {
+                log.warn("Error closing pool {}: {}", entry.getKey(), e.getMessage());
             }
-            ownedPools.clear();
         }
+        ownedPools.clear();
+        pools.clear();
+        poolSignatures.clear();
     }
 }

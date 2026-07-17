@@ -2,22 +2,23 @@ package com.coremasterkb.serving.domainpack;
 
 import java.util.*;
 
+/**
+ * A domain's serving-side profile, built from the scenario pack's {@code serving:} block.
+ *
+ * <p>Only fields Serving actually consumes live here. The pack's {@code ontology:} and
+ * {@code mining:} sections (entity_types / strong_entity_types / eval_questions) are
+ * deliberately absent — main_control's serving-config never sends them.
+ */
 public record ServingDomainProfile(
     String domainId,
-    Set<String> entityTypes,
-    Set<String> strongEntityTypes,
     Map<String, Map<String, Map<String, Double>>> routePolicy,
     List<Map<String, Object>> extractorRules,
-    List<Map<String, Object>> evalQuestions,
     Map<String, Object> queryUnderstanding,
     Map<String, Object> intentStrategy
 ) {
     public ServingDomainProfile {
-        if (entityTypes == null) entityTypes = Set.of();
-        if (strongEntityTypes == null) strongEntityTypes = Set.of();
         if (routePolicy == null) routePolicy = Map.of();
         if (extractorRules == null) extractorRules = List.of();
-        if (evalQuestions == null) evalQuestions = List.of();
         if (queryUnderstanding == null) queryUnderstanding = Map.of();
         if (intentStrategy == null) intentStrategy = Map.of();
     }
@@ -64,8 +65,7 @@ public record ServingDomainProfile(
         fullPolicy.put("general", defaultPolicy);
 
         return new ServingDomainProfile(
-            domainId, Set.of(), Set.of(), Collections.unmodifiableMap(fullPolicy),
-            List.of(), List.of(), Map.of(), Map.of()
+            domainId, Collections.unmodifiableMap(fullPolicy), List.of(), Map.of(), Map.of()
         );
     }
 }
