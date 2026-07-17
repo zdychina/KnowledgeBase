@@ -34,4 +34,27 @@ EXPORT_TABLES = [
     "asset_raw_segment_relations",
     "asset_retrieval_units",
     "asset_retrieval_embeddings",
+    # ontology（本体概念层）——须排在 asset_core 之后：
+    # ontology_evidence_nodes / asset_segment_entity_mentions 的 FK
+    # 指向 asset_document_snapshots / asset_raw_segments。
+    "ontology_versions",
+    "ontology_node_types",
+    "ontology_relation_types",
+    "ontology_entities",
+    "ontology_entity_relations",
+    "ontology_alias_dictionary",
+    "ontology_evidence_nodes",
+    "asset_segment_entity_mentions",
+    "ontology_candidates",
+    # operator（检索范式）——见 OPTIONAL_TABLES
+    "operator_paradigm",
+    "operator_paradigm_version",
 ]
+
+# 可能不存在的表：由 agent_serving_java 的 ParadigmSchemaInitializer 在启动时建，
+# Python 侧 reset_db.py 不建。因此 Java 从未启动过的库里没有这两张表，
+# export/import 必须容忍其缺失，否则会在纯挖掘库上直接报错。
+OPTIONAL_TABLES = {
+    "operator_paradigm",
+    "operator_paradigm_version",
+}

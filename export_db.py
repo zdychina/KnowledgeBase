@@ -50,7 +50,13 @@ CONNINFO = (
 )
 
 # ── 表顺序（共享定义） ────────────────────────────────────────
-from db_tables import EXPORT_TABLES
+from db_tables import EXPORT_TABLES, OPTIONAL_TABLES
+
+
+def table_exists(cur, table: str) -> bool:
+    """表是否存在（to_regclass 对不存在的表返回 NULL，不会抛异常）"""
+    cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+    return cur.fetchone()[0] is not None
 
 
 def escape_sql(value):
@@ -126,6 +132,10 @@ def main():
 
                 total = 0
                 for table in EXPORT_TABLES:
+                    if table in OPTIONAL_TABLES and not table_exists(cur, table):
+                        out.write(f"-- {table}: skipped (table not found)\n\n")
+                        print(f"  {table}: skipped (not found)")
+                        continue
                     count = export_table(cur, table, out)
                     total += count
                     print(f"  {table}: {count} rows")
