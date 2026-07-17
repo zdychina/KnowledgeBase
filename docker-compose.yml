@@ -31,8 +31,8 @@ services:
       # 本地开发可以注释掉下面这些，直接用镜像内置代码
       # 服务器上取消注释，修改宿主机文件后 supervisorctl restart 即可生效
       - ./.env:/app/.env
-      - ./domain_registry.yaml:/app/domain_registry.yaml
-      - ./scenario_packs:/app/scenario_packs
+      # 域配置（domain_registry.yaml + scenario_packs/）随 main_control_service 挂载，
+      # Python 与 Java 共读同一份，不再单独挂根目录副本。
       - ./knowledge_mining:/app/knowledge_mining
       - ./llm_service:/app/llm_service
       - ./main_control_service:/app/main_control_service

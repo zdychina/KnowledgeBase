@@ -2,8 +2,8 @@
 *
 
 # === Allowlisted directories ===
-!scenario_packs/
-!scenario_packs/**
+# 注：根目录的 scenario_packs/ 与 domain_registry.yaml 已删除——域配置统一到
+# main_control_service/config/（该目录已由下方的 !main_control_service/** 覆盖）。
 !agent_serving/
 !agent_serving/**
 !databases/
@@ -39,7 +39,7 @@
 !.gitignore
 !.dockerignore
 !README.md
-!domain_registry.yaml
+!CLAUDE.md
 !docker-compose.yml
 !pyproject.toml
 !deploy-build.sh
