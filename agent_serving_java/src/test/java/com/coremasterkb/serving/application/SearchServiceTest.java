@@ -81,7 +81,7 @@ class SearchServiceTest {
                 mock(LlmClient.class),
                 multiQueryExpander, semanticCache, metrics, treeNavigator,
                 retrievalUnitMapper,
-                new ServingProperties(null, null, "cloud_core_network", null));
+                new ServingProperties(null, null, "cloud_core_network", null, null));
     }
 
     @Nested

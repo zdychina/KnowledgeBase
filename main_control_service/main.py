@@ -9,7 +9,13 @@ from fastapi.responses import Response
 
 from main_control_service.config import MainControlSettings
 from main_control_service.ip_whitelist import IpWhitelistMiddleware
-from main_control_service.proxy import create_proxy_client, set_proxy_client, shutdown_proxy_client, proxy_request
+from main_control_service.proxy import (
+    create_proxy_client,
+    get_proxy_client,
+    set_proxy_client,
+    shutdown_proxy_client,
+    proxy_request,
+)
 from main_control_service.service import YamlConfigService
 
 
@@ -141,6 +147,14 @@ def create_app(
         return {"ok": True}
 
     # ------------------------------------------------------------------
+    # Serving config snapshot — agent_serving pulls this on startup/reload
+    # ------------------------------------------------------------------
+
+    @app.get("/api/v1/serving-config")
+    def get_serving_config() -> dict:
+        return service.get_serving_config()
+
+    # ------------------------------------------------------------------
     # Code sync — GitHub archive -> local Python services
     # ------------------------------------------------------------------
 
@@ -194,6 +208,33 @@ def create_app(
         if mw:
             return mw.reload()  # reload() returns current state
         return {"error": "IpWhitelistMiddleware not found in middleware stack"}
+
+    # ------------------------------------------------------------------
+    # Admin — fan out config hot-reload to agent_serving instances
+    # ------------------------------------------------------------------
+
+    @app.post("/api/v1/admin/reload-serving")
+    async def reload_serving() -> dict:
+        """Trigger config hot-reload on every enabled domain's serving instance.
+
+        Called by the kb-ui "配置热重载" button after a config save. Each distinct
+        serving_url is hit once; failures are reported, never raised.
+        """
+        client = get_proxy_client()
+        results: list[dict] = []
+        for url in service.serving_reload_targets():
+            target = f"{url.rstrip('/')}/api/v1/admin/reload-config"
+            try:
+                resp = await client.post(target, timeout=30.0)
+                results.append({
+                    "url": url,
+                    "ok": resp.status_code < 400,
+                    "status": resp.status_code,
+                    "detail": resp.text[:500],
+                })
+            except Exception as exc:  # noqa: BLE001 — best-effort fan-out
+                results.append({"url": url, "ok": False, "error": str(exc)})
+        return {"ok": all(r["ok"] for r in results) if results else True, "results": results}
 
     return app
 

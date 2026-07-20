@@ -22,8 +22,10 @@ import pytest
 # Fixtures
 # ---------------------------------------------------------------------------
 
-# Unified path via scenario_packs
-SCENARIO_PACKS_ROOT = Path(__file__).resolve().parents[2] / "scenario_packs"
+# 域配置的唯一真相源：main_control_service/config（Python 与 Java 共读同一份）
+SCENARIO_PACKS_ROOT = (
+    Path(__file__).resolve().parents[2] / "main_control_service" / "config" / "scenario_packs"
+)
 
 
 @pytest.fixture
@@ -63,7 +65,8 @@ class TestDomainRegistry:
         entry = resolve_domain("cloud_core_network")
         assert entry["enabled"] is True
         assert entry["scenario_pack"] == "cloud_core_network"
-        assert entry["database_url_env"] == "COREMASTERKB_DB_CLOUD_CORE"
+        # 注意：registry 不含 database_url_env —— per-domain 分库路由尚未接通，
+        # 所有域共用 .env 的单库，靠表内 domain 列隔离。接通前不要断言该字段。
 
     def test_resolve_nonexistent_raises(self):
         from knowledge_mining.mining.infra.domain_pack import resolve_domain

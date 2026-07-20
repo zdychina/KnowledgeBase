@@ -3,11 +3,9 @@ package com.coremasterkb.serving.domainpack;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.env.Environment;
 
 import javax.sql.DataSource;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -18,7 +16,15 @@ class DomainPoolManagerTest {
 
     private final DomainRegistry registry = mock(DomainRegistry.class);
     private final DataSource defaultDs = mock(DataSource.class);
-    private final Environment env = mock(Environment.class);
+
+    private static DomainRegistryEntry entryWith(DatabaseConfig db) {
+        return new DomainRegistryEntry("cloud_core_network", true, db, "prod");
+    }
+
+    /** host+dbname absent → not usable → caller must fall back to the default DataSource. */
+    private static DatabaseConfig unusableDb() {
+        return new DatabaseConfig(null, null, null, null, "u", "p", null, null, null, null);
+    }
 
     @Nested
     @DisplayName("no registry loaded")
@@ -27,50 +33,37 @@ class DomainPoolManagerTest {
         @DisplayName("getDataSource returns default DataSource when registry not loaded")
         void returnsDefaultWhenRegistryEmpty() {
             when(registry.isLoaded()).thenReturn(false);
-            when(registry.knownDomains()).thenReturn(Set.of());
             when(registry.findEntry(anyString())).thenReturn(Optional.empty());
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
-            mgr.init();
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
 
-            DataSource result = mgr.getDataSource("cloud_core_network");
-            assertThat(result).isSameAs(defaultDs);
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
         }
     }
 
     @Nested
-    @DisplayName("registry loaded, no env var set")
-    class RegistryLoadedNoEnvVar {
+    @DisplayName("registry loaded, no usable database config")
+    class RegistryLoadedNoDatabase {
         @Test
-        @DisplayName("getDataSource returns default when databaseUrlEnv is null")
-        void returnsDefaultWhenEnvVarNull() {
+        @DisplayName("getDataSource returns default when database block is absent")
+        void returnsDefaultWhenDatabaseNull() {
             when(registry.isLoaded()).thenReturn(true);
-            when(registry.knownDomains()).thenReturn(Set.of("cloud_core_network"));
-            var entry = new DomainRegistryEntry("cloud_core_network", true, null, "cloud_core_network", "prod");
-            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entry));
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(null)));
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
-            mgr.init();
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
 
-            DataSource result = mgr.getDataSource("cloud_core_network");
-            assertThat(result).isSameAs(defaultDs);
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
         }
 
         @Test
-        @DisplayName("getDataSource returns default when env var not set in environment")
-        void returnsDefaultWhenEnvVarNotSet() {
+        @DisplayName("getDataSource returns default when database block lacks host/dbname")
+        void returnsDefaultWhenDatabaseUnusable() {
             when(registry.isLoaded()).thenReturn(true);
-            when(registry.knownDomains()).thenReturn(Set.of("cloud_core_network"));
-            // env mock returns null for any unstubbed property — simulates missing var
-            var entry = new DomainRegistryEntry("cloud_core_network", true,
-                    "COREMASTERKB_TEST_UNSET_ENV_VAR_12345", "cloud_core_network", "prod");
-            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entry));
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(unusableDb())));
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
-            mgr.init();
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
 
-            DataSource result = mgr.getDataSource("cloud_core_network");
-            assertThat(result).isSameAs(defaultDs);
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
         }
     }
 
@@ -81,14 +74,45 @@ class DomainPoolManagerTest {
         @DisplayName("getDataSource returns default for unregistered domain")
         void returnsDefaultForUnknownDomain() {
             when(registry.isLoaded()).thenReturn(true);
-            when(registry.knownDomains()).thenReturn(Set.of());
             when(registry.findEntry(anyString())).thenReturn(Optional.empty());
 
-            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, env);
-            mgr.init();
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
 
-            DataSource result = mgr.getDataSource("nonexistent");
-            assertThat(result).isSameAs(defaultDs);
+            assertThat(mgr.getDataSource("nonexistent")).isSameAs(defaultDs);
+        }
+    }
+
+    @Nested
+    @DisplayName("invalidate after config reload")
+    class Invalidate {
+        @Test
+        @DisplayName("keeps the cached default when the domain's config is unchanged")
+        void keepsUnchangedDefault() {
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(null)));
+
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
+
+            mgr.invalidate();
+
+            // Still resolves — and the registry is only consulted again on a rebuild.
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
+        }
+
+        @Test
+        @DisplayName("drops the cached entry when the domain disappears from the registry")
+        void dropsRemovedDomain() {
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(null)));
+
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
+            mgr.getDataSource("cloud_core_network");
+
+            // Domain removed from the registry, and its new desired state differs from
+            // the cached one only if a usable DB appears; removal alone keeps DEFAULT.
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.empty());
+            mgr.invalidate();
+
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
         }
     }
 }

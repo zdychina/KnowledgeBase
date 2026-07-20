@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 # ── 表顺序（共享定义） ────────────────────────────────────────
-from db_tables import EXPORT_TABLES
+from db_tables import EXPORT_TABLES, OPTIONAL_TABLES
 
 # ── 加载 .env ──────────────────────────────────────────────
 REPO_ROOT = Path(__file__).resolve().parent
@@ -58,6 +58,12 @@ def find_latest_backup() -> Path | None:
         return None
     files = sorted(backup_dir.glob("export_*.sql"), reverse=True)
     return files[0] if files else None
+
+
+def table_exists(cur, table: str) -> bool:
+    """表是否存在（to_regclass 对不存在的表返回 NULL，不会抛异常）"""
+    cur.execute("SELECT to_regclass(%s)", (f"public.{table}",))
+    return cur.fetchone()[0] is not None
 
 
 def parse_statements(sql: str) -> list[str]:
@@ -110,7 +116,15 @@ def main():
     with psycopg.connect(CONNINFO) as conn:
         with conn.cursor() as cur:
             # 1. TRUNCATE 所有表（反序，先清子表）
-            truncate_sql = ", ".join(reversed(EXPORT_TABLES))
+            #    可选表若不存在则跳过——TRUNCATE 是单条语句，缺一张表整条都会失败。
+            present = [
+                t for t in EXPORT_TABLES
+                if t not in OPTIONAL_TABLES or table_exists(cur, t)
+            ]
+            for t in EXPORT_TABLES:
+                if t not in present:
+                    print(f"  {t}: skipped (not found)")
+            truncate_sql = ", ".join(reversed(present))
             cur.execute(f"TRUNCATE TABLE {truncate_sql} CASCADE;")
             print("Tables truncated.")
 

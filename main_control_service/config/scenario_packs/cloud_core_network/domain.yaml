@@ -107,7 +107,10 @@ mining:
 
   # LLM templates
   llm_templates:
-    - template_key: mining-question-generation
+    # template_key 必须与代码提交时用的键一致：
+    # knowledge_mining/mining/stages/retrieval_units/__init__.py 提交的是 mining-question-gen。
+    # 不一致时 submit_task 取不到模板，只 warning 不报错 —— 问题生成会静默失效。
+    - template_key: mining-question-gen
       template_version: "4"
       purpose: "从段落内容生成假设性检索问题"
       system_prompt: "你是通信网络知识库的检索优化助手。你判断段落是否值得生成问题，如果是则生成高质量检索问题。"

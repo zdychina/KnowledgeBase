@@ -75,10 +75,10 @@ COPY main_control_service/ ./main_control_service/
 COPY mcp_server/ ./mcp_server/
 
 # ── 共享配置与数据 ──
+# 域配置（domain_registry.yaml + scenario_packs/）不在这里 COPY：
+# 它们随 main_control_service/ 一起进镜像，是 Python 与 Java 共用的唯一真相源。
 COPY .env .env.example ./
-COPY domain_registry.yaml ./
 COPY reset_db.py ./
-COPY scenario_packs/ ./scenario_packs/
 COPY databases/ ./databases/
 
 # ── nginx + supervisord 配置 ──

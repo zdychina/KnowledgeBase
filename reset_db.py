@@ -65,6 +65,18 @@ ALL_TABLES = [
     # serving_runtime（检索服务）
     "serving_query_cache",
     "serving_query_logs",
+    # ontology（本体概念层）——须先于 asset_core 删除：
+    # FK 指向 asset_document_snapshots / asset_raw_segments，
+    # 而 DROP ... CASCADE 只删外键约束，不删引用方的表本身。
+    "ontology_candidates",
+    "asset_segment_entity_mentions",
+    "ontology_evidence_nodes",
+    "ontology_alias_dictionary",
+    "ontology_entity_relations",
+    "ontology_entities",
+    "ontology_relation_types",
+    "ontology_node_types",
+    "ontology_versions",
     # asset_core（资产核心）
     "asset_retrieval_embeddings",
     "asset_retrieval_units",
@@ -99,6 +111,8 @@ SCHEMA_FILES = [
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "002_mining_runtime_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "003_mining_runtime_domain.sql",
     REPO_ROOT / "databases" / "asset_core" / "schemas" / "002_asset_core_postgresql.sql",
+    # ontology 必须最后：FK 指向 asset_*，且会给 mining_runs 补 subloop_stage / ontology_version_id 两列
+    REPO_ROOT / "databases" / "ontology" / "schemas" / "001_ontology_concept_postgresql.sql",
 ]
 
 

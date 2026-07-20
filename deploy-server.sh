@@ -23,36 +23,33 @@ docker load -i cmkb.tar
 echo "=== 停止旧容器 ==="
 docker compose down 2>/dev/null || true
 
-# .env / domain_registry.yaml 如果是目录则删除（docker cp 需要）
+# .env 如果是目录则删除（docker cp 需要）
 if [ -d .env ]; then
     rm -rf .env
-fi
-if [ -d domain_registry.yaml ]; then
-    rm -rf domain_registry.yaml
 fi
 
 echo "=== 从镜像拷贝文件 ==="
 docker create --name tmp-deploy coremasterkb-app:latest
 
 # 配置文件：--force-config 时才覆盖，否则仅补空
+# 注意：域配置（domain_registry.yaml + scenario_packs/）住在 main_control_service/config 下，
+# 归下面的「代码」分支管辖 —— 即受 --force 而非 --force-config 控制。
 if [ "$FORCE_CONFIG" = true ]; then
-    echo "=== --force-config: 覆盖配置文件 ==="
+    echo "=== --force-config: 覆盖 .env ==="
     docker cp tmp-deploy:/app/.env ./.env
-    docker cp tmp-deploy:/app/domain_registry.yaml ./domain_registry.yaml
 else
     echo "=== 配置文件：仅补缺 ==="
     if [ ! -f .env ]; then
         docker cp tmp-deploy:/app/.env ./.env
-    fi
-    if [ ! -f domain_registry.yaml ]; then
-        docker cp tmp-deploy:/app/domain_registry.yaml ./domain_registry.yaml
     fi
 fi
 
 # 代码 + 工具脚本
 if [ "$FORCE" = true ]; then
     echo "=== --force: 覆盖所有代码目录 ==="
-    for dir in scenario_packs knowledge_mining llm_service main_control_service mcp_server databases; do
+    echo "!! 警告：这会一并重置 main_control_service/config/ 下的域配置"
+    echo "!! （domain_registry.yaml、scenario_packs/、system/*.yaml）为镜像内版本。"
+    for dir in knowledge_mining llm_service main_control_service mcp_server databases; do
         rm -rf "$dir"
         mkdir -p "$dir"
         docker cp "tmp-deploy:/app/$dir/." "./$dir/"
@@ -61,7 +58,7 @@ if [ "$FORCE" = true ]; then
     docker cp tmp-deploy:/app/reset_db.py ./reset_db.py
 else
     echo "=== 仅拷贝空目录，已有代码不覆盖 ==="
-    for dir in scenario_packs knowledge_mining llm_service main_control_service mcp_server databases; do
+    for dir in knowledge_mining llm_service main_control_service mcp_server databases; do
         if [ ! -d "$dir" ] || [ -z "$(ls -A $dir 2>/dev/null)" ]; then
             mkdir -p "$dir"
             docker cp "tmp-deploy:/app/$dir/." "./$dir/"

@@ -97,7 +97,8 @@ mining:
     structural_context_mode: breadcrumb
 
   llm_templates:
-    - template_key: mining-question-generation
+    # 须与代码提交的键一致（retrieval_units 提交 mining-question-gen），否则静默失效。
+    - template_key: mining-question-gen
       template_version: "4"
       purpose: "从段落内容生成假设性检索问题"
       system_prompt: "你是civil_engineering工程知识库的检索优化助手。你判断施工、设计、验收、材料和安全类段落是否值得生成问题，如果是则生成高质量检索问题。"

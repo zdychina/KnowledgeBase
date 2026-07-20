@@ -17,8 +17,8 @@ mybatis:
   type-aliases-package: com.coremasterkb.serving.entity
 
 serving:
-  domain-registry-path: ../domain_registry.yaml
-  scenario-packs-dir: ${SCENARIO_PACKS_DIR:../scenario_packs}
+  domain-registry-path: ../main_control_service/config/domain_registry.yaml
+  scenario-packs-dir: ${SCENARIO_PACKS_DIR:../main_control_service/config/scenario_packs}
   default-domain: cloud_core_network
   llm:
     base-url: ""
