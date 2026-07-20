@@ -1,0 +1,83 @@
+name: Build & Push Image
+
+# 构建 CoreMasterKB 全家桶镜像并推送到 GHCR。
+# 生产机 121.89.90.178 直接 docker pull，不再需要 docker save + scp 传 tar。
+#
+# 注意：Dockerfile 里的镜像源目前全是国内的（华为云/阿里云/npmmirror/清华）。
+# GitHub runner 在境外，这些源可能慢或被限流 —— 首次跑完看各步耗时再决定
+# 是否把镜像源提成 ARG（CI 用上游默认源，本地/服务器仍走国内镜像）。
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:        # 允许手动触发，不必为了构建而造 commit
+
+env:
+  REGISTRY: ghcr.io
+  # GHCR 的 image name 必须全小写，仓库名 KnowledgeBase 不能直接用
+  IMAGE_NAME: ${{ github.repository_owner }}/coremasterkb-app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write       # 推 GHCR 需要
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Dockerfile 有 COPY .env，而 .env 不进版本库（含真密钥）。
+      # 用 .env.example 占位即可：构建期没有任何 RUN 读它的内容，
+      # 且 docker-compose.yml 在运行时用宿主机 .env 挂载覆盖镜像内这份。
+      - name: Stub out .env
+        run: cp .env.example .env
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 层缓存存在 Actions cache 里，改一行 Java 代码不必重跑 pip/apt
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### 镜像已推送"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo "生产机拉取："
+            echo '```bash'
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            echo "docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest coremasterkb-app:latest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

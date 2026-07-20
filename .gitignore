@@ -32,6 +32,8 @@
 !kb-ui/**
 !docker/
 !docker/**
+!.github/
+!.github/**
 
 # === Allowlisted root files ===
 !.env.example
