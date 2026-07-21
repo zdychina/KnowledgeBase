@@ -228,6 +228,8 @@ const initialLoading = ref(true)
 const trace = ref<RunTrace | null>(null)
 const resuming = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+// resume 后延迟启动轮询的句柄，需在卸载/切域时一并清除，避免离开页面后仍触发轮询
+let resumeTimer: ReturnType<typeof setTimeout> | null = null
 
 // ── Formatters ──
 
@@ -376,7 +378,8 @@ async function handleResume() {
       ElMessage.success('已开始继续挖掘，正在后台运行…')
     }
     // 给后台线程一点时间把状态翻成 running 再轮询，避免第一拍还停在旧状态导致轮询过早停止
-    setTimeout(() => startPolling(), 1500)
+    if (resumeTimer) clearTimeout(resumeTimer)
+    resumeTimer = setTimeout(() => { resumeTimer = null; startPolling() }, 1500)
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '继续失败')
   } finally {
@@ -407,8 +410,13 @@ function startPolling() {
 }
 
 onMounted(startPolling)
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  if (resumeTimer) clearTimeout(resumeTimer)
+})
 watch(() => domainStore.currentDomain, () => {
+  if (resumeTimer) clearTimeout(resumeTimer)
+  resumeTimer = null
   miningStore.clearCurrentRun()
   startPolling()
 })

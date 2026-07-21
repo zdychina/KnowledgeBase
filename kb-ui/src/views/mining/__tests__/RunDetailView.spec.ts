@@ -108,4 +108,19 @@ describe('RunDetailView polling lifecycle', () => {
     expect(state.store.fetchRunDetail.mock.calls.length).toBe(initial + 1)
     wrapper.unmount()
   })
+
+  it('does not start polling when unmounted during the resume delay', async () => {
+    state.store.currentRun.status = 'awaiting_review'
+    api.resumeRun.mockResolvedValue({ status: 'running' })
+    const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
+    await flushPromises()
+
+    await (wrapper.vm as unknown as { handleResume: () => Promise<void> }).handleResume()
+    const before = state.store.fetchRunDetail.mock.calls.length
+
+    // 在 1.5s 延迟窗口内离开页面：卸载应清除 resume 定时器
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(before)
+  })
 })
