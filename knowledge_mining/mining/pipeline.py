@@ -590,8 +590,9 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
         # retrieval units. On any error the whole block rolls back, leaving no
         # half-written ("snapshot but no segments") state behind.
         with asset_db.transaction():
+            domain = getattr(cfg.domain_profile, "domain_id", None) or "default"
             document_id, snapshot_id, link_id = select_or_create_snapshot(
-                asset_db, raw, doc_profile, batch_id=batch_id,
+                asset_db, raw, doc_profile, batch_id=batch_id, domain=domain,
             )
 
             # --- UPDATE cleanup: remove stale snapshot data (same transaction) ---
