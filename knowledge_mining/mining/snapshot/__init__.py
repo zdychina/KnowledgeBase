@@ -20,11 +20,13 @@ def select_or_create_snapshot(
     profile: DocumentProfile,
     *,
     batch_id: str | None = None,
+    domain: str = "default",
 ) -> tuple[str, str, str]:
     """Select existing or create new snapshot for a document.
 
     Returns (document_id, snapshot_id, link_id).
-    If snapshot already exists (same normalized_content_hash), reuses it.
+    If snapshot already exists (same domain + normalized_content_hash), reuses it.
+    document 与 snapshot 均按 domain 隔离——同一 key/hash 可在不同域各存一份。
     """
     from knowledge_mining.mining.ingestion import get_mime_type
 
@@ -32,7 +34,7 @@ def select_or_create_snapshot(
 
     # 1. Upsert document (identity)
     document_id = uuid.uuid4().hex
-    existing_doc = asset_db.get_document_by_key(profile.document_key)
+    existing_doc = asset_db.get_document_by_key(profile.document_key, domain=domain)
     if existing_doc:
         document_id = existing_doc["id"]
 
@@ -42,11 +44,12 @@ def select_or_create_snapshot(
         document_name=doc.file_name,
         document_type=profile.document_type,
         metadata_json=doc.metadata_json,
+        domain=domain,
     )
 
     # 2. Find or create snapshot
     snapshot_id = uuid.uuid4().hex
-    existing_snap = asset_db.get_snapshot_by_hash(doc.normalized_content_hash)
+    existing_snap = asset_db.get_snapshot_by_hash(doc.normalized_content_hash, domain=domain)
     if existing_snap:
         snapshot_id = existing_snap["id"]
 
@@ -60,6 +63,7 @@ def select_or_create_snapshot(
         tags_json=doc.tags_json,
         parser_profile_json={"file_type": doc.file_type},
         metadata_json=doc.metadata_json,
+        domain=domain,
     )
 
     # 3. Create link (always new for this ingestion)

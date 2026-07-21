@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
 
 CREATE TABLE IF NOT EXISTS asset_documents (
     id             TEXT PRIMARY KEY,
-    document_key   TEXT NOT NULL UNIQUE,
+    -- 按域隔离：同一 document_key 可在不同域各存一份，唯一键是 (domain, document_key)。
+    domain         TEXT NOT NULL DEFAULT 'default',
+    document_key   TEXT NOT NULL,
     document_name  TEXT,
     document_type  TEXT CHECK (
         document_type IS NULL OR
@@ -45,15 +47,21 @@ CREATE TABLE IF NOT EXISTS asset_documents (
         )
     ),
     metadata_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    CONSTRAINT uq_asset_documents_domain_key UNIQUE (domain, document_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_documents_type
     ON asset_documents(document_type);
 
+CREATE INDEX IF NOT EXISTS idx_asset_documents_domain
+    ON asset_documents(domain);
+
 CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     id                      TEXT PRIMARY KEY,
-    normalized_content_hash TEXT NOT NULL UNIQUE,
+    -- 快照按域去重：唯一键是 (domain, normalized_content_hash)。
+    domain                  TEXT NOT NULL DEFAULT 'default',
+    normalized_content_hash TEXT NOT NULL,
     raw_content_hash        TEXT NOT NULL,
     mime_type               TEXT NOT NULL CHECK (
         mime_type IN (
@@ -68,7 +76,8 @@ CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     tags_json               JSONB NOT NULL DEFAULT '[]'::jsonb,
     parser_profile_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
     metadata_json           JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at              TEXT NOT NULL
+    created_at              TEXT NOT NULL,
+    CONSTRAINT uq_asset_document_snapshots_domain_hash UNIQUE (domain, normalized_content_hash)
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_document_snapshots_raw_hash
@@ -342,6 +351,28 @@ CREATE TRIGGER trg_populate_embedding_vector
 
 ALTER TABLE asset_source_batches
     ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+-- asset_documents / asset_document_snapshots 的 domain 化在 d945a00 被遗漏（其余表都做了），
+-- 导致 mining 的 upsert（ON CONFLICT(domain, ...)）在只做过旧迁移的库上报
+-- "no unique or exclusion constraint matching the ON CONFLICT specification"。下面补齐。
+ALTER TABLE asset_documents
+    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+ALTER TABLE asset_document_snapshots
+    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
+
+-- 旧的单列唯一（UNIQUE(document_key) / UNIQUE(normalized_content_hash)）改为按域复合唯一。
+DROP INDEX IF EXISTS asset_documents_document_key_key;
+DROP INDEX IF EXISTS asset_document_snapshots_normalized_content_hash_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_documents_domain_key
+    ON asset_documents(domain, document_key);
+
+CREATE INDEX IF NOT EXISTS idx_asset_documents_domain
+    ON asset_documents(domain);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_document_snapshots_domain_hash
+    ON asset_document_snapshots(domain, normalized_content_hash);
 
 ALTER TABLE asset_builds
     ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';

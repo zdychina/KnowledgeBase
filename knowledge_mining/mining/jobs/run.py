@@ -841,7 +841,7 @@ def _run_pipeline(
         rd_id = uuid.uuid4().hex
         doc_key = f"doc:/{doc.relative_path}"
 
-        existing_doc = asset_db.get_document_by_key(doc_key)
+        existing_doc = asset_db.get_document_by_key(doc_key, domain=profile.domain_id)
         if existing_doc is None:
             action = "NEW"
         else:

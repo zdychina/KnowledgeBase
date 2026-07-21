@@ -260,21 +260,32 @@ class AssetCoreDB(_DB):
         document_name: str | None = None,
         document_type: str | None = None,
         metadata_json: dict | None = None,
+        domain: str = "default",
     ) -> str:
         now = _utcnow()
+        # asset_documents 唯一键是 (domain, document_key)——同一 document_key 可在不同
+        # 域各存一份，冲突键必须带 domain，否则报 no unique constraint matching ON CONFLICT。
         self._execute(
-            """INSERT INTO asset_documents (id, document_key, document_name, document_type, metadata_json, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s)
-               ON CONFLICT(document_key) DO UPDATE SET
+            """INSERT INTO asset_documents (id, domain, document_key, document_name, document_type, metadata_json, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT(domain, document_key) DO UPDATE SET
                    document_name = COALESCE(excluded.document_name, asset_documents.document_name),
                    document_type = COALESCE(excluded.document_type, asset_documents.document_type),
                    metadata_json = excluded.metadata_json""",
-            (document_id, document_key, document_name, document_type, _json_dumps(metadata_json), now),
+            (document_id, domain, document_key, document_name, document_type, _json_dumps(metadata_json), now),
         )
-        row = self._fetchone("SELECT id FROM asset_documents WHERE document_key = %s", (document_key,))
+        row = self._fetchone(
+            "SELECT id FROM asset_documents WHERE domain = %s AND document_key = %s",
+            (domain, document_key),
+        )
         return row["id"] if row else document_id
 
-    def get_document_by_key(self, document_key: str) -> dict[str, Any] | None:
+    def get_document_by_key(self, document_key: str, domain: str | None = None) -> dict[str, Any] | None:
+        if domain is not None:
+            return self._fetchone(
+                "SELECT * FROM asset_documents WHERE domain = %s AND document_key = %s",
+                (domain, document_key),
+            )
         return self._fetchone("SELECT * FROM asset_documents WHERE document_key = %s", (document_key,))
 
     def get_document(self, document_id: str) -> dict[str, Any] | None:
@@ -293,29 +304,39 @@ class AssetCoreDB(_DB):
         tags_json: list | None = None,
         parser_profile_json: dict | None = None,
         metadata_json: dict | None = None,
+        domain: str = "default",
     ) -> str:
         now = _utcnow()
+        # 同 upsert_document：唯一键是 (domain, normalized_content_hash)——快照按域去重，
+        # 冲突键必须带 domain。
         self._execute(
             """INSERT INTO asset_document_snapshots
-                   (id, normalized_content_hash, raw_content_hash, mime_type, title,
+                   (id, domain, normalized_content_hash, raw_content_hash, mime_type, title,
                     scope_json, tags_json, parser_profile_json, metadata_json, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT(normalized_content_hash) DO UPDATE SET
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT(domain, normalized_content_hash) DO UPDATE SET
                    raw_content_hash = excluded.raw_content_hash,
                    title = COALESCE(excluded.title, asset_document_snapshots.title)""",
             (
-                snapshot_id, normalized_content_hash, raw_content_hash, mime_type, title,
+                snapshot_id, domain, normalized_content_hash, raw_content_hash, mime_type, title,
                 _json_dumps(scope_json), _json_dumps(tags_json),
                 _json_dumps(parser_profile_json), _json_dumps(metadata_json), now,
             ),
         )
         row = self._fetchone(
-            "SELECT id FROM asset_document_snapshots WHERE normalized_content_hash = %s",
-            (normalized_content_hash,),
+            "SELECT id FROM asset_document_snapshots WHERE domain = %s AND normalized_content_hash = %s",
+            (domain, normalized_content_hash),
         )
         return row["id"] if row else snapshot_id
 
-    def get_snapshot_by_hash(self, normalized_content_hash: str) -> dict[str, Any] | None:
+    def get_snapshot_by_hash(
+        self, normalized_content_hash: str, domain: str | None = None
+    ) -> dict[str, Any] | None:
+        if domain is not None:
+            return self._fetchone(
+                "SELECT * FROM asset_document_snapshots WHERE domain = %s AND normalized_content_hash = %s",
+                (domain, normalized_content_hash),
+            )
         return self._fetchone(
             "SELECT * FROM asset_document_snapshots WHERE normalized_content_hash = %s",
             (normalized_content_hash,),
