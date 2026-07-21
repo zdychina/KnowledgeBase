@@ -9,10 +9,28 @@
 
     <!-- Meta -->
     <div class="doc-detail__meta" v-if="document">
-      <h3 class="doc-detail__name">{{ document.document_name }}</h3>
-      <div class="doc-detail__tags">
-        <span class="type-badge">{{ document.document_type }}</span>
-        <span class="doc-detail__date">创建于 {{ formatTime(document.created_at) }}</span>
+      <div class="doc-detail__heading">
+        <div>
+          <h3 class="doc-detail__name">{{ document.document_name }}</h3>
+          <div class="doc-detail__tags">
+            <span class="type-badge">{{ document.document_type }}</span>
+            <span class="doc-detail__date">创建于 {{ formatTime(document.created_at) }}</span>
+          </div>
+        </div>
+        <div class="doc-detail__actions">
+          <el-button
+            data-testid="download-document"
+            :loading="downloading"
+            @click="downloadDocument"
+          >下载</el-button>
+          <el-button
+            type="danger"
+            plain
+            data-testid="remove-document"
+            :loading="removing"
+            @click="removeDocument"
+          >下架</el-button>
+        </div>
       </div>
     </div>
 
@@ -149,8 +167,12 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
 import { ArrowLeft, WarningFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { useDomainStore } from '@/stores/domain'
 import { useMiningApi } from '@/api/mining'
+import { apiErrorDetail } from '@/api/proxyClient'
+import { filenameFromDisposition, saveBlob } from '@/utils/download'
 import type { KnowledgeDocument, KnowledgeSegment, KnowledgeUnit, KnowledgeRelation } from '@/types'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { marked } from 'marked'
@@ -161,11 +183,22 @@ const PAGE_SIZE = 50
 const props = defineProps<{ docId: string }>()
 const domainStore = useDomainStore()
 const miningApi = useMiningApi()
+const router = useRouter()
 
 const loading = ref(false)
+const downloading = ref(false)
+const removing = ref(false)
 const document = ref<KnowledgeDocument | null>(null)
 const activeTab = ref('segments')
 const expandedKeys = ref(new Set<string>())
+
+const WITHDRAWAL_NOTICE = '仅从当前领域的知识资产和检索结果中下架，原始文件与历史记录会保留。'
+// 领域/文档切换时 bump，配合各加载与下架操作的竞态守卫，丢弃过期结果。
+let documentRequestToken = 0
+let removalRequestToken = 0
+let segmentRequestToken = 0
+let unitRequestToken = 0
+let relationRequestToken = 0
 
 // Segments
 const segments = ref<KnowledgeSegment[]>([])
@@ -221,54 +254,69 @@ function formatTime(t: string) {
   return new Date(t).toLocaleString('zh-CN')
 }
 
-async function loadSegments() {
+async function loadSegments(domain = domainStore.currentDomain) {
+  const requestToken = ++segmentRequestToken
   segLoading.value = true
   try {
     const res = await miningApi.getDocumentSegments(props.docId, {
       limit: PAGE_SIZE,
       offset: (segPage.value - 1) * PAGE_SIZE,
     })
-    segments.value = res.items
-    segTotal.value = res.total
+    if (requestToken === segmentRequestToken && domain === domainStore.currentDomain) {
+      segments.value = res.items
+      segTotal.value = res.total
+    }
   } catch {
-    segments.value = []
-    segTotal.value = 0
+    if (requestToken === segmentRequestToken && domain === domainStore.currentDomain) {
+      segments.value = []
+      segTotal.value = 0
+    }
   } finally {
-    segLoading.value = false
+    if (requestToken === segmentRequestToken) segLoading.value = false
   }
 }
 
-async function loadUnits() {
+async function loadUnits(domain = domainStore.currentDomain) {
+  const requestToken = ++unitRequestToken
   unitLoading.value = true
   try {
     const res = await miningApi.getDocumentUnits(props.docId, {
       limit: PAGE_SIZE,
       offset: (unitPage.value - 1) * PAGE_SIZE,
     })
-    units.value = res.items
-    unitTotal.value = res.total
+    if (requestToken === unitRequestToken && domain === domainStore.currentDomain) {
+      units.value = res.items
+      unitTotal.value = res.total
+    }
   } catch {
-    units.value = []
-    unitTotal.value = 0
+    if (requestToken === unitRequestToken && domain === domainStore.currentDomain) {
+      units.value = []
+      unitTotal.value = 0
+    }
   } finally {
-    unitLoading.value = false
+    if (requestToken === unitRequestToken) unitLoading.value = false
   }
 }
 
-async function loadRelations() {
+async function loadRelations(domain = domainStore.currentDomain) {
+  const requestToken = ++relationRequestToken
   relLoading.value = true
   try {
     const res = await miningApi.getDocumentRelations(props.docId, {
       limit: PAGE_SIZE,
       offset: (relPage.value - 1) * PAGE_SIZE,
     })
-    relations.value = res.items
-    relTotal.value = res.total
+    if (requestToken === relationRequestToken && domain === domainStore.currentDomain) {
+      relations.value = res.items
+      relTotal.value = res.total
+    }
   } catch {
-    relations.value = []
-    relTotal.value = 0
+    if (requestToken === relationRequestToken && domain === domainStore.currentDomain) {
+      relations.value = []
+      relTotal.value = 0
+    }
   } finally {
-    relLoading.value = false
+    if (requestToken === relationRequestToken) relLoading.value = false
   }
 }
 
@@ -305,6 +353,70 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;')
 }
 
+function isConfirmCancel(error: unknown) {
+  return error === 'cancel' || error === 'close'
+}
+
+async function downloadDocument(): Promise<void> {
+  const currentDocument = document.value
+  if (!currentDocument) return
+  const requestedDomain = domainStore.currentDomain
+  downloading.value = true
+  try {
+    const result = await miningApi.downloadDocument(currentDocument.id, requestedDomain)
+    const filename = filenameFromDisposition(result.contentDisposition, currentDocument.document_name)
+    saveBlob(result.blob, filename)
+  } catch (error) {
+    ElMessage.error(await apiErrorDetail(error))
+  } finally {
+    downloading.value = false
+  }
+}
+
+async function removeDocument(): Promise<void> {
+  const currentDocument = document.value
+  if (!currentDocument) return
+  const requestedDomain = domainStore.currentDomain
+  const requestedDocumentToken = documentRequestToken
+  try {
+    await ElMessageBox.confirm(
+      `${WITHDRAWAL_NOTICE}\n确认下架文档“${currentDocument.document_name}”吗？`,
+      '确认下架文档',
+      { confirmButtonText: '确认下架', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch (error) {
+    if (!isConfirmCancel(error)) ElMessage.error(await apiErrorDetail(error))
+    return
+  }
+  if (
+    requestedDomain !== domainStore.currentDomain ||
+    requestedDocumentToken !== documentRequestToken
+  ) return
+
+  const removalToken = ++removalRequestToken
+  removing.value = true
+  try {
+    await miningApi.removeDocument(currentDocument.id, requestedDomain)
+    if (
+      requestedDomain !== domainStore.currentDomain ||
+      requestedDocumentToken !== documentRequestToken ||
+      removalToken !== removalRequestToken
+    ) return
+    ElMessage.success('文档已从当前领域下架')
+    await router.push({ name: 'knowledge' })
+  } catch (error) {
+    if (
+      requestedDomain === domainStore.currentDomain &&
+      requestedDocumentToken === documentRequestToken &&
+      removalToken === removalRequestToken
+    ) {
+      ElMessage.error(await apiErrorDetail(error))
+    }
+  } finally {
+    if (removalToken === removalRequestToken) removing.value = false
+  }
+}
+
 function onTabChange(tab: string | number) {
   if (tab === 'segments' && segments.value.length === 0) loadSegments()
   else if (tab === 'units' && units.value.length === 0) loadUnits()
@@ -313,9 +425,26 @@ function onTabChange(tab: string | number) {
 }
 
 async function loadData() {
+  const requestedDomain = domainStore.currentDomain
+  const requestToken = ++documentRequestToken
+  ++removalRequestToken
+  ++segmentRequestToken
+  ++unitRequestToken
+  ++relationRequestToken
   loading.value = true
+  segLoading.value = false
+  unitLoading.value = false
+  relLoading.value = false
+  removing.value = false
+  document.value = null
+  segments.value = []
+  units.value = []
+  relations.value = []
+  rawHtml.value = ''
+  rawError.value = ''
   try {
     const doc = await miningApi.getDocument(props.docId)
+    if (requestToken !== documentRequestToken || requestedDomain !== domainStore.currentDomain) return
     document.value = doc
     // Load the active tab data
     segPage.value = 1
@@ -324,21 +453,25 @@ async function loadData() {
     segments.value = []
     units.value = []
     relations.value = []
-    await loadSegments()
+    await loadSegments(requestedDomain)
+    if (requestToken !== documentRequestToken || requestedDomain !== domainStore.currentDomain) return
     // Preload totals for other tabs (lightweight: just first page)
-    loadUnits()
-    loadRelations()
-  } catch {
-    document.value = null
+    loadUnits(requestedDomain)
+    loadRelations(requestedDomain)
+  } catch (error) {
+    if (requestToken === documentRequestToken && requestedDomain === domainStore.currentDomain) {
+      document.value = null
+      ElMessage.error(await apiErrorDetail(error))
+    }
   } finally {
-    loading.value = false
+    if (requestToken === documentRequestToken) loading.value = false
   }
 }
 
 // Watch page changes
-watch(segPage, loadSegments)
-watch(unitPage, loadUnits)
-watch(relPage, loadRelations)
+watch(segPage, () => loadSegments())
+watch(unitPage, () => loadUnits())
+watch(relPage, () => loadRelations())
 
 onMounted(loadData)
 watch(() => domainStore.currentDomain, loadData)
@@ -358,6 +491,19 @@ watch(() => domainStore.currentDomain, loadData)
   border-radius: var(--kb-radius);
   padding: 20px 22px;
   border: 1px solid var(--kb-border-light);
+}
+
+.doc-detail__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.doc-detail__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .doc-detail__name {

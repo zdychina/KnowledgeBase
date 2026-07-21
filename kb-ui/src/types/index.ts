@@ -89,6 +89,8 @@ export interface KnowledgeDocument {
   document_type: string
   metadata_json?: Record<string, unknown>
   created_at: string
+  source_batch_id?: string | null
+  batch_code?: string | null
 }
 
 export interface KnowledgeSegment {
@@ -442,4 +444,25 @@ export interface PaginatedResponse<T> {
   limit: number
   offset: number
   items: T[]
+}
+
+// ─── 文档生命周期（下载 / 删除 / 批次）───
+
+export interface MiningBatchSummary {
+  source_batch_id: string | null
+  batch_code: string | null
+  mining_run_id: string | null
+  active_document_count: number
+  created_at: string | null
+  deletable: boolean
+  unclassified: boolean
+}
+
+export interface LifecycleRemovalResult {
+  domain: string
+  removed_count: number
+  build_id: string
+  release_id: string
+  document_id?: string
+  source_batch_id?: string
 }
