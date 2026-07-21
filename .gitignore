@@ -6,6 +6,8 @@
 # main_control_service/config/（该目录已由下方的 !main_control_service/** 覆盖）。
 !agent_serving/
 !agent_serving/**
+!config_library/
+!config_library/**
 !databases/
 !databases/**
 !data/
