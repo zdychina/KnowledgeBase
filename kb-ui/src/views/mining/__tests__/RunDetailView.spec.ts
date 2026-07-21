@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
       committed_count: 0, failed_count: 0, skipped_count: 0, new_count: 0, updated_count: 0 },
     stages: [], documents: [], documentsTotal: 0, documentsPage: 1,
     progress: { total: 0, completed: 0, failed: 0, skipped: 0, processing: 0,
-      progress_percent: 0, current_stage: null, run_stage: 'ingest', stage_summary: {} },
+      progress_percent: 0, current_stage: null, stage_summary: {} },
     error: null,
     fetchRunDetail: vi.fn(async () => undefined),
     fetchProgress: vi.fn(async () => undefined),
@@ -27,68 +27,85 @@ vi.mock('@/api/mining', () => ({ useMiningApi: () => api }))
 
 import RunDetailView from '../RunDetailView.vue'
 
-describe('RunDetailView queued and ingest states', () => {
+// v6 的轮询模型：挂载即 pollOnce 一次；仅当 run 处于 running 时才 arm 3 秒定时轮询；
+// 状态转终态或组件卸载时清除定时器。切域与 resume 通过 clearCurrentRun / startPolling 处理。
+describe('RunDetailView polling lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     state.store.fetchRunDetail.mockClear()
     state.store.fetchProgress.mockClear()
     state.store.currentRun.status = 'queued'
-    state.store.currentRun.current_stage = 'queued'
     api.resumeRun.mockReset()
   })
   afterEach(() => vi.useRealTimers())
 
-  it('keeps polling a queued run and offers cancellation', async () => {
+  it('arms 3-second polling for a running run', async () => {
+    state.store.currentRun.status = 'running'
     const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
     await flushPromises()
-    const initialCalls = state.store.fetchRunDetail.mock.calls.length
+    const initial = state.store.fetchRunDetail.mock.calls.length // 1，挂载 pollOnce
 
     await vi.advanceTimersByTimeAsync(3000)
-    expect(state.store.fetchRunDetail.mock.calls.length).toBe(initialCalls + 1)
-    expect(wrapper.find('[data-testid="cancel-run"]').exists()).toBe(true)
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(initial + 1)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(initial + 2)
     wrapper.unmount()
   })
 
-  it('shows indeterminate ingest progress when the document total is unknown', async () => {
-    state.store.currentRun.status = 'running'
-    state.store.currentRun.current_stage = 'ingest'
+  it('does not arm interval polling for a non-running run', async () => {
+    state.store.currentRun.status = 'queued'
     const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
     await flushPromises()
+    const initial = state.store.fetchRunDetail.mock.calls.length // 1
 
-    expect(wrapper.find('[data-testid="ingest-indeterminate"]').exists()).toBe(true)
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(initial)
     wrapper.unmount()
   })
 
-  it('does not restart polling after unmounting during delayed resume', async () => {
+  it('stops polling once the run reaches a terminal state', async () => {
+    state.store.currentRun.status = 'running'
+    const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
+    await flushPromises()
+    const initial = state.store.fetchRunDetail.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(3000) // 轮询一拍
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(initial + 1)
+
+    state.store.currentRun.status = 'completed'
+    await vi.advanceTimersByTimeAsync(3000) // 这一拍检测到终态并清除定时器
+    const settled = state.store.fetchRunDetail.mock.calls.length
+
+    await vi.advanceTimersByTimeAsync(9000) // 不再有新的拉取
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(settled)
+    wrapper.unmount()
+  })
+
+  it('clears polling on unmount', async () => {
+    state.store.currentRun.status = 'running'
+    const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(3000)
+    const before = state.store.fetchRunDetail.mock.calls.length
+
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(9000)
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(before)
+  })
+
+  it('resumes an awaiting_review run and starts polling after a delay', async () => {
     state.store.currentRun.status = 'awaiting_review'
     api.resumeRun.mockResolvedValue({ status: 'running' })
     const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
     await flushPromises()
+    const initial = state.store.fetchRunDetail.mock.calls.length // 1（挂载 pollOnce，非 running 不 arm 定时器）
+
     await (wrapper.vm as unknown as { handleResume: () => Promise<void> }).handleResume()
-    const callsBeforeUnmount = state.store.fetchRunDetail.mock.calls.length
+    expect(api.resumeRun).toHaveBeenCalledWith('r1', 'odn')
 
+    // handleResume 内部 setTimeout(startPolling, 1500)
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(state.store.fetchRunDetail.mock.calls.length).toBe(initial + 1)
     wrapper.unmount()
-    await vi.advanceTimersByTimeAsync(2000)
-
-    expect(state.store.fetchRunDetail.mock.calls.length).toBe(callsBeforeUnmount)
-  })
-
-  it('does not schedule polling when resume resolves after unmount', async () => {
-    state.store.currentRun.status = 'awaiting_review'
-    let resolveResume!: (value: { status: string }) => void
-    api.resumeRun.mockImplementation(() => new Promise(resolve => { resolveResume = resolve }))
-    const wrapper = shallowMount(RunDetailView, { props: { runId: 'r1' } })
-    await flushPromises()
-
-    const resumePromise = (wrapper.vm as unknown as { handleResume: () => Promise<void> }).handleResume()
-    await flushPromises()
-    const callsBeforeUnmount = state.store.fetchRunDetail.mock.calls.length
-    wrapper.unmount()
-
-    resolveResume({ status: 'running' })
-    await resumePromise
-    await vi.advanceTimersByTimeAsync(2000)
-
-    expect(state.store.fetchRunDetail.mock.calls.length).toBe(callsBeforeUnmount)
   })
 })

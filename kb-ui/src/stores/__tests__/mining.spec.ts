@@ -14,44 +14,41 @@ vi.mock('@/api/mining', () => ({ useMiningApi: () => api }))
 import { useDomainStore } from '@/stores/domain'
 import { useMiningStore } from '@/stores/mining'
 
-describe('mining store queued submission', () => {
+describe('mining store run submission', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
     vi.clearAllMocks()
   })
 
-  it('inserts the accepted queued run immediately and returns its id', async () => {
+  // v6 的 createRun 不做乐观插入，而是提交成功后重新拉取整个列表。
+  it('creates a run via the API then refetches the list', async () => {
     const domain = useDomainStore()
     domain.currentDomain = 'odn'
-    api.createRun.mockResolvedValue({
-      run_id: 'run-new', status: 'queued', current_stage: 'queued',
-      started_at: '2026-07-20T00:00:00Z',
-    })
+    api.createRun.mockResolvedValue({ run_id: 'run-new', status: 'queued', current_stage: 'queued' })
+    api.getRuns.mockResolvedValue([
+      { id: 'run-new', status: 'queued', current_stage: 'queued', domain: 'odn' },
+    ])
     const store = useMiningStore()
 
-    const run = await store.createRun({ domain: 'odn', input_path: 'C:/incoming' })
+    await store.createRun({ domain: 'odn', input_path: 'C:/incoming' })
 
-    expect(run.id).toBe('run-new')
-    expect(store.runs[0]).toMatchObject({
-      id: 'run-new', status: 'queued', current_stage: 'queued', domain: 'odn',
-    })
-    expect(api.getRuns).not.toHaveBeenCalled()
+    expect(api.createRun).toHaveBeenCalledWith({ domain: 'odn', input_path: 'C:/incoming' })
+    expect(api.getRuns).toHaveBeenCalledWith('odn')
+    expect(store.runs[0].id).toBe('run-new')
   })
 
-  it('drops a create response after the selected domain changes', async () => {
-    let resolveCreate!: (value: unknown) => void
-    api.createRun.mockReturnValue(new Promise(resolve => { resolveCreate = resolve }))
+  it('surfaces and rethrows a create failure without refetching', async () => {
     const domain = useDomainStore()
     domain.currentDomain = 'odn'
+    api.createRun.mockRejectedValue(new Error('backend down'))
     const store = useMiningStore()
-    const pending = store.createRun({ domain: 'odn', input_path: 'C:/incoming' })
 
-    domain.currentDomain = 'civil_engineering'
-    resolveCreate({ run_id: 'stale', status: 'queued', current_stage: 'queued', started_at: '' })
-    await pending
-
-    expect(store.runs).toEqual([])
+    await expect(store.createRun({ domain: 'odn', input_path: 'C:/incoming' }))
+      .rejects.toThrow('backend down')
+    expect(store.error).toBe('backend down')
+    // createRun 先失败，fetchRuns 不会被触及
+    expect(api.getRuns).not.toHaveBeenCalled()
   })
 
   it('silent refresh preserves rows and exposes an error', async () => {

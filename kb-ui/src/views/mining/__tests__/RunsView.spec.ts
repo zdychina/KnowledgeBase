@@ -19,7 +19,7 @@ vi.mock('@/api/mining', () => ({ useMiningApi: () => ({ uploadFiles: vi.fn() }) 
 
 import RunsView from '../RunsView.vue'
 
-describe('RunsView active run polling', () => {
+describe('RunsView run loading', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     state.store.fetchRuns.mockClear()
@@ -27,23 +27,19 @@ describe('RunsView active run polling', () => {
   })
   afterEach(() => vi.useRealTimers())
 
-  it('polls queued runs every three seconds and stops after terminal state', async () => {
+  // v6 的 RunsView 仅在挂载与切域时拉取，不做定时轮询。
+  it('fetches runs once on mount and does not poll on a timer', async () => {
     const wrapper = shallowMount(RunsView, {
       global: { stubs: { ElTableColumn: true } },
     })
     await flushPromises()
-    expect(state.store.fetchRuns).toHaveBeenCalled()
-    const initialCalls = state.store.fetchRuns.mock.calls.length
+    expect(state.store.fetchRuns).toHaveBeenCalledTimes(1)
 
-    await vi.advanceTimersByTimeAsync(3000)
-    expect(state.store.fetchRuns.mock.calls.length).toBe(initialCalls + 1)
-    expect(state.store.fetchRuns).toHaveBeenLastCalledWith({ silent: true })
+    // 即使存在运行中的作业，也不应随时间自动再次拉取
+    state.store.runs[0].status = 'running'
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(state.store.fetchRuns).toHaveBeenCalledTimes(1)
 
-    state.store.runs[0].status = 'completed'
-    await vi.advanceTimersByTimeAsync(6000)
-    expect(state.store.fetchRuns.mock.calls.length).toBe(initialCalls + 1)
     wrapper.unmount()
-    await vi.advanceTimersByTimeAsync(6000)
-    expect(state.store.fetchRuns.mock.calls.length).toBe(initialCalls + 1)
   })
 })
