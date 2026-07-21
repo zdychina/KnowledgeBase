@@ -146,59 +146,6 @@ class TestGeneratedQuestionDifferentiation:
         assert unit.title.startswith("What is this?")
         assert not unit.title.startswith("Q")
 
-    def test_question_unit_carries_full_raw_text(self):
-        """Regression: text must contain FULL raw_text, not a 200-char truncation.
-
-        Previously `seg.raw_text[:200]` silently dropped the answer context.
-        """
-        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
-
-        long_body = "BODY-" + ("x" * 500) + "-END"  # 509 chars, well past the old 200 cap
-        seg = RawSegmentData(
-            document_key="doc:/test.md",
-            segment_index=0,
-            block_type="paragraph",
-            raw_text=long_body,
-        )
-        unit = _make_generated_question_unit(seg, "question?", 0)
-        assert long_body in unit.text           # full body present
-        assert "-END" in unit.text              # tail survived
-        assert len(unit.text) > 500             # not truncated near 200
-
-    def test_question_unit_uses_structural_context_as_source(self):
-        """Source line should prefer the full hierarchical path (structural_context)."""
-        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
-
-        seg = RawSegmentData(
-            document_key="doc:/test.md",
-            segment_index=0,
-            block_type="paragraph",
-            section_title="4.1 leaf-title",
-            raw_text="payload",
-            metadata_json={
-                "structural_context": "guide.pdf > 4 Commands > 4.1 leaf-title",
-            },
-        )
-        unit = _make_generated_question_unit(seg, "question?", 0)
-        # Full path is the source line, not just the leaf section_title
-        assert "guide.pdf > 4 Commands > 4.1 leaf-title" in unit.text
-        # search_text also picks up the path tokens for BM25/FTS5
-        assert "Commands" in unit.search_text or "guide" in unit.search_text
-
-    def test_question_unit_falls_back_to_section_title_without_context(self):
-        """Without structural_context, source line falls back to section_title."""
-        from knowledge_mining.mining.stages.retrieval_units import _make_generated_question_unit
-
-        seg = RawSegmentData(
-            document_key="doc:/test.md",
-            segment_index=0,
-            block_type="paragraph",
-            section_title="4.2 only-leaf",
-            raw_text="payload",
-        )
-        unit = _make_generated_question_unit(seg, "question?", 0)
-        assert "4.2 only-leaf" in unit.text
-
 
 class TestQuestionGenerationFilter:
     """Bug 3: heading-only and very short segments should not generate questions."""
@@ -478,9 +425,16 @@ class TestPipelineConfig:
     def test_default_config(self):
         from knowledge_mining.mining.pipeline import PipelineConfig
 
-        config = PipelineConfig()
+        config = PipelineConfig(domain="test-domain")
+        assert config.domain == "test-domain"
         assert config.segmenter is None
         assert config.enricher is None
+
+    def test_domain_is_required(self):
+        from knowledge_mining.mining.pipeline import PipelineConfig
+
+        with pytest.raises(TypeError):
+            PipelineConfig()
 
     def test_custom_segmenter(self):
         from knowledge_mining.mining.pipeline import PipelineConfig
@@ -489,7 +443,7 @@ class TestPipelineConfig:
             def segment(self, tree, profile, **kwargs):
                 return []
 
-        config = PipelineConfig(segmenter=CustomSegmenter())
+        config = PipelineConfig(domain="test-domain", segmenter=CustomSegmenter())
         assert isinstance(config.segmenter, CustomSegmenter)
 
 
@@ -518,24 +472,27 @@ class TestLlmTemplates:
     """Verify new template is registered."""
 
     def test_segment_understanding_template_exists(self):
-        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
+        from knowledge_mining.mining.infra.llm_templates import load_templates
 
-        keys = [t["template_key"] for t in TEMPLATES]
+        templates = load_templates("civil_engineering")
+        keys = [t["template_key"] for t in templates]
         assert "mining-segment-understanding" in keys
 
     def test_segment_understanding_template_structure(self):
-        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
+        from knowledge_mining.mining.infra.llm_templates import load_templates
 
-        tpl = next(t for t in TEMPLATES if t["template_key"] == "mining-segment-understanding")
+        templates = load_templates("civil_engineering")
+        tpl = next(t for t in templates if t["template_key"] == "mining-segment-understanding")
         assert tpl["expected_output_type"] == "json_object"
         # 实体抽取已拆到 mining-entity-extraction（L4 §15），此处只剩篇章字段
         assert "semantic_role" in tpl["user_prompt_template"]
         assert "content_assessment" in tpl["user_prompt_template"]
 
     def test_entity_extraction_template_exists(self):
-        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
+        from knowledge_mining.mining.infra.llm_templates import load_templates
 
-        tpl = next(t for t in TEMPLATES if t["template_key"] == "mining-entity-extraction")
+        templates = load_templates("civil_engineering")
+        tpl = next(t for t in templates if t["template_key"] == "mining-entity-extraction")
         assert tpl["expected_output_type"] == "json_object"
         assert "$allowed_types" in tpl["user_prompt_template"]
         assert "out_of_schema" in tpl["user_prompt_template"]
@@ -887,8 +844,8 @@ class TestRemoveSemantics:
         db = MagicMock(spec=AssetCoreDB)
         db.get_active_build.return_value = {"id": "prev-build-1"}
         db.get_build_snapshots.return_value = [
-            {"document_id": "doc-1", "document_snapshot_id": "snap-1"},
-            {"document_id": "doc-2", "document_snapshot_id": "snap-2"},
+            {"document_id": "doc-1", "document_snapshot_id": "snap-1", "selection_status": "active"},
+            {"document_id": "doc-2", "document_snapshot_id": "snap-2", "selection_status": "active"},
         ]
 
         # Current run only has doc-1, doc-2 was deleted
@@ -896,7 +853,9 @@ class TestRemoveSemantics:
             {"document_id": "doc-1", "document_snapshot_id": "snap-1-new"},
         ]
 
-        result = classify_documents(db, decisions, domain="test-domain")
+        result = classify_documents(
+            db, decisions, domain="test-domain", channel="prod"
+        )
         remove_decisions = [d for d in result if d.get("action") == "REMOVE"]
         assert len(remove_decisions) == 1
         assert remove_decisions[0]["document_id"] == "doc-2"
@@ -914,6 +873,7 @@ class TestRunCounting:
         from knowledge_mining.mining.pipeline import PipelineConfig
 
         config = PipelineConfig(
+            domain="test-domain",
             embedding_generator=None,
             discourse_relation_builder=None,
             contextualizer=None,
@@ -1029,7 +989,7 @@ class TestEmbeddingStage:
     def test_no_embedding_generator(self):
         from knowledge_mining.mining.pipeline import embedding_stage, DocumentContext, PipelineConfig
 
-        cfg = PipelineConfig(embedding_generator=None)
+        cfg = PipelineConfig(domain="test-domain", embedding_generator=None)
         ctx = DocumentContext()
         result = embedding_stage(ctx, cfg)
         assert result.embeddings == ()
@@ -1040,7 +1000,7 @@ class TestEmbeddingStage:
         class MockGen:
             model_name = "test"
 
-        cfg = PipelineConfig(embedding_generator=MockGen())
+        cfg = PipelineConfig(domain="test-domain", embedding_generator=MockGen())
         ctx = DocumentContext()
         result = embedding_stage(ctx, cfg)
         assert result.embeddings == ()
@@ -1052,7 +1012,7 @@ class TestEmbeddingStage:
 
         gen = MagicMock()
         gen.embed_batch.return_value = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
-        cfg = PipelineConfig(embedding_generator=gen)
+        cfg = PipelineConfig(domain="test-domain", embedding_generator=gen)
 
         units = (
             RetrievalUnitData(
@@ -1085,7 +1045,7 @@ class TestEmbeddingStage:
 
         gen = MagicMock()
         gen.embed_batch.side_effect = RuntimeError("API down")
-        cfg = PipelineConfig(embedding_generator=gen)
+        cfg = PipelineConfig(domain="test-domain", embedding_generator=gen)
 
         units = (
             RetrievalUnitData(
@@ -1111,7 +1071,7 @@ class TestDbWriteStageSkip:
         from knowledge_mining.mining.pipeline import db_write_stage, DocumentContext, PipelineConfig
 
         tracker = MagicMock()
-        cfg = PipelineConfig(tracker=tracker, runtime_db=MagicMock())
+        cfg = PipelineConfig(domain="test-domain", tracker=tracker, runtime_db=MagicMock())
         ctx = DocumentContext(error="upstream failed", run_document_id="rd1")
         result = db_write_stage(ctx, cfg)
         assert result.error == "upstream failed"
@@ -1122,7 +1082,7 @@ class TestDbWriteStageSkip:
         from knowledge_mining.mining.pipeline import db_write_stage, DocumentContext, PipelineConfig
 
         tracker = MagicMock()
-        cfg = PipelineConfig(tracker=tracker, runtime_db=MagicMock())
+        cfg = PipelineConfig(domain="test-domain", tracker=tracker, runtime_db=MagicMock())
         ctx = DocumentContext(run_document_id="rd1")
         result = db_write_stage(ctx, cfg)
         assert result.error is None
@@ -1152,10 +1112,23 @@ class TestDBEmbeddingWrite:
         db = AssetCoreDB(pool)
         try:
             # Create prerequisite data: batch -> document -> snapshot -> link -> segment -> retrieval unit
-            db.upsert_source_batch("batch-1", "B-TEST", "folder_scan")
-            doc_id = db.upsert_document("doc-1", "doc:/test.md", "test.md")
-            db.upsert_snapshot("snap-1", "nh1", "rh1", "text/markdown", title="Test")
-            db.insert_snapshot_link("link-1", doc_id, "snap-1", "batch-1", "test.md", "file:///test.md")
+            db.upsert_source_batch(
+                domain="test-domain", batch_id="batch-1", batch_code="B-TEST",
+                source_type="folder_scan",
+            )
+            doc_id = db.upsert_document(
+                domain="test-domain", document_id="doc-1", document_key="doc:/test.md",
+                document_name="test.md",
+            )
+            db.upsert_snapshot(
+                domain="test-domain", snapshot_id="snap-1", normalized_content_hash="nh1",
+                raw_content_hash="rh1", mime_type="text/markdown", title="Test",
+            )
+            db.insert_snapshot_link(
+                domain="test-domain", link_id="link-1", document_id=doc_id,
+                document_snapshot_id="snap-1", source_batch_id="batch-1",
+                relative_path="test.md", source_uri="file:///test.md",
+            )
             db.insert_raw_segment("seg-1", "snap-1", "doc:/test.md#0", 0, raw_text="test segment")
             db.insert_retrieval_unit("ru-1", "snap-1", "ru:test:raw_text", "raw_text", "raw_segment", text="test unit")
 

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from knowledge_mining.mining.jobs.run import _rebuild_from_run_documents
+
 
 @pytest.fixture
 def tmp_dir():
@@ -94,3 +96,76 @@ class TestIncrementalRun:
         result2 = run(str(input_dir))
         assert result2["updated_count"] == 1
         assert result2["new_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "metadata_json",
+    [
+        {"file_size": 10, "source_batch_id": "batch-current", "lifecycle_action": "RESTORE"},
+        '{"file_size":10,"source_batch_id":"batch-current","lifecycle_action":"RESTORE"}',
+    ],
+    ids=["dict-metadata", "json-string-metadata"],
+)
+def test_resume_rebuilds_restore_decision_from_metadata(metadata_json):
+    class RuntimeDB:
+        def get_run_documents(self, run_id):
+            assert run_id == "run-restore"
+            return [{
+                "status": "committed",
+                "action": "SKIP",
+                "document_id": "doc-1",
+                "document_snapshot_id": "snap-h1",
+                "document_key": "doc:/same.md",
+                "metadata_json": metadata_json,
+            }]
+
+    decisions, counts = _rebuild_from_run_documents(RuntimeDB(), "run-restore")
+
+    assert counts == {
+        "committed_count": 0,
+        "new_count": 0,
+        "updated_count": 0,
+        "failed_count": 0,
+        "skipped_count": 1,
+    }
+    assert decisions == [{
+        "document_id": "doc-1",
+        "document_snapshot_id": "snap-h1",
+        "document_key": "doc:/same.md",
+        "lifecycle_action": "RESTORE",
+        "source_batch_id": "batch-current",
+    }]
+
+
+@pytest.mark.parametrize(
+    "metadata_json",
+    [
+        {"file_size": 10, "source_batch_id": "batch-active"},
+        '{"file_size":10,"source_batch_id":"batch-active"}',
+    ],
+    ids=["dict-metadata", "json-string-metadata"],
+)
+def test_resume_rebuilds_plain_skip_with_active_source_batch(metadata_json):
+    class RuntimeDB:
+        def get_run_documents(self, run_id):
+            assert run_id == "run-skip"
+            return [{
+                "status": "committed",
+                "action": "SKIP",
+                "document_id": "doc-1",
+                "document_snapshot_id": "snap-h1",
+                "document_key": "doc:/same.md",
+                "metadata_json": metadata_json,
+            }]
+
+    decisions, counts = _rebuild_from_run_documents(RuntimeDB(), "run-skip")
+
+    assert counts["committed_count"] == 0
+    assert counts["skipped_count"] == 1
+    assert decisions == [{
+        "document_id": "doc-1",
+        "document_snapshot_id": "snap-h1",
+        "document_key": "doc:/same.md",
+        "lifecycle_action": "SKIP",
+        "source_batch_id": "batch-active",
+    }]

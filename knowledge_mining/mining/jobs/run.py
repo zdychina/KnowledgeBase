@@ -12,13 +12,43 @@ Global stages:
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def decide_document_lifecycle_action(
+    state: dict[str, Any] | None,
+    *,
+    normalized_content_hash: str,
+) -> str:
+    """Pure NEW/SKIP/RESTORE/UPDATE decision for one domain document."""
+    if state is None or not state.get("document_id"):
+        return "NEW"
+
+    active_snapshot_id = state.get("active_snapshot_id")
+    if (
+        active_snapshot_id
+        and state.get("active_snapshot_hash") == normalized_content_hash
+        and bool(state.get("active_snapshot_complete"))
+    ):
+        return "SKIP"
+
+    if (
+        not active_snapshot_id
+        and state.get("historical_snapshot_id")
+        and state.get("historical_snapshot_hash") == normalized_content_hash
+        and bool(state.get("historical_snapshot_complete"))
+    ):
+        return "RESTORE"
+
+    return "UPDATE"
 
 
 class MiningCancelled(Exception):
@@ -41,21 +71,13 @@ def _check_cancelled(runtime_db: "MiningRuntimeDB", run_id: str) -> None:
         raise MiningCancelled()
 
 
-def _is_cancelled(runtime_db: "MiningRuntimeDB", run_id: str) -> bool:
-    """Non-raising cancel check for StreamingPipeline's per-item callback.
-
-    Returns True if mining_runs.status == 'cancelled' so the pipeline stops
-    submitting further documents. In-flight items continue to completion.
-    """
-    row = runtime_db._fetchone(
-        "SELECT status FROM mining_runs WHERE id = %s", (run_id,)
-    )
-    return bool(row and row["status"] == "cancelled")
-
-
 from knowledge_mining.mining.infra.db import AssetCoreDB, MiningRuntimeDB
-from knowledge_mining.mining.infra.pg_config import MiningDbConfig, conninfo_from_env
-from knowledge_mining.mining.infra.pg_schema import ensure_schema
+from knowledge_mining.mining.infra.domain_db import (
+    ResolvedDomainDatabase,
+    ensure_domain_database_schema,
+    resolve_domain_database,
+)
+from knowledge_mining.mining.infra.pg_config import MiningDbConfig
 from knowledge_mining.mining.contracts.models import (
     BatchParams,
     DocumentProfile,
@@ -78,46 +100,20 @@ from knowledge_mining.mining.pipeline import (
 
 
 def _create_dbs(
-    cfg: MiningDbConfig | None = None,
-    conninfo: str | None = None,
+    resolved: ResolvedDomainDatabase,
 ) -> tuple[AssetCoreDB, MiningRuntimeDB]:
-    """Create and open PG-backed database adapters.
-
-    Args:
-        cfg: MiningDbConfig for the legacy PG_HOST/PG_PORT path.
-        conninfo: Explicit psycopg conninfo string (from per-domain URL).
-                  If provided, cfg is ignored for connection but still used for pool sizing.
-    """
-    if conninfo:
-        # Per-domain connection from registry URL
-        pool_min, pool_max = 2, 10
-        if cfg:
-            pool_min, pool_max = cfg.pg_pool_min, cfg.pg_pool_max
-        from psycopg_pool import ConnectionPool
-        pool = ConnectionPool(
-            conninfo,
-            min_size=pool_min,
-            max_size=pool_max,
-            open=True,
-            check=ConnectionPool.check_connection,
-            max_idle=300.0,
-            kwargs={"row_factory": __import__("psycopg").rows.dict_row},
-        )
-    else:
-        # Legacy path: all from MiningDbConfig
-        if cfg is None:
-            cfg = MiningDbConfig()
-        ensure_schema(cfg)
-        from psycopg_pool import ConnectionPool
-        pool = ConnectionPool(
-            cfg.conninfo,
-            min_size=cfg.pg_pool_min,
-            max_size=cfg.pg_pool_max,
-            open=True,
-            check=ConnectionPool.check_connection,
-            max_idle=300.0,
-            kwargs={"row_factory": __import__("psycopg").rows.dict_row},
-        )
+    """Create and open PG-backed adapters for one resolved domain database."""
+    ensure_domain_database_schema(resolved)
+    from psycopg_pool import ConnectionPool
+    pool = ConnectionPool(
+        resolved.conninfo,
+        min_size=resolved.pool_min,
+        max_size=resolved.pool_max,
+        open=True,
+        check=ConnectionPool.check_connection,
+        max_idle=300.0,
+        kwargs={"row_factory": __import__("psycopg").rows.dict_row},
+    )
     asset_db = AssetCoreDB(pool)
     runtime_db = MiningRuntimeDB(pool)
     return asset_db, runtime_db
@@ -135,27 +131,11 @@ def run(
     domain: str | None = None,
     domain_pack: str | None = None,
     channel: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
-    """Execute the mining pipeline.
-
-    Args:
-        input_path: Directory to scan for documents
-        db_config: PostgreSQL config (reads from .env if not provided)
-        batch_params: Batch-level configuration
-        phase1_only: If True, stop after document-level processing (no build/publish)
-        publish_on_partial_failure: If True, publish even when some docs failed.
-        llm_base_url: LLM service URL (e.g. "http://localhost:8900"). None = from env.
-        domain: Domain ID to load from registry. None = from env.
-        domain_pack: (Deprecated) Use domain instead.
-        channel: Release channel. None = from registry default_channel.
-        max_workers: Max concurrent workers for streaming pipeline. None = from env.
-
-    Returns:
-        Summary dict with run_id, counts, and status.
-    """
+    """Execute a run, reusing an API-precreated queued row when supplied."""
     import warnings as _w
 
-    # Backward compat: domain_pack → domain
     if domain_pack and not domain:
         _w.warn(
             "domain_pack is deprecated; use domain instead",
@@ -166,68 +146,100 @@ def run(
 
     from knowledge_mining.mining.infra.mining_config import MiningConfig
     cfg = MiningConfig()
-
-    # Resolve all None params from config (explicit args take precedence)
     llm_base_url = llm_base_url or cfg.llm_service_url
     max_workers = max_workers or cfg.max_workers
     domain = domain or cfg.domain
-
     input_path = Path(input_path)
-    batch_params = batch_params or BatchParams()
-    params = batch_params
+    params = batch_params or BatchParams()
+    registry_entry = resolve_domain(domain)
+    resolved_db = resolve_domain_database(registry_entry, db_config or MiningDbConfig())
+    channel = channel or registry_entry.get("default_channel", "prod")
 
-    # Resolve domain from registry
-    conninfo: str | None = None
-    try:
-        registry_entry = resolve_domain(domain)
-        env_var = registry_entry.get("database_url_env")
-        if env_var:
-            conninfo = conninfo_from_env(env_var)
-        if channel is None:
-            channel = registry_entry.get("default_channel", "prod")
-    except (FileNotFoundError, KeyError, ValueError) as e:
-        logger.warning("Registry resolution failed for domain '%s': %s; using fallback config", domain, e)
-        if channel is None:
-            channel = "prod"
-
-    # Load domain profile
-    profile = load_domain_pack(domain)
-
-    # Open databases (PostgreSQL) — per-domain conninfo if available
-    asset_db, runtime_db = _create_dbs(db_config, conninfo=conninfo)
-
-    # Pre-generate run_id so we can fail_run on global exception
-    run_id = uuid.uuid4().hex
-
-    # 本体真相源：抽取约束读 active 本体点类型（L2 §6.1），与 enrich 共用 asset_db 连接池。
-    from knowledge_mining.mining.infra.ontology_store import OntologyStore
-    ontology_store = OntologyStore(asset_db.pool)
-
-    # LLM integration: create question generator if URL provided
-    llm_services = _init_llm(
-        llm_base_url, profile,
-        knowledge_domain=profile.domain_id,
-        ontology_store=ontology_store,
-    )
-
-    # Embedding integration: via llm_service
-    embedding_generator = _init_embedding(
-        llm_base_url,
-        knowledge_domain=profile.domain_id,
-    )
+    asset_db, runtime_db = _create_dbs(resolved_db)
+    tracker = RuntimeTracker(runtime_db)
+    submitted_run_id = run_id
+    run_id = run_id or uuid.uuid4().hex
+    run_domain = str(registry_entry.get("id") or domain)
 
     try:
+        if submitted_run_id is None:
+            tracker.create_run(MiningRunData(
+                id=run_id,
+                input_path=str(input_path),
+                domain=run_domain,
+                channel=channel,
+                status="queued",
+                current_stage="queued",
+                started_at=_utcnow(),
+            ))
+        else:
+            existing = runtime_db.get_run(run_id)
+            if existing is None:
+                raise ValueError(f"Run {run_id} does not exist")
+            if existing.get("domain") != run_domain:
+                raise ValueError(f"Run {run_id} belongs to another domain")
+            if Path(existing.get("input_path") or "") != input_path:
+                raise ValueError(f"Run {run_id} input_path does not match submission")
+            channel = existing["channel"]
+            if existing.get("status") not in ("queued", "running"):
+                return {"run_id": run_id, "status": existing["status"]}
+
+        if not tracker.set_run_phase(run_id, run_domain, "ingest"):
+            row = runtime_db.get_run(run_id) or {}
+            return {"run_id": run_id, "status": row.get("status", "cancelled")}
+        ingest_event = tracker.start_stage(run_id, "ingest")
+
+        try:
+            profile = load_domain_pack(domain)
+            from knowledge_mining.mining.infra.ontology_store import OntologyStore
+            ontology_store = OntologyStore(asset_db.pool)
+            llm_services = _init_llm(
+                llm_base_url, profile,
+                knowledge_domain=profile.domain_id,
+                ontology_store=ontology_store,
+            )
+            embedding_generator = _init_embedding(
+                llm_base_url,
+                knowledge_domain=profile.domain_id,
+            )
+            docs, ingest_summary = ingest_directory(input_path, params)
+        except Exception as exc:
+            if (runtime_db.get_run(run_id) or {}).get("status") == "cancelled":
+                return {"run_id": run_id, "status": "cancelled"}
+            tracker.end_stage(
+                ingest_event, run_id, "ingest", status="failed",
+                error_message=str(exc)[:500],
+            )
+            tracker.fail_run(
+                run_id, str(exc)[:500], current_stage="ingest", domain=run_domain,
+            )
+            raise
+
+        tracker.end_stage(
+            ingest_event, run_id, "ingest",
+            output_summary=f"documents={len(docs)}",
+        )
+        _check_cancelled(runtime_db, run_id)
+        if not tracker.finish_ingest(run_id, run_domain, len(docs), ingest_summary):
+            row = runtime_db.get_run(run_id) or {}
+            return {"run_id": run_id, "status": row.get("status", "cancelled")}
+
         return _run_pipeline(
             asset_db, runtime_db, input_path, params, phase1_only, run_id,
             publish_on_partial_failure, llm_services, embedding_generator,
             max_workers, profile, channel=channel, llm_base_url=llm_base_url,
+            docs=docs, ingest_summary=ingest_summary,
         )
     except MiningCancelled:
         return {"run_id": run_id, "status": "cancelled"}
-    except Exception as e:
+    except Exception as exc:
         try:
-            tracker = RuntimeTracker(runtime_db)
-            tracker.fail_run(run_id, error_summary=str(e)[:500])
+            row = runtime_db.get_run(run_id) or {}
+            tracker.fail_run(
+                run_id, str(exc)[:500],
+                current_stage=row.get("current_stage") or "mining",
+                domain=run_domain,
+            )
         except Exception:
             pass
         raise
@@ -253,20 +265,14 @@ def publish(
         channel: Release channel. None = from registry default_channel.
         released_by: Who triggered the publish.
     """
-    # Resolve per-domain connection
-    conninfo: str | None = None
-    try:
-        registry_entry = resolve_domain(domain)
-        env_var = registry_entry.get("database_url_env")
-        if env_var:
-            conninfo = conninfo_from_env(env_var)
-        if channel is None:
-            channel = registry_entry.get("default_channel", "prod")
-    except (FileNotFoundError, KeyError, ValueError):
-        if channel is None:
-            channel = "prod"
+    registry_entry = resolve_domain(domain)
+    resolved_db = resolve_domain_database(
+        registry_entry, db_config or MiningDbConfig()
+    )
+    if channel is None:
+        channel = registry_entry.get("default_channel", "prod")
 
-    asset_db, runtime_db = _create_dbs(db_config, conninfo=conninfo)
+    asset_db, runtime_db = _create_dbs(resolved_db)
 
     try:
         run_data = runtime_db.get_run(run_id)
@@ -274,15 +280,14 @@ def publish(
             raise ValueError(f"Run {run_id} not found")
         if run_data["status"] != "completed":
             raise ValueError(f"Run {run_id} status is {run_data['status']}, expected completed")
+        if run_data.get("domain") != domain:
+            raise ValueError(
+                f"Run {run_id} belongs to domain {run_data.get('domain')!r}, "
+                f"cannot publish under domain {domain!r}"
+            )
         build_id = run_data["build_id"]
         if not build_id:
             raise ValueError(f"Run {run_id} has no build_id")
-
-        # Read domain from build row for domain isolation
-        build_row = asset_db._fetchone(
-            "SELECT domain FROM asset_builds WHERE id = %s", (build_id,)
-        )
-        domain = build_row["domain"] if build_row else None
 
         release_id = publish_release(
             asset_db,
@@ -314,16 +319,11 @@ def resume(
 
     snapshot_decisions / 计数从 mining_run_documents 重建（首跑的内存态已随进程退出丢失）。
     """
-    conninfo: str | None = None
-    try:
-        registry_entry = resolve_domain(domain)
-        env_var = registry_entry.get("database_url_env")
-        if env_var:
-            conninfo = conninfo_from_env(env_var)
-    except (FileNotFoundError, KeyError, ValueError):
-        pass
-
-    asset_db, runtime_db = _create_dbs(db_config, conninfo=conninfo)
+    registry_entry = resolve_domain(domain)
+    resolved_db = resolve_domain_database(
+        registry_entry, db_config or MiningDbConfig()
+    )
+    asset_db, runtime_db = _create_dbs(resolved_db)
     try:
         run_data = runtime_db.get_run(run_id)
         if run_data is None:
@@ -350,7 +350,14 @@ def resume(
 
         # 实体确认：仍有 pending mention → 留在 entity_review。
         if _has_pending_mentions(asset_db, run_id):
-            runtime_db.update_run_status(run_id, "awaiting_review", subloop_stage="entity_review")
+            updated = runtime_db.update_run_status(
+                run_id, "awaiting_review", subloop_stage="entity_review",
+                current_stage="review", domain=domain,
+                expected_statuses=("awaiting_review", "running"),
+            )
+            if not updated:
+                current = runtime_db.get_run(run_id) or {}
+                return {"run_id": run_id, "status": current.get("status", "cancelled")}
             runtime_db.commit()
             logger.info("Run %s still awaiting review at gate=entity_review", run_id)
             return {"run_id": run_id, "status": "awaiting_review", "subloop_stage": "entity_review"}
@@ -361,13 +368,22 @@ def resume(
 
         # 本体确认：有待审类型候选 → 留在 ontology_review。
         if _has_proposed_candidates(asset_db, domain):
-            runtime_db.update_run_status(run_id, "awaiting_review", subloop_stage="ontology_review")
+            updated = runtime_db.update_run_status(
+                run_id, "awaiting_review", subloop_stage="ontology_review",
+                current_stage="review", domain=domain,
+                expected_statuses=("awaiting_review", "running"),
+            )
+            if not updated:
+                current = runtime_db.get_run(run_id) or {}
+                return {"run_id": run_id, "status": current.get("status", "cancelled")}
             runtime_db.commit()
             logger.info("Run %s still awaiting review at gate=ontology_review", run_id)
             return {"run_id": run_id, "status": "awaiting_review", "subloop_stage": "ontology_review"}
 
         # 两道 Gate 清完 → 收尾建图（回贴类型 + 建边）+ 建库/发布。
-        tracker.resume_running(run_id, subloop_stage="done")
+        if not tracker.resume_running(run_id, subloop_stage="done", domain=domain):
+            current = runtime_db.get_run(run_id) or {}
+            return {"run_id": run_id, "status": current.get("status", "cancelled")}
         runtime_db.commit()
         _finalize_graph(asset_db, tracker, run_id, profile)
         snapshot_decisions, counts = _rebuild_from_run_documents(runtime_db, run_id)
@@ -375,6 +391,7 @@ def resume(
             asset_db, runtime_db, tracker, run_id, run_data["source_batch_id"],
             snapshot_decisions, counts, run_data["total_documents"],
             False, publish_on_partial_failure, profile,
+            channel=run_data["channel"],
         )
     finally:
         asset_db.close()
@@ -528,7 +545,30 @@ def _rebuild_from_run_documents(
     committed = new = updated = failed = skipped = 0
     for rd in runtime_db.get_run_documents(run_id):
         st = rd["status"]
+        raw_metadata = rd.get("metadata_json") or {}
+        if isinstance(raw_metadata, str):
+            try:
+                parsed_metadata = json.loads(raw_metadata)
+            except (TypeError, ValueError):
+                parsed_metadata = {}
+        else:
+            parsed_metadata = raw_metadata
+        metadata = parsed_metadata if isinstance(parsed_metadata, dict) else {}
+
         if st == "committed" and rd["document_id"] and rd["document_snapshot_id"]:
+            if rd["action"] == "SKIP":
+                skipped += 1
+                decision = {
+                    "document_id": rd["document_id"],
+                    "document_snapshot_id": rd["document_snapshot_id"],
+                    "document_key": rd["document_key"],
+                    "lifecycle_action": metadata.get("lifecycle_action") or "SKIP",
+                }
+                if "source_batch_id" in metadata:
+                    decision["source_batch_id"] = metadata["source_batch_id"]
+                snapshot_decisions.append(decision)
+                continue
+
             committed += 1
             if rd["action"] == "NEW":
                 new += 1
@@ -752,6 +792,8 @@ def _run_pipeline(
     profile: DomainProfile | None = None,
     channel: str | None = None,
     llm_base_url: str | None = None,
+    docs: list[Any] | None = None,
+    ingest_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Core pipeline logic. Assumes DBs are already open."""
     tracker = RuntimeTracker(runtime_db)
@@ -760,26 +802,14 @@ def _run_pipeline(
         from knowledge_mining.mining.infra.domain_pack import get_default_profile
         profile = get_default_profile()
 
-    now = _utcnow()
-
-    # Phase 1: Ingest
-    docs, ingest_summary = ingest_directory(input_path, params)
+    docs = docs or []
+    ingest_summary = ingest_summary or {}
+    channel = channel or "prod"
 
     # Create batch in asset_core (before create_run so batch_id is available)
     batch_id = uuid.uuid4().hex
 
-    tracker.create_run(MiningRunData(
-        id=run_id,
-        source_batch_id=batch_id,
-        input_path=str(input_path),
-        domain=profile.domain_id,
-        channel=channel,
-        status="running",
-        total_documents=len(docs),
-        started_at=now,
-        metadata_json={"ingest_summary": ingest_summary},
-    ))
-    runtime_db.commit()
+    _check_cancelled(runtime_db, run_id)
     asset_db.upsert_source_batch(
         batch_id=batch_id,
         batch_code=f"batch-{run_id[:8]}",
@@ -788,6 +818,12 @@ def _run_pipeline(
         description=f"Mining run {run_id}",
     )
     asset_db.commit()
+    runtime_db._execute(
+        "UPDATE mining_runs SET source_batch_id = %s WHERE id = %s AND domain = %s "
+        "AND status IN ('queued', 'running')",
+        (batch_id, run_id, profile.domain_id),
+    )
+    _check_cancelled(runtime_db, run_id)
 
     # 本体线总开关（开始时检测一次）：该领域未引种本体（无 active 版本）→
     # 关掉本体线的所有阶段——每文档的 entity_extract / resolve / entity_relations，
@@ -807,6 +843,7 @@ def _run_pipeline(
     # 本体线算子在无本体时置 None：对应的 streaming 阶段自带 `if X is None: return ctx`
     # 的短路，于是退化成零成本的直通，不发起任何 LLM/DB 调用。
     pipeline_config = PipelineConfig(
+        domain=profile.domain_id,
         parser_factory=create_parser,
         segmenter=DefaultSegmenter(),
         enricher=llm.get("enricher"),
@@ -838,25 +875,41 @@ def _run_pipeline(
     work_items: list[dict[str, Any]] = []  # docs that need pipeline processing
 
     for doc in docs:
+        _check_cancelled(runtime_db, run_id)
         rd_id = uuid.uuid4().hex
         doc_key = f"doc:/{doc.relative_path}"
 
-        existing_doc = asset_db.get_document_by_key(doc_key, domain=profile.domain_id)
-        if existing_doc is None:
-            action = "NEW"
-        else:
-            # Compare against active snapshot's hash (not asset_documents)
-            active_link = asset_db._fetchone(
-                "SELECT ds.normalized_content_hash "
-                "FROM asset_document_snapshot_links dsl "
-                "JOIN asset_document_snapshots ds ON dsl.document_snapshot_id = ds.id "
-                "WHERE dsl.document_id = %s ORDER BY dsl.linked_at DESC LIMIT 1",
-                (existing_doc["id"],),
+        lifecycle_state = asset_db.get_document_lifecycle_state(
+            domain=profile.domain_id,
+            channel=channel,
+            document_key=doc_key,
+            normalized_content_hash=doc.normalized_content_hash,
+        )
+        lifecycle_action = decide_document_lifecycle_action(
+            lifecycle_state,
+            normalized_content_hash=doc.normalized_content_hash,
+        )
+        action = "SKIP" if lifecycle_action in ("SKIP", "RESTORE") else lifecycle_action
+        existing_doc = None
+        if lifecycle_state is not None:
+            existing_doc = {
+                "id": lifecycle_state["document_id"],
+                "domain": lifecycle_state["document_domain"],
+                "document_key": lifecycle_state["document_key"],
+            }
+
+        run_document_metadata: dict[str, Any] = {"file_size": doc.file_size}
+        if lifecycle_action == "SKIP":
+            # Persist the published selection's provenance so resume can rebuild
+            # the same decision after the in-memory list has been lost.
+            run_document_metadata["source_batch_id"] = lifecycle_state.get(
+                "active_source_batch_id"
             )
-            if active_link and active_link["normalized_content_hash"] == doc.normalized_content_hash:
-                action = "SKIP"
-            else:
-                action = "UPDATE"
+        elif lifecycle_action == "RESTORE":
+            run_document_metadata.update({
+                "lifecycle_action": "RESTORE",
+                "source_batch_id": batch_id,
+            })
 
         tracker.register_document(MiningRunDocumentData(
             id=rd_id,
@@ -865,38 +918,54 @@ def _run_pipeline(
             raw_content_hash=doc.raw_content_hash,
             normalized_content_hash=doc.normalized_content_hash,
             action=action,
-            metadata_json={"file_size": doc.file_size},
+            metadata_json=run_document_metadata,
         ))
         runtime_db.commit()
 
-        # SKIP: content unchanged
-        if action == "SKIP" and existing_doc is not None:
-            existing_link = asset_db._fetchone(
-                "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-                "WHERE document_id = %s ORDER BY linked_at DESC LIMIT 1",
-                (existing_doc["id"],),
+        if lifecycle_action == "SKIP" and lifecycle_state is not None:
+            tracker.commit_document(
+                rd_id,
+                lifecycle_state["document_id"],
+                lifecycle_state["active_snapshot_id"],
             )
-            # Only a genuinely complete snapshot may be reused. A snapshot with
-            # zero segments is an empty shell left by a prior failed ingestion;
-            # reusing it would re-trigger the "Snapshot has no segments" build
-            # error. In that case fall through and re-mine it as an UPDATE
-            # (self-healing of legacy dirty data).
-            if existing_link and asset_db.count_segments_by_snapshot(
-                existing_link["document_snapshot_id"]
-            ) > 0:
-                tracker.commit_document(rd_id, existing_doc["id"], existing_link["document_snapshot_id"])
-                skipped_count += 1
-                snapshot_decisions.append({
-                    "document_id": existing_doc["id"],
-                    "document_snapshot_id": existing_link["document_snapshot_id"],
-                    "document_key": doc_key,
-                })
-                runtime_db.commit()
-                continue
-            # Empty shell (or missing link) → re-mine instead of skipping.
-            action = "UPDATE"
-            runtime_db.update_run_document(rd_id, action="UPDATE")
+            skipped_count += 1
+            snapshot_decisions.append({
+                "document_id": lifecycle_state["document_id"],
+                "document_snapshot_id": lifecycle_state["active_snapshot_id"],
+                "document_key": doc_key,
+                "lifecycle_action": "SKIP",
+                "source_batch_id": lifecycle_state.get("active_source_batch_id"),
+            })
             runtime_db.commit()
+            continue
+
+        if lifecycle_action == "RESTORE" and lifecycle_state is not None:
+            snapshot_id = lifecycle_state["historical_snapshot_id"]
+            asset_db.insert_snapshot_link(
+                domain=profile.domain_id,
+                link_id=uuid.uuid4().hex,
+                document_id=lifecycle_state["document_id"],
+                document_snapshot_id=snapshot_id,
+                source_batch_id=batch_id,
+                relative_path=doc.relative_path,
+                source_uri=doc.source_uri,
+                title=doc.title,
+                scope_json=doc.scope_json,
+                tags_json=doc.tags_json,
+                metadata_json=doc.metadata_json,
+            )
+            asset_db.commit()
+            tracker.commit_document(rd_id, lifecycle_state["document_id"], snapshot_id)
+            skipped_count += 1
+            snapshot_decisions.append({
+                "document_id": lifecycle_state["document_id"],
+                "document_snapshot_id": snapshot_id,
+                "document_key": doc_key,
+                "lifecycle_action": "RESTORE",
+                "source_batch_id": batch_id,
+            })
+            runtime_db.commit()
+            continue
 
         # Queue for streaming pipeline
         tracker.start_document(rd_id)
@@ -951,12 +1020,7 @@ def _run_pipeline(
             ("db_write",         lambda ctx: db_write_stage(ctx, config),        1),
         ]
 
-        pipeline = StreamingPipeline(
-            stages,
-            run_id=run_id,
-            tracker=tracker,
-            cancel_check=lambda: _is_cancelled(runtime_db, run_id),
-        )
+        pipeline = StreamingPipeline(stages, run_id=run_id, tracker=tracker)
         ctxs = pipeline.process_all([item["ctx"] for item in work_items])
 
     # -- Aggregate results from pipeline (Phase 1c is now inside db_write_stage) --
@@ -977,6 +1041,8 @@ def _run_pipeline(
                 "document_id": ctx.document_id,
                 "document_snapshot_id": ctx.snapshot_id,
                 "document_key": doc_key,
+                "lifecycle_action": action,
+                "source_batch_id": batch_id,
             })
         else:
             skipped_count += 1
@@ -997,11 +1063,16 @@ def _run_pipeline(
 
         def _pause(gate: str) -> dict[str, Any]:
             av = OntologyStore(asset_db.pool).active_version(profile.domain_id)
-            tracker.pause_for_review(
+            updated = tracker.pause_for_review(
                 run_id, subloop_stage=gate,
-                ontology_version_id=av["id"] if av else None, **counts,
+                ontology_version_id=av["id"] if av else None,
+                domain=profile.domain_id,
+                **counts,
             )
             runtime_db.commit()
+            if not updated:
+                current = runtime_db.get_run(run_id) or {}
+                return {"run_id": run_id, "status": current.get("status", "cancelled")}
             logger.info("Run %s paused for human review at gate=%s", run_id, gate)
             return {
                 "run_id": run_id, "status": "awaiting_review", "subloop_stage": gate,
@@ -1023,7 +1094,24 @@ def _run_pipeline(
     return _finalize_run(
         asset_db, runtime_db, tracker, run_id, batch_id, snapshot_decisions,
         counts, len(docs), phase1_only, publish_on_partial_failure, profile,
+        channel=channel,
     )
+
+
+@contextmanager
+def _domain_publish_transaction(asset_db: AssetCoreDB, domain: str):
+    """Open the transaction and domain lock used by automatic publication.
+
+    The no-transaction branch keeps older structural unit-test doubles usable;
+    production ``AssetCoreDB`` always exposes both required methods.
+    """
+    transaction = getattr(asset_db, "transaction", None)
+    if transaction is None:
+        yield
+        return
+    with transaction():
+        asset_db.acquire_domain_publish_lock(domain)
+        yield
 
 
 def _finalize_run(
@@ -1038,6 +1126,8 @@ def _finalize_run(
     phase1_only: bool,
     publish_on_partial_failure: bool,
     profile: DomainProfile,
+    *,
+    channel: str,
 ) -> dict[str, Any]:
     """B6：Phase 2 建库 + 发布 + 收尾。首跑无 Gate 触发、或 resume 审完两道 Gate 后都走这里。"""
     committed_count = counts["committed_count"]
@@ -1053,83 +1143,88 @@ def _finalize_run(
 
     # Build is always created if there are committed documents
     if not phase1_only and snapshot_decisions:
-        # Classify documents: NEW/UPDATE/SKIP against previous active build
-        # REMOVE detection disabled — incremental batches only process a subset,
-        # parent build snapshots are carried forward by assemble_build instead.
-        snapshot_decisions = classify_documents(asset_db, snapshot_decisions, detect_remove=False, domain=profile.domain_id)
-
-        # Stage 7: Assemble build (auto-selects full vs incremental)
+        _check_cancelled(runtime_db, run_id)
+        if not tracker.set_run_phase(run_id, profile.domain_id, "publishing"):
+            return {"run_id": run_id, "status": "cancelled"}
         evt = tracker.start_stage(run_id, "assemble_build")
-        build_id = assemble_build(
-            asset_db,
-            run_id=run_id,
-            batch_id=batch_id,
-            snapshot_decisions=snapshot_decisions,
-            domain=profile.domain_id,
+        should_publish = not has_failures or publish_on_partial_failure
+        with _domain_publish_transaction(asset_db, profile.domain_id):
+            # Re-read the parent only after acquiring the domain lock.
+            snapshot_decisions = classify_documents(
+                asset_db,
+                snapshot_decisions,
+                detect_remove=False,
+                domain=profile.domain_id,
+                channel=channel,
+            )
+
+            build_id = assemble_build(
+                asset_db,
+                run_id=run_id,
+                batch_id=batch_id,
+                snapshot_decisions=snapshot_decisions,
+                domain=profile.domain_id,
+                channel=channel,
+            )
+
+            # This read must see the build before the outer transaction commits.
+            try:
+                quality = demo_quality_summary(asset_db, build_id)
+                logger.info("Demo quality summary: %s", quality)
+            except Exception as e:
+                logger.warning("Demo quality summary failed: %s", e)
+
+            if should_publish:
+                release_id = publish_release(
+                    asset_db,
+                    build_id=build_id,
+                    released_by=f"run:{run_id}",
+                    domain=profile.domain_id,
+                    channel=channel,
+                )
+
+        # The asset transaction committed on context exit. Emit success only now.
+        tracker.end_stage(
+            evt,
+            run_id,
+            "assemble_build",
+            output_summary=f"build_id={build_id}",
         )
-        tracker.end_stage(evt, run_id, "assemble_build", output_summary=f"build_id={build_id}")
-        asset_db.commit()
-        runtime_db.commit()
-
-        # Demo quality summary (non-blocking, writes to build metadata)
-        try:
-            quality = demo_quality_summary(asset_db, build_id)
-            logger.info("Demo quality summary: %s", quality)
-        except Exception as e:
-            logger.warning("Demo quality summary failed: %s", e)
-
-        # Stage 8: Validate (already done inside assemble_build)
         evt = tracker.start_stage(run_id, "validate_build")
         tracker.end_stage(evt, run_id, "validate_build", output_summary="passed")
-        runtime_db.commit()
-
-        # Stage 9: Publish release — only if no failures or explicitly allowed
-        if not has_failures or publish_on_partial_failure:
+        if release_id is not None:
             evt = tracker.start_stage(run_id, "publish_release")
-            release_id = publish_release(
-                asset_db,
-                build_id=build_id,
-                released_by=f"run:{run_id}",
-                domain=profile.domain_id,
+            tracker.end_stage(
+                evt,
+                run_id,
+                "publish_release",
+                output_summary=f"release_id={release_id}",
             )
-            tracker.end_stage(evt, run_id, "publish_release", output_summary=f"release_id={release_id}")
-            asset_db.commit()
-            runtime_db.commit()
+        runtime_db.commit()
 
     # Determine final run status (use SQL-valid values only)
     # All docs failed -> "failed"; some failed -> "completed" with has_failures metadata
-    # If cancelled mid-flight, preserve the 'cancelled' status set by the UI/API.
-    if _is_cancelled(runtime_db, run_id):
-        logger.info(
-            "Run %s was cancelled; preserving status='cancelled' "
-            "(committed=%d, failed=%d, skipped=%d)",
-            run_id, committed_count, failed_count, skipped_count,
-        )
-        runtime_db.commit()
-        return {
-            "run_id": run_id,
-            "status": "cancelled",
-            "total_documents": total_documents,
-            "committed_count": committed_count,
-            "new_count": new_count,
-            "updated_count": updated_count,
-            "failed_count": failed_count,
-            "skipped_count": skipped_count,
-            "build_id": None,
-            "release_id": None,
-        }
-
     run_status = "completed"
     run_metadata = None
     if failed_count > 0 and committed_count == 0:
         run_status = "failed"
     elif failed_count > 0:
-        run_metadata = {"has_failures": True, "failed_count": failed_count}
+        existing_metadata = (runtime_db.get_run(run_id) or {}).get("metadata_json") or {}
+        if isinstance(existing_metadata, str):
+            import json
+            existing_metadata = json.loads(existing_metadata)
+        run_metadata = {
+            **existing_metadata,
+            "has_failures": True,
+            "failed_count": failed_count,
+        }
 
     if run_status == "failed":
-        tracker.fail_run(
+        updated = tracker.fail_run(
             run_id,
             error_summary=f"All {failed_count} documents failed",
+            current_stage=(runtime_db.get_run(run_id) or {}).get("current_stage") or "mining",
+            domain=profile.domain_id,
             committed_count=committed_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
@@ -1137,9 +1232,10 @@ def _finalize_run(
             updated_count=updated_count,
         )
     else:
-        tracker.complete_run(
+        updated = tracker.complete_run(
             run_id,
             build_id=build_id,
+            domain=profile.domain_id,
             committed_count=committed_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
@@ -1148,6 +1244,10 @@ def _finalize_run(
             metadata_json=run_metadata,
         )
     runtime_db.commit()
+
+    if not updated:
+        current = runtime_db.get_run(run_id) or {}
+        run_status = current.get("status", "cancelled")
 
     return {
         "run_id": run_id,

@@ -118,23 +118,54 @@ class TestModels:
 
 class TestAssetCoreDB:
     def test_source_batch_crud(self, asset_db):
-        asset_db.upsert_source_batch("b1", "BATCH-001", "folder_scan", "test")
-        b = asset_db.get_source_batch("b1")
+        asset_db.upsert_source_batch(
+            domain="test",
+            batch_id="b1",
+            batch_code="BATCH-001",
+            source_type="folder_scan",
+        )
+        b = asset_db.get_source_batch(domain="test", batch_id="b1")
         assert b["batch_code"] == "BATCH-001"
         assert b["source_type"] == "folder_scan"
 
     def test_document_upsert_idempotent(self, asset_db):
-        asset_db.upsert_document("d1", "doc:/a.md", "a.md", "command")
-        asset_db.upsert_document("d2", "doc:/a.md", "a.md", "feature")
-        d = asset_db.get_document_by_key("doc:/a.md")
+        asset_db.upsert_document(
+            domain="test", document_id="d1", document_key="doc:/a.md",
+            document_name="a.md", document_type="command",
+        )
+        asset_db.upsert_document(
+            domain="test", document_id="d2", document_key="doc:/a.md",
+            document_name="a.md", document_type="feature",
+        )
+        d = asset_db.get_document_by_key(domain="test", document_key="doc:/a.md")
         assert d["document_type"] == "feature"
 
-    def test_snapshot_sharing(self, asset_db):
-        """Two documents with same normalized_content_hash share a snapshot."""
-        asset_db.upsert_snapshot("s1", "hash_abc", "raw1", "text/markdown")
-        asset_db.upsert_snapshot("s2", "hash_abc", "raw2", "text/markdown")
-        s = asset_db.get_snapshot_by_hash("hash_abc")
-        assert s["raw_content_hash"] == "raw2"
+    def test_snapshot_sharing_within_domain_is_immutable(self, asset_db):
+        """Same-domain normalized content reuses its original immutable snapshot."""
+        first = asset_db.upsert_snapshot(
+            domain="test", snapshot_id="s1", normalized_content_hash="hash_abc",
+            raw_content_hash="raw1", mime_type="text/markdown",
+        )
+        second = asset_db.upsert_snapshot(
+            domain="test", snapshot_id="s2", normalized_content_hash="hash_abc",
+            raw_content_hash="raw2", mime_type="text/markdown",
+        )
+        s = asset_db.get_snapshot_by_hash(
+            domain="test", normalized_content_hash="hash_abc",
+        )
+        assert first == second == "s1"
+        assert s["raw_content_hash"] == "raw1"
+
+    def test_snapshot_hash_is_not_shared_across_domains(self, asset_db):
+        first = asset_db.upsert_snapshot(
+            domain="test", snapshot_id="s1", normalized_content_hash="hash_abc",
+            raw_content_hash="raw1", mime_type="text/markdown",
+        )
+        second = asset_db.upsert_snapshot(
+            domain="another", snapshot_id="s2", normalized_content_hash="hash_abc",
+            raw_content_hash="raw1", mime_type="text/markdown",
+        )
+        assert first != second
 
     def test_build_and_release(self, asset_db):
         asset_db.insert_build("b1", "B-001", "building", "full", domain="default")
@@ -158,7 +189,10 @@ class TestAssetCoreDB:
 
 class TestMiningRuntimeDB:
     def test_run_lifecycle(self, runtime_db):
-        run = MiningRunData(id="r1", input_path="/test", status="running", started_at="2026-01-01T00:00:00")
+        run = MiningRunData(
+            id="r1", input_path="/test", domain="cloud_core_network", channel="prod",
+            status="running", started_at="2026-01-01T00:00:00",
+        )
         runtime_db.insert_run(run)
         runtime_db.update_run_status("r1", "completed", finished_at="2026-01-01T01:00:00", committed_count=5)
         r = runtime_db.get_run("r1")
@@ -166,7 +200,10 @@ class TestMiningRuntimeDB:
         assert r["committed_count"] == 5
 
     def test_run_status_with_metadata(self, runtime_db):
-        run = MiningRunData(id="r2", input_path="/test", status="running", started_at="2026-01-01T00:00:00")
+        run = MiningRunData(
+            id="r2", input_path="/test", domain="cloud_core_network", channel="prod",
+            status="running", started_at="2026-01-01T00:00:00",
+        )
         runtime_db.insert_run(run)
         runtime_db.update_run_status(
             "r2", "completed",
@@ -183,14 +220,20 @@ class TestMiningRuntimeDB:
         assert meta["failed_count"] == 2
 
     def test_stage_events(self, runtime_db):
-        runtime_db.insert_run(MiningRunData(id="r1", input_path="/test", started_at="2026-01-01T00:00:00"))
+        runtime_db.insert_run(MiningRunData(
+            id="r1", input_path="/test", domain="cloud_core_network", channel="prod",
+            started_at="2026-01-01T00:00:00",
+        ))
         evt = StageEvent(id="e1", run_id="r1", stage="parse", status="completed")
         runtime_db.insert_stage_event(evt)
         last = runtime_db.get_last_stage_status("r1", None, "parse")
         assert last == "completed"
 
     def test_resume_plan(self, runtime_db):
-        runtime_db.insert_run(MiningRunData(id="r1", input_path="/test", started_at="2026-01-01T00:00:00"))
+        runtime_db.insert_run(MiningRunData(
+            id="r1", input_path="/test", domain="cloud_core_network", channel="prod",
+            started_at="2026-01-01T00:00:00",
+        ))
         runtime_db.insert_run_document(MiningRunDocumentData(
             id="rd1", run_id="r1", document_key="doc:/a.md",
             raw_content_hash="h1", action="NEW", status="committed",
@@ -459,16 +502,24 @@ class TestSnapshot:
             normalized_content_hash="nh1",
         )
         profile = DocumentProfile(document_key="doc:/a.md")
-        doc_id, snap_id, link_id = select_or_create_snapshot(asset_db, doc, profile)
-        assert asset_db.get_document(doc_id) is not None
-        assert asset_db.get_snapshot(snap_id) is not None
+        doc_id, snap_id, link_id = select_or_create_snapshot(
+            asset_db, doc, profile, domain="test",
+        )
+        assert asset_db.get_document(domain="test", document_id=doc_id) is not None
+        assert asset_db.get_snapshot(domain="test", snapshot_id=snap_id) is not None
 
 
 class TestPublishing:
     def test_assemble_and_publish(self, asset_db):
         from knowledge_mining.mining.stages.publishing import assemble_build, publish_release
-        asset_db.upsert_document("d1", "doc:/a.md", "a.md")
-        asset_db.upsert_snapshot("s1", "nh1", "rh1", "text/markdown")
+        asset_db.upsert_document(
+            domain="default", document_id="d1", document_key="doc:/a.md",
+            document_name="a.md",
+        )
+        asset_db.upsert_snapshot(
+            domain="default", snapshot_id="s1", normalized_content_hash="nh1",
+            raw_content_hash="rh1", mime_type="text/markdown",
+        )
         asset_db.insert_raw_segment(
             segment_id="seg-1", document_snapshot_id="s1",
             segment_key="doc:/a.md#0", segment_index=0,
@@ -479,7 +530,7 @@ class TestPublishing:
         )
         asset_db.commit()
 
-        build_id = assemble_build(asset_db, run_id="r1", domain="default", snapshot_decisions=[
+        build_id = assemble_build(asset_db, run_id="r1", domain="default", channel="prod", batch_id=None, snapshot_decisions=[
             {"document_id": "d1", "document_snapshot_id": "s1", "reason": "add", "selection_status": "active"},
         ])
         build = asset_db.get_build(build_id)
@@ -513,7 +564,7 @@ def _make_db(cls):
 class TestEndToEndPipeline:
     def test_full_pipeline(self, input_dir, tmp_dir):
         from knowledge_mining.mining.jobs.run import run
-        result = run(str(input_dir))
+        result = run(str(input_dir), domain="generic")
         assert result["status"] == "completed"
         assert result["committed_count"] == 2
         assert result["build_id"] is not None
@@ -521,24 +572,26 @@ class TestEndToEndPipeline:
 
     def test_phase1_only(self, input_dir, tmp_dir):
         from knowledge_mining.mining.jobs.run import run
-        result = run(str(input_dir), phase1_only=True)
+        result = run(
+            str(input_dir), domain="generic", phase1_only=True,
+        )
         assert result["status"] == "completed"
         assert result["build_id"] is None
         assert result["release_id"] is None
 
     def test_publish_after_phase1(self, input_dir, tmp_dir):
         from knowledge_mining.mining.jobs.run import run, publish
-        result = run(str(input_dir))
+        result = run(str(input_dir), domain="generic")
         assert result["release_id"] is not None
         db = _make_db(AssetCoreDB)
-        ar = db.get_active_release("cloud_core_network", "prod")
+        ar = db.get_active_release("generic", "prod")
         assert ar is not None
         db.close()
 
     def test_stage_events_recorded(self, input_dir, tmp_dir):
         """Verify stage events are recorded for each document."""
         from knowledge_mining.mining.jobs.run import run
-        result = run(str(input_dir))
+        result = run(str(input_dir), domain="generic")
         rdb = _make_db(MiningRuntimeDB)
         events = rdb.get_stage_events(result["run_id"])
         stages = {e["stage"] for e in events}

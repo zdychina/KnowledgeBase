@@ -313,6 +313,7 @@ class MiningRunData:
     domain: str | None = None
     channel: str | None = None
     status: str = "queued"
+    current_stage: str = "queued"
     build_id: str | None = None
     total_documents: int = 0
     new_count: int = 0

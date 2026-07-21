@@ -9,13 +9,51 @@ domain_registry.yaml.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
+from psycopg.conninfo import make_conninfo
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]  # knowledge_mining/mining/infra/ -> CoreMasterKB/
+
+
+def conninfo_from_url(url: str) -> str:
+    """Convert a supported PostgreSQL URL to safely escaped conninfo."""
+    value = str(url).strip()
+    if value.startswith("jdbc:"):
+        value = value[5:]
+
+    try:
+        parsed = urlparse(value)
+        if parsed.scheme not in ("postgresql", "postgres"):
+            raise ValueError("Invalid URL scheme for PostgreSQL database URL")
+        if not parsed.hostname or not parsed.path.strip("/"):
+            raise ValueError
+
+        params: dict[str, object] = {
+            "host": parsed.hostname,
+            "dbname": unquote(parsed.path.strip("/")),
+        }
+        if parsed.port is not None:
+            params["port"] = parsed.port
+        if parsed.username:
+            params["user"] = unquote(parsed.username)
+        if parsed.password:
+            params["password"] = unquote(parsed.password)
+
+        for key, values in parse_qs(parsed.query, keep_blank_values=True).items():
+            if values:
+                params[key] = values[0]
+
+        return make_conninfo(**params)
+    except ValueError as exc:
+        if str(exc).startswith("Invalid URL scheme"):
+            raise
+        raise ValueError("Invalid PostgreSQL database URL") from exc
+    except Exception as exc:
+        raise ValueError("Invalid PostgreSQL database URL") from exc
 
 
 def conninfo_from_env(env_var: str) -> str:
@@ -28,6 +66,8 @@ def conninfo_from_env(env_var: str) -> str:
     Returns a psycopg-compatible conninfo string:
         host=... port=... dbname=... user=... password=...
     """
+    import os
+
     url = os.environ.get(env_var, "")
     if not url:
         raise ValueError(
@@ -35,31 +75,7 @@ def conninfo_from_env(env_var: str) -> str:
             f"Set it to a PostgreSQL URL, e.g. postgresql://user:pass@host:5432/dbname"
         )
 
-    parsed = urlparse(url)
-    if parsed.scheme not in ("postgresql", "postgres"):
-        raise ValueError(
-            f"Invalid URL scheme in '{env_var}': expected postgresql:// or postgres://, "
-            f"got {parsed.scheme}://"
-        )
-
-    parts = []
-    if parsed.hostname:
-        parts.append(f"host={parsed.hostname}")
-    if parsed.port:
-        parts.append(f"port={parsed.port}")
-    if parsed.path and parsed.path.strip("/"):
-        parts.append(f"dbname={parsed.path.strip('/')}")
-    if parsed.username:
-        parts.append(f"user={parsed.username}")
-    if parsed.password:
-        parts.append(f"password={unquote(parsed.password)}")
-
-    # Copy query params (like sslmode) as key=value
-    qs = parse_qs(parsed.query)
-    for key, values in qs.items():
-        parts.append(f"{key}={values[0]}")
-
-    return " ".join(parts)
+    return conninfo_from_url(url)
 
 
 class MiningDbConfig(BaseSettings):
@@ -69,7 +85,9 @@ class MiningDbConfig(BaseSettings):
     pg_port: int = 5432
     pg_dbname: str
     pg_user: str
-    pg_password: str
+    # Excluding the password from repr prevents pytest fixture diagnostics and
+    # incidental logging from printing a live database credential.
+    pg_password: str = Field(repr=False)
     pg_sslmode: str = "disable"
     pg_gssencmode: str = "disable"
     pg_pool_min: int = 2
@@ -85,25 +103,25 @@ class MiningDbConfig(BaseSettings):
     @property
     def conninfo(self) -> str:
         """Build psycopg connection string."""
-        return (
-            f"host={self.pg_host} "
-            f"port={self.pg_port} "
-            f"dbname={self.pg_dbname} "
-            f"user={self.pg_user} "
-            f"password={self.pg_password} "
-            f"sslmode={self.pg_sslmode} "
-            f"gssencmode={self.pg_gssencmode}"
+        return make_conninfo(
+            host=self.pg_host,
+            port=self.pg_port,
+            dbname=self.pg_dbname,
+            user=self.pg_user,
+            password=self.pg_password,
+            sslmode=self.pg_sslmode,
+            gssencmode=self.pg_gssencmode,
         )
 
     @property
     def maintenance_conninfo(self) -> str:
         """Connection string for the postgres maintenance DB (used to CREATE DATABASE)."""
-        return (
-            f"host={self.pg_host} "
-            f"port={self.pg_port} "
-            f"dbname=postgres "
-            f"user={self.pg_user} "
-            f"password={self.pg_password} "
-            f"sslmode={self.pg_sslmode} "
-            f"gssencmode={self.pg_gssencmode}"
+        return make_conninfo(
+            host=self.pg_host,
+            port=self.pg_port,
+            dbname="postgres",
+            user=self.pg_user,
+            password=self.pg_password,
+            sslmode=self.pg_sslmode,
+            gssencmode=self.pg_gssencmode,
         )

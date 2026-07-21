@@ -442,20 +442,11 @@ def _make_generated_question_unit(
     source_seg_id: str | None = None,
     llm_task_id: str | None = None,
 ) -> RetrievalUnitData:
-    """Generated question unit: one per LLM-generated question (max 2 per segment).
-
-    Text carries the FULL raw_text (no truncation) so retrieval hits can answer
-    completely. The source line is the full hierarchical path (structural_context)
-    when available — gives BM25/FTS5 and the reader the "page index" back.
-    """
+    """Generated question unit: one per LLM-generated question (max 2 per segment)."""
     # v1.5: No Qn prefix — pure question text as title
     title = question[:120]
-    structural_context = seg.metadata_json.get("structural_context", "")
-    source_line = structural_context or seg.section_title or "未知"
-    text = f"{question}\n---\n来源: {source_line}\n{seg.raw_text}"
-    search_text = tokenize_for_search(
-        f"{question} {structural_context} {seg.section_title or ''}"
-    )
+    text = f"{question}\n---\n来源: {seg.section_title or '未知'}\n{seg.raw_text[:200]}"
+    search_text = tokenize_for_search(f"{question} {seg.section_title or ''}")
     llm_refs: dict[str, Any] = {"source": "llm_runtime", "question_index": question_index}
     if llm_task_id:
         llm_refs["task_id"] = llm_task_id

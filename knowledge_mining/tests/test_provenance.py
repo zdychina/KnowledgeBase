@@ -144,7 +144,13 @@ class TestLlmResultRefsJson:
         )
         db = AssetCoreDB(pool)
         try:
-            db.upsert_snapshot("snap-1", "nh", "rh", "text/markdown")
+            db.upsert_snapshot(
+                domain="test-domain",
+                snapshot_id="snap-1",
+                normalized_content_hash="nh",
+                raw_content_hash="rh",
+                mime_type="text/markdown",
+            )
             db.insert_retrieval_unit(
                 unit_id="ru-1",
                 document_snapshot_id="snap-1",

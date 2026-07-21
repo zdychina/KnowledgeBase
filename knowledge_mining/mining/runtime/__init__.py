@@ -31,37 +31,86 @@ class RuntimeTracker:
 
     def complete_run(
         self, run_id: str, *, build_id: str | None = None,
-        metadata_json: dict[str, Any] | None = None, **counters: int,
-    ) -> None:
-        self._db.update_run_status(
+        metadata_json: dict[str, Any] | None = None,
+        domain: str | None = None,
+        **counters: int,
+    ) -> bool:
+        return self._db.update_run_status(
             run_id, "completed", finished_at=_utcnow(), build_id=build_id,
-            metadata_json=metadata_json, **counters,
+            metadata_json=metadata_json, current_stage="done", domain=domain,
+            expected_statuses=("queued", "running") if domain else None,
+            **counters,
         )
 
-    def fail_run(self, run_id: str, error_summary: str, **counters: int) -> None:
-        self._db.update_run_status(
+    def fail_run(
+        self,
+        run_id: str,
+        error_summary: str,
+        *,
+        current_stage: str = "mining",
+        domain: str | None = None,
+        **counters: int,
+    ) -> bool:
+        if domain is not None:
+            updated = self._db.fail_run(run_id, domain, error_summary, current_stage)
+            if not counters or not updated:
+                return updated
+            return self._db.update_run_status(
+                run_id, "failed", domain=domain, current_stage=current_stage,
+                **counters,
+            )
+        return self._db.update_run_status(
             run_id, "failed", finished_at=_utcnow(), error_summary=error_summary, **counters,
         )
+
+    def set_run_phase(
+        self, run_id: str, domain: str, current_stage: str, *, status: str = "running",
+    ) -> bool:
+        return self._db.set_run_phase(run_id, domain, current_stage, status=status)
+
+    def finish_ingest(
+        self, run_id: str, domain: str, total_documents: int,
+        ingest_summary: dict[str, Any],
+    ) -> bool:
+        return self._db.finish_ingest(run_id, domain, total_documents, ingest_summary)
 
     def interrupt_run(self, run_id: str, **counters: int) -> None:
         self._db.update_run_status(run_id, "interrupted", finished_at=_utcnow(), **counters)
 
     def pause_for_review(
         self, run_id: str, *, subloop_stage: str,
-        ontology_version_id: str | None = None, **counters: int,
-    ) -> None:
+        ontology_version_id: str | None = None,
+        domain: str | None = None,
+        **counters: int,
+    ) -> bool:
         """B6：把 run 置入人审暂停态（awaiting_review）并记下卡在哪道 Gate。
 
         不写 finished_at——run 还没结束，只是等人拍板后 resume 续跑。
         """
-        self._db.update_run_status(
+        return self._db.update_run_status(
             run_id, "awaiting_review", subloop_stage=subloop_stage,
-            ontology_version_id=ontology_version_id, **counters,
+            ontology_version_id=ontology_version_id, current_stage="review",
+            domain=domain,
+            expected_statuses=("queued", "running") if domain else None,
+            **counters,
         )
 
-    def resume_running(self, run_id: str, *, subloop_stage: str | None = None) -> None:
+    def resume_running(
+        self,
+        run_id: str,
+        *,
+        subloop_stage: str | None = None,
+        domain: str | None = None,
+    ) -> bool:
         """B6：人审提交后把 run 拨回 running，subloop_stage 推进到下一检查点。"""
-        self._db.update_run_status(run_id, "running", subloop_stage=subloop_stage)
+        return self._db.update_run_status(
+            run_id,
+            "running",
+            subloop_stage=subloop_stage,
+            current_stage="mining",
+            domain=domain,
+            expected_statuses=("awaiting_review", "running") if domain else None,
+        )
 
     # -- Run documents --
 

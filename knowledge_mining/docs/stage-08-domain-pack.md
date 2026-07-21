@@ -7,7 +7,7 @@
 ## 1. 职责概述
 
 Domain Pack 配置体系负责：
-1. 定义 domain 注册表 (domain_registry.yaml): domain_id → scenario_pack + DB 配置
+1. 定义 domain 注册表 (`main_control_service/config/domain_registry.yaml`): domain_id → scenario_pack + DB 配置
 2. 从 domain.yaml 加载领域知识到 `DomainProfile` 不可变对象
 3. 将领域特定的实体类型、语义角色、提取规则、检索策略等参数化
 4. 使不同领域可通过配置切换，无需修改核心代码
@@ -196,7 +196,7 @@ retrieval_policy: {...}
 
 ## 4. 加载流程
 
-### 4.1 domain_registry.yaml
+### 4.1 main_control_service/config/domain_registry.yaml
 
 ```yaml
 domains:
@@ -220,9 +220,7 @@ _resolve_scenario_pack(domain_id)
   ↓ resolve_domain(domain_id) → registry entry
   ↓ entry["scenario_pack"] → pack name
   ↓
-scenario_packs/<pack>/domain.yaml
-  ↓ (如果不存在)
-domain_packs/<domain_id>/domain.yaml  ← legacy fallback + deprecation warning
+main_control_service/config/scenario_packs/<pack>/domain.yaml
   ↓
 _parse_domain_yaml(data, domain_id)
   ↓ 检测分区 vs 扁平结构
@@ -238,8 +236,7 @@ DomainProfile (frozen)
 
 - domain_id 不在 registry → `KeyError`
 - domain 被禁用 → `ValueError`
-- YAML 文件不存在 → `FileNotFoundError` (搜索两个路径)
-- 使用 legacy 路径 → `DeprecationWarning`
+- YAML 文件不存在 → `FileNotFoundError`（只检查 canonical 配置目录）
 
 ---
 
@@ -281,9 +278,9 @@ DomainProfile (frozen)
 | 文件 | 行数 | 职责 |
 |------|------|------|
 | `mining/infra/domain_pack.py` | 381 | DomainProfile + RetrievalPolicy + 加载/解析逻辑 |
-| `domain_registry.yaml` | — | domain_id → scenario_pack + DB 配置 |
-| `scenario_packs/cloud_core_network/domain.yaml` | — | 云核心网领域配置 |
-| `scenario_packs/generic/domain.yaml` | — | 通用领域配置 |
+| `main_control_service/config/domain_registry.yaml` | — | domain_id → scenario_pack + DB 配置 |
+| `main_control_service/config/scenario_packs/cloud_core_network/domain.yaml` | — | 云核心网领域配置 |
+| `main_control_service/config/scenario_packs/generic/domain.yaml` | — | 通用领域配置 |
 | `mining/jobs/run.py:460-469` | — | PipelineConfig 组装 (传入 profile) |
 
 ---
@@ -309,7 +306,7 @@ DomainProfile (frozen)
 5. **heading_role_keywords 未被任何 stage 使用**: 已定义但未发现引用
 6. **role_keyword_rules 未被任何 stage 使用**: 同上
 7. **eval_questions 未被 pipeline 使用**: 定义了评估问题但没有自动化评估流程
-8. **两个路径 (scenario_packs vs domain_packs)**: 维护成本高，legacy fallback 应设置过期时间
+8. **canonical 配置发布**: 修改注册表或领域包后，需要配套校验与部署流程保证消费者同步读取
 9. **_REPO_ROOT 通过 parents[3] 计算**: 依赖文件层级结构，如果文件移动会静默出错
 10. **DomainProfile 字段过多**: 13 个字段，部分字段未使用，增加了理解成本
 11. **无 profile 合并/继承**: 不支持 profile 之间的继承关系（如 generic → cloud_core_network）

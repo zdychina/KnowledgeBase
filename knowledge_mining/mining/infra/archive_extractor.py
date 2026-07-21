@@ -1,13 +1,12 @@
-"""Archive extraction — ZIP, CHM, HDX.
+"""Archive extraction — pure Python (ZIP only).
 
-CHM uses Windows hh.exe or 7z to decompress into individual HTML files.
-HDX (Huawei HedEx) is a ZIP variant extracted via stdlib.
+RAR is a proprietary format with no pure-Python decoder, so we don't
+auto-extract it. Users should convert RAR to ZIP before uploading, or
+extract locally and upload the individual files.
 """
 from __future__ import annotations
 
 import logging
-import shutil
-import subprocess
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -80,73 +79,15 @@ def extract_zip(archive_path: Path, dest_dir: Path) -> ExtractResult:
     return ExtractResult(extracted_files=extracted)
 
 
-def extract_chm(archive_path: Path, dest_dir: Path) -> ExtractResult:
-    """Extract a .chm file into dest_dir. Prefers Windows hh.exe; falls back to 7z."""
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    hh = shutil.which("hh")
-    if hh is None:
-        candidate = Path(r"C:\Windows\hh.exe")
-        if candidate.exists():
-            hh = str(candidate)
-
-    if hh is not None:
-        subprocess.run(
-            [hh, "-decompile", str(dest_dir.resolve()), str(archive_path.resolve())],
-            check=False,
-            capture_output=True,
-        )
-        if any(dest_dir.iterdir()):
-            return _list_extracted(dest_dir)
-
-    sevenz = shutil.which("7z") or shutil.which("7z.exe")
-    if sevenz is not None:
-        result = subprocess.run(
-            [sevenz, "x", str(archive_path), f"-o{dest_dir}", "-y"],
-            check=False,
-            capture_output=True,
-        )
-        if result.returncode == 0 and any(dest_dir.iterdir()):
-            return _list_extracted(dest_dir)
-        return ExtractResult(
-            error=f"7z failed for {archive_path}: {result.stderr.decode('utf-8', errors='replace')}"
-        )
-
-    return ExtractResult(error="No CHM extractor available. Need Windows hh.exe or 7-Zip on PATH.")
-
-
-def extract_hdx(archive_path: Path, dest_dir: Path) -> ExtractResult:
-    """Extract a .hdx file (Huawei HedEx zip archive)."""
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    if not zipfile.is_zipfile(archive_path):
-        return ExtractResult(error=f"{archive_path} is not a valid zip archive (.hdx)")
-    # HDX is just a ZIP — reuse extract_zip
-    return extract_zip(archive_path, dest_dir)
-
-
-def _list_extracted(directory: Path) -> ExtractResult:
-    """List all files under directory relative to it."""
-    files = [
-        str(p.relative_to(directory)).replace("\\", "/")
-        for p in sorted(directory.rglob("*"))
-        if p.is_file()
-    ]
-    return ExtractResult(extracted_files=files)
-
-
 def extract_archive(archive_path: Path, dest_dir: Path) -> ExtractResult:
-    """Extract an archive. On success, deletes the original archive file."""
+    """Extract a ZIP archive. On success, deletes the original archive file."""
     ext = archive_path.suffix.lower()
 
     if ext == ".zip":
         result = extract_zip(archive_path, dest_dir)
-    elif ext == ".chm":
-        result = extract_chm(archive_path, dest_dir)
-    elif ext == ".hdx":
-        result = extract_hdx(archive_path, dest_dir)
     else:
         return ExtractResult(
-            error=f"不支持自动解压 {ext} 格式",
+            error=f"不支持自动解压 {ext} 格式，请使用 ZIP 或手动解压后上传",
         )
 
     if result.error is None and result.extracted_files:

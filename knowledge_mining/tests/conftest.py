@@ -1,7 +1,7 @@
 """Shared test fixtures — PostgreSQL backend.
 
-All DB fixtures connect to the real PostgreSQL instance configured in .env.
-Tables are cleaned up after each test via TRUNCATE.
+Only tests requesting a DB fixture initialize PostgreSQL. Database setup and
+cleanup are refused unless the configured database name ends with ``_test``.
 """
 from __future__ import annotations
 
@@ -11,15 +11,32 @@ from knowledge_mining.mining.infra.pg_config import MiningDbConfig
 from knowledge_mining.mining.infra.pg_schema import ensure_schema
 
 
+def _assert_disposable_database(db_config) -> None:
+    """Refuse schema setup and cleanup unless the configured DB is disposable."""
+    dbname = db_config.pg_dbname.strip().lower()
+    if not dbname.endswith("_test"):
+        raise RuntimeError(
+            f"Refusing to use non-disposable PostgreSQL database {dbname!r}; "
+            "test database names must end with '_test'."
+        )
+
+
 @pytest.fixture(scope="session")
 def db_config():
     """Load PG config once per test session."""
     return MiningDbConfig()
 
 
-@pytest.fixture(autouse=True, scope="session")
+@pytest.fixture(scope="session", autouse=True)
+def _guard_test_database(db_config):
+    """Reject a non-test database for every test session without connecting."""
+    _assert_disposable_database(db_config)
+
+
+@pytest.fixture(scope="session")
 def _ensure_schema(db_config):
     """Ensure database + schema exist before any test runs."""
+    _assert_disposable_database(db_config)
     ensure_schema(db_config)
 
 
@@ -74,7 +91,7 @@ def _truncate_all(conn):
 
 
 @pytest.fixture
-def asset_db(db_config):
+def asset_db(db_config, _ensure_schema):
     """Provide an AssetCoreDB connected to PG, with cleanup after test."""
     from knowledge_mining.mining.infra.db import AssetCoreDB
     import psycopg
@@ -102,9 +119,15 @@ def asset_db(db_config):
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_db(db_config):
+def _cleanup_db(request):
     """Auto-cleanup all tables BEFORE each test for full isolation."""
+    if "_ensure_schema" not in request.fixturenames:
+        yield
+        return
+
     import psycopg
+    db_config = request.getfixturevalue("db_config")
+    _assert_disposable_database(db_config)
     conn = psycopg.connect(db_config.conninfo, autocommit=True)
     try:
         _truncate_all(conn)
@@ -113,7 +136,7 @@ def _cleanup_db(db_config):
     yield
 
 @pytest.fixture
-def runtime_db(db_config):
+def runtime_db(db_config, _ensure_schema):
     """Provide a MiningRuntimeDB connected to PG, with cleanup after test."""
     from knowledge_mining.mining.infra.db import MiningRuntimeDB
     import psycopg

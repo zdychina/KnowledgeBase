@@ -94,6 +94,7 @@ class PipelineConfig:
     Each field is a pluggable operator. Swap any operator to customize behavior.
     """
 
+    domain: str
     parser_factory: Callable[[str], Any] = field(default=None)
     segmenter: Segmenter | None = None
     enricher: Any | None = None  # Enricher Protocol（篇章本职：语义角色 + 内容质量）
@@ -333,14 +334,12 @@ class StreamingPipeline:
         *,
         run_id: str | None = None,
         tracker: Any | None = None,
-        cancel_check: Callable[[], bool] | None = None,
     ) -> None:
         """stages 元素为 (name, fn, n_workers) 或可选带第 4 项
         (name, fn, n_workers, summary_fn)，summary_fn 把完成 ctx 映射成 output_summary。"""
         self._stages = stages
         self._queues: list[Queue] = [Queue() for _ in range(len(stages) + 1)]
         self._threads: list[list[Thread]] = []
-        self._cancel_check = cancel_check
 
         for i, spec in enumerate(stages):
             name, fn, n = spec[0], spec[1], spec[2]
@@ -358,20 +357,10 @@ class StreamingPipeline:
             self._threads.append(stage_threads)
 
     def process_all(self, items: list[DocumentContext]) -> list[DocumentContext]:
-        """Submit all items, wait for completion, return results in input order.
-
-        If a cancel_check is set, stops submitting remaining items once it
-        returns True. Items already in flight still complete so workers and
-        queues drain cleanly.
-        """
+        """Submit all items, wait for completion, return results in input order."""
         n = len(items)
-        submitted = 0
         for i, item in enumerate(items):
-            if self._cancel_check and self._cancel_check():
-                logger.info("Pipeline cancelled: %d/%d items submitted", submitted, n)
-                break
             self._queues[0].put(item.with_updates(sequence_id=i))
-            submitted += 1
 
         # Send sentinels stage-by-stage to shut down workers
         for i, stage_threads in enumerate(self._threads):
@@ -518,7 +507,7 @@ def embedding_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContex
 def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     """Stage 7: Write all results to DB (serial, 1 worker for thread safety).
 
-    Handles: select_snapshot → UPDATE cleanup → commit_segments → build_relations
+    Handles: select_snapshot → commit_segments → build_relations
     → build_retrieval_units → insert embeddings → tracker.commit_document.
 
     On failure, calls tracker.fail_document and returns ctx with error set.
@@ -580,35 +569,17 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
             )
             run_id = _run_id["run_id"] if _run_id else None
 
-        action = ctx.action
-        existing_doc = ctx.existing_doc
         ru_id_map: dict[str, str] = {}  # declared before the transaction for use by embeddings
 
         # ===================== atomic per-document write =====================
         # Everything that lands in asset_core for this document happens inside one
-        # transaction: snapshot/link, old-snapshot cleanup, segments, relations,
+        # transaction: snapshot/link, segments, relations,
         # retrieval units. On any error the whole block rolls back, leaving no
         # half-written ("snapshot but no segments") state behind.
         with asset_db.transaction():
-            domain = getattr(cfg.domain_profile, "domain_id", None) or "default"
             document_id, snapshot_id, link_id = select_or_create_snapshot(
-                asset_db, raw, doc_profile, batch_id=batch_id, domain=domain,
+                asset_db, raw, doc_profile, domain=cfg.domain, batch_id=batch_id,
             )
-
-            # --- UPDATE cleanup: remove stale snapshot data (same transaction) ---
-            if action == "UPDATE" and existing_doc is not None:
-                old_links = asset_db._fetchall(
-                    "SELECT document_snapshot_id FROM asset_document_snapshot_links "
-                    "WHERE document_id = %s ORDER BY linked_at DESC",
-                    (existing_doc["id"],),
-                )
-                for old_link in old_links[1:] if len(old_links) > 1 else []:
-                    old_snap_id = old_link["document_snapshot_id"]
-                    if old_snap_id == snapshot_id:
-                        continue  # never wipe the snapshot we are about to fill
-                    asset_db.delete_retrieval_units_by_snapshot(old_snap_id)
-                    asset_db.delete_relations_by_snapshot(old_snap_id)
-                    asset_db.delete_segments_by_snapshot(old_snap_id)
 
             # --- only write content when the snapshot is empty ---
             # existing_count > 0 means this exact content (same hash) was already

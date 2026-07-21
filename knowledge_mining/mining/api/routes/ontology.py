@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from knowledge_mining.mining.api.domain_scope import require_domain
 from knowledge_mining.mining.infra.ontology_store import (
     OntologyStore, GraphStore, find_duplicate_type,
 )
@@ -31,8 +32,8 @@ router = APIRouter(prefix="/api", tags=["ontology"])
 _DEFAULT_DOMAIN = "cloud_core_network"
 
 
-def _stores(request: Request) -> tuple[OntologyStore, GraphStore]:
-    pool = request.app.state.sync_pool
+def _stores(request: Request, domain: str) -> tuple[OntologyStore, GraphStore]:
+    pool = request.app.state.domain_pools.sync_pool(require_domain(domain))
     return OntologyStore(pool), GraphStore(pool)
 
 
@@ -139,8 +140,8 @@ async def bootstrap_ontology_route(body: BootstrapRequest, request: Request) -> 
     """上传一份本体 YAML 文件内容引种 v1（幂等：已有 active 版本则跳过）。"""
     from knowledge_mining.mining.infra.ontology_bootstrap import bootstrap_ontology_from_text
 
-    onto, _ = _stores(request)
     domain = body.domain or _DEFAULT_DOMAIN
+    onto, _ = _stores(request, domain)
     try:
         result = await _run(
             bootstrap_ontology_from_text,
@@ -158,7 +159,7 @@ async def bootstrap_ontology_route(body: BootstrapRequest, request: Request) -> 
 @router.get("/ontology/versions")
 async def list_ontology_versions(request: Request, domain: str = _DEFAULT_DOMAIN) -> dict:
     """某领域全部本体版本（版本治理页）。"""
-    onto, _ = _stores(request)
+    onto, _ = _stores(request, domain)
     versions = await _run(onto.list_versions, domain)
     return {"domain": domain, "items": [dict(v) for v in versions]}
 
@@ -166,7 +167,7 @@ async def list_ontology_versions(request: Request, domain: str = _DEFAULT_DOMAIN
 @router.get("/ontology/active")
 async def get_active_ontology(request: Request, domain: str = _DEFAULT_DOMAIN) -> dict:
     """当前 active 版本 + 它的点类型 / 边类型（抽取约束的真相源）。"""
-    onto, _ = _stores(request)
+    onto, _ = _stores(request, domain)
     version = await _run(onto.active_version, domain)
     if not version:
         return {"domain": domain, "version": None, "node_types": [], "relation_types": []}
@@ -191,7 +192,7 @@ async def list_ontology_candidates(
     每条 node_type 候选附 duplicate_of：与当前 active 本体的现有类型判重，命中则为
     现有类型名（前端显示红色"疑似重复"徽标），无则 None。relation_type 暂不判重。
     """
-    onto, graph = _stores(request)
+    onto, graph = _stores(request, domain)
     rows = await _run(onto.list_candidates, domain, status=status)
     node_types = await _run(onto.active_node_types, domain)
     existing = [_existing_type_for_dup(n) for n in node_types]
@@ -230,9 +231,10 @@ async def list_ontology_candidates(
 @router.post("/ontology/candidates/{candidate_id}/review")
 async def review_ontology_candidate(
     candidate_id: str, body: ReviewCandidateRequest, request: Request,
+    domain: str = _DEFAULT_DOMAIN,
 ) -> dict:
     """单条裁决（accept 可改名 / reject）。只标状态，不升版——升版走 /ontology/promote。"""
-    onto, _ = _stores(request)
+    onto, _ = _stores(request, domain)
     try:
         await _run(
             onto.review_candidate, candidate_id,
@@ -246,8 +248,8 @@ async def review_ontology_candidate(
 @router.post("/ontology/promote")
 async def promote_candidates(body: PromoteRequest, request: Request) -> dict:
     """把全部 accepted 候选并入一个新 active 本体版本（无 accepted → 不升版）。"""
-    onto, _ = _stores(request)
     domain = body.domain or _DEFAULT_DOMAIN
+    onto, _ = _stores(request, domain)
     new_vid = await _run(
         onto.promote_accepted_candidates, domain,
         created_by=body.created_by, note=body.note,
@@ -260,7 +262,7 @@ async def promote_candidates(body: PromoteRequest, request: Request) -> dict:
 @router.get("/ontology/draft")
 async def get_ontology_draft(request: Request, domain: str = _DEFAULT_DOMAIN) -> dict:
     """取该领域 draft 版本及其点/边类型。无 draft → version=null、空列表（前端据此从 active 克隆）。"""
-    onto, _ = _stores(request)
+    onto, _ = _stores(request, domain)
     draft = await _run(onto.get_draft_version, domain)
     if not draft:
         return {"domain": domain, "version": None, "node_types": [], "relation_types": []}
@@ -277,8 +279,8 @@ async def get_ontology_draft(request: Request, domain: str = _DEFAULT_DOMAIN) ->
 @router.put("/ontology/draft")
 async def save_ontology_draft(body: SaveDraftRequest, request: Request) -> dict:
     """整份覆盖式保存草稿：后端 get-or-create draft 版本 → 清空旧类型 → 按提交内容重写。"""
-    onto, _ = _stores(request)
     domain = body.domain or _DEFAULT_DOMAIN
+    onto, _ = _stores(request, domain)
     node_types = [
         {"name": n.name, "layer": n.layer, "is_strong": n.is_strong,
          "definition": n.definition, "examples": n.examples_json}
@@ -304,8 +306,8 @@ async def save_ontology_draft(body: SaveDraftRequest, request: Request) -> dict:
 @router.post("/ontology/draft/publish")
 async def publish_ontology_draft(body: PublishDraftRequest, request: Request) -> dict:
     """发布：把 draft 激活为新 active（旧 active → superseded）。无 draft → 400。"""
-    onto, _ = _stores(request)
     domain = body.domain or _DEFAULT_DOMAIN
+    onto, _ = _stores(request, domain)
     new_vid = await _run(onto.publish_draft, domain)
     if new_vid is None:
         raise HTTPException(400, "没有可发布的草稿，请先保存草稿")
@@ -316,10 +318,10 @@ async def publish_ontology_draft(body: PublishDraftRequest, request: Request) ->
 
 @router.get("/mentions/pending")
 async def list_pending_mentions(
-    request: Request, run_id: str | None = None,
+    request: Request, run_id: str | None = None, domain: str = _DEFAULT_DOMAIN,
 ) -> dict:
     """Gate2 评审列表：待人审 mention（给 run_id 则只列该 run 处理的快照）。"""
-    _, graph = _stores(request)
+    _, graph = _stores(request, domain)
     if run_id:
         rows = await _run(graph.pending_mentions_for_run, run_id)
     else:
@@ -332,12 +334,13 @@ async def resolve_mention_route(
     mention_id: str, body: ResolveMentionRequest, request: Request,
 ) -> dict:
     """单条裁决：merge（指向已有对象）/ new（新建对象）/ reject（丢弃）。"""
-    _, graph = _stores(request)
+    domain = body.domain or _DEFAULT_DOMAIN
+    _, graph = _stores(request, domain)
     try:
         entity_id = await _run(
             graph.resolve_mention, mention_id,
             action=body.action, entity_id=body.entity_id,
-            domain_id=body.domain or _DEFAULT_DOMAIN,
+            domain_id=domain,
             canonical_name=body.canonical_name, node_type=body.node_type,
         )
     except ValueError as e:
@@ -354,7 +357,7 @@ async def suggest_entities_route(
     limit: int = Query(5, ge=1, le=20),
 ) -> dict:
     """§14.3：Gate2 实时推荐——同类型下与提及名双向包含的已有对象 top-N（点击即合并）。"""
-    _, graph = _stores(request)
+    _, graph = _stores(request, domain)
     rows = await _run(
         graph.suggest_entities_for_mention, domain,
         mention_text=mention_text, node_type=node_type, limit=limit,
@@ -373,11 +376,12 @@ async def resolve_mentions_batch_route(
         raise HTTPException(400, f"unknown action: {body.action!r}")
     if body.action == "merge" and not body.entity_id:
         raise HTTPException(400, "批量合并需要 entity_id")
-    _, graph = _stores(request)
+    domain = body.domain or _DEFAULT_DOMAIN
+    _, graph = _stores(request, domain)
     results = await _run(
         graph.resolve_mentions_batch, body.mention_ids,
         action=body.action, entity_id=body.entity_id,
-        domain_id=body.domain or _DEFAULT_DOMAIN, node_type=body.node_type,
+        domain_id=domain, node_type=body.node_type,
     )
     ok = sum(1 for r in results if r.get("ok"))
     return {"action": body.action, "total": len(results), "ok": ok,
@@ -396,7 +400,7 @@ async def list_graph_entities(
     offset: int = Query(0, ge=0),
 ) -> dict:
     """对象检索：按领域过滤，可选 node_type 与名称模糊匹配。"""
-    _, graph = _stores(request)
+    _, graph = _stores(request, domain)
     total = await _run(graph.count_entities, domain, node_type=type, q=q)
     rows = await _run(
         graph.list_entities, domain, node_type=type, q=q, limit=limit, offset=offset,
@@ -438,19 +442,22 @@ async def _neighbors_payload(graph: GraphStore, entity_id: str, hops: int = 1) -
 @router.get("/graph/entities/{entity_id}/neighbors")
 async def get_entity_neighbors(
     entity_id: str, request: Request, hops: int = Query(1, ge=1, le=3),
+    domain: str = _DEFAULT_DOMAIN,
 ) -> dict:
     """邻域多跳：返回边 + 涉及的对象（节点），供前端力导向图直接渲染。"""
-    _, graph = _stores(request)
+    _, graph = _stores(request, domain)
     return await _neighbors_payload(graph, entity_id, hops)
 
 
 @router.post("/graph/entities/merge")
 async def merge_entities_route(body: MergeEntitiesRequest, request: Request) -> dict:
     """合并实体：被并实体提及改指主实体 → scoped 重算受影响边。返回主实体新邻域。"""
-    _, graph = _stores(request)
     domain = body.domain or _DEFAULT_DOMAIN
+    _, graph = _stores(request, domain)
     affected = await _run(graph.merge_entities, domain, body.primary_id, body.drop_ids)
-    edges = await _run(scoped_recompute, request.app.state.sync_pool, domain, affected)
+    edges = await _run(
+        scoped_recompute, request.app.state.domain_pools.sync_pool(domain), domain, affected
+    )
     neighbors = await _neighbors_payload(graph, body.primary_id, hops=1)
     return {"primary_id": body.primary_id, "recomputed_edges": edges,
             "affected": affected, "neighbors": neighbors}
@@ -459,10 +466,12 @@ async def merge_entities_route(body: MergeEntitiesRequest, request: Request) -> 
 @router.post("/graph/entities/{entity_id}/retype")
 async def retype_entity_route(entity_id: str, body: RetypeEntityRequest, request: Request) -> dict:
     """改类型：撞名自动并入 → scoped 重算。返回受影响实体新邻域。"""
-    _, graph = _stores(request)
     domain = body.domain or _DEFAULT_DOMAIN
+    _, graph = _stores(request, domain)
     affected = await _run(graph.retype_entity, domain, entity_id, body.new_type)
-    edges = await _run(scoped_recompute, request.app.state.sync_pool, domain, affected)
+    edges = await _run(
+        scoped_recompute, request.app.state.domain_pools.sync_pool(domain), domain, affected
+    )
     primary = affected[0] if affected else entity_id
     neighbors = await _neighbors_payload(graph, primary, hops=1)
     return {"entity_id": entity_id, "primary_id": primary,
@@ -473,14 +482,16 @@ async def retype_entity_route(entity_id: str, body: RetypeEntityRequest, request
 async def delete_entity_route(entity_id: str, request: Request,
                               domain: str = _DEFAULT_DOMAIN) -> dict:
     """删除实体：删实体+提及+相连边（纯减法，无需重算）。"""
-    _, graph = _stores(request)
+    _, graph = _stores(request, domain)
     await _run(graph.delete_entity, domain, entity_id)
     return {"entity_id": entity_id, "deleted": True}
 
 
 @router.get("/graph/evidence/{target_id}")
-async def get_target_evidence(target_id: str, request: Request) -> dict:
+async def get_target_evidence(
+    target_id: str, request: Request, domain: str = _DEFAULT_DOMAIN
+) -> dict:
     """出处回链：某对象/边/mention 的全部证据（带原文片段引用）。"""
-    _, graph = _stores(request)
+    _, graph = _stores(request, domain)
     rows = await _run(graph.evidence_for_target, target_id)
     return {"target_id": target_id, "items": [dict(r) for r in rows]}

@@ -217,16 +217,55 @@ class _DB:
 # ===================================================================
 
 class AssetCoreDB(_DB):
+
+    def __init__(self, pool: ConnectionPool) -> None:
+        super().__init__(pool)
+        self._domain_publish_locks: contextvars.ContextVar = contextvars.ContextVar(
+            f"domain_publish_locks_{id(self)}", default=frozenset()
+        )
+
+    @contextmanager
+    def transaction(self):
+        """Reset the acquired publish-lock set for each outer transaction."""
+        outer = self._tx_conn.get() is None
+        token = (
+            self._domain_publish_locks.set(frozenset())
+            if outer
+            else None
+        )
+        try:
+            with super().transaction():
+                yield
+        finally:
+            if token is not None:
+                self._domain_publish_locks.reset(token)
+
+    def acquire_domain_publish_lock(self, domain: str) -> None:
+        """Serialize active-release changes for one domain in this transaction."""
+        if self._tx_conn.get() is None:
+            raise RuntimeError(
+                "acquire_domain_publish_lock() must be called inside transaction()"
+            )
+        held_domains = self._domain_publish_locks.get()
+        if domain in held_domains:
+            return
+        self._execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+            (f"asset-publish:{domain}",),
+        )
+        self._domain_publish_locks.set(held_domains | {domain})
+
     """Adapter for asset_core tables — Mining writes content assets here."""
 
     # -- source batches --
 
     def upsert_source_batch(
         self,
+        *,
+        domain: str,
         batch_id: str,
         batch_code: str,
         source_type: str,
-        domain: str = "default",
         description: str | None = None,
         created_by: str | None = None,
         metadata_json: dict | None = None,
@@ -235,44 +274,60 @@ class AssetCoreDB(_DB):
         self._execute(
             """INSERT INTO asset_source_batches (id, batch_code, source_type, domain, description, created_by, created_at, metadata_json)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT(id) DO UPDATE SET batch_code=excluded.batch_code, source_type=excluded.source_type, domain=excluded.domain""",
+               ON CONFLICT(id) DO UPDATE SET
+                   batch_code=excluded.batch_code,
+                   source_type=excluded.source_type,
+                   description=excluded.description,
+                   created_by=excluded.created_by,
+                   metadata_json=excluded.metadata_json
+               WHERE asset_source_batches.domain = excluded.domain""",
             (batch_id, batch_code, source_type, domain, description, created_by, now, _json_dumps(metadata_json)),
         )
+        row = self._fetchone(
+            "SELECT id FROM asset_source_batches WHERE id = %s AND domain = %s",
+            (batch_id, domain),
+        )
+        if row is None:
+            raise ValueError("domain_mismatch")
         return batch_id
 
-    def get_source_batch(self, batch_id: str) -> dict[str, Any] | None:
-        return self._fetchone("SELECT * FROM asset_source_batches WHERE id = %s", (batch_id,))
+    def get_source_batch(self, *, domain: str, batch_id: str) -> dict[str, Any] | None:
+        return self._fetchone(
+            "SELECT * FROM asset_source_batches WHERE id = %s AND domain = %s",
+            (batch_id, domain),
+        )
 
-    def find_batch_by_code(self, batch_code: str, domain: str | None = None) -> dict[str, Any] | None:
-        if domain:
-            return self._fetchone(
-                "SELECT * FROM asset_source_batches WHERE batch_code = %s AND domain = %s",
-                (batch_code, domain),
-            )
-        return self._fetchone("SELECT * FROM asset_source_batches WHERE batch_code = %s", (batch_code,))
+    def find_batch_by_code(self, *, domain: str, batch_code: str) -> dict[str, Any] | None:
+        return self._fetchone(
+            "SELECT * FROM asset_source_batches WHERE batch_code = %s AND domain = %s",
+            (batch_code, domain),
+        )
 
     # -- documents --
 
     def upsert_document(
         self,
+        *,
+        domain: str,
         document_id: str,
         document_key: str,
         document_name: str | None = None,
         document_type: str | None = None,
         metadata_json: dict | None = None,
-        domain: str = "default",
     ) -> str:
         now = _utcnow()
-        # asset_documents 唯一键是 (domain, document_key)——同一 document_key 可在不同
-        # 域各存一份，冲突键必须带 domain，否则报 no unique constraint matching ON CONFLICT。
         self._execute(
-            """INSERT INTO asset_documents (id, domain, document_key, document_name, document_type, metadata_json, created_at)
+            """INSERT INTO asset_documents
+                   (id, domain, document_key, document_name, document_type, metadata_json, created_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT(domain, document_key) DO UPDATE SET
                    document_name = COALESCE(excluded.document_name, asset_documents.document_name),
                    document_type = COALESCE(excluded.document_type, asset_documents.document_type),
                    metadata_json = excluded.metadata_json""",
-            (document_id, domain, document_key, document_name, document_type, _json_dumps(metadata_json), now),
+            (
+                document_id, domain, document_key, document_name, document_type,
+                _json_dumps(metadata_json), now,
+            ),
         )
         row = self._fetchone(
             "SELECT id FROM asset_documents WHERE domain = %s AND document_key = %s",
@@ -280,21 +335,133 @@ class AssetCoreDB(_DB):
         )
         return row["id"] if row else document_id
 
-    def get_document_by_key(self, document_key: str, domain: str | None = None) -> dict[str, Any] | None:
-        if domain is not None:
-            return self._fetchone(
-                "SELECT * FROM asset_documents WHERE domain = %s AND document_key = %s",
-                (domain, document_key),
-            )
-        return self._fetchone("SELECT * FROM asset_documents WHERE document_key = %s", (document_key,))
+    def get_document_by_key(self, *, domain: str, document_key: str) -> dict[str, Any] | None:
+        return self._fetchone(
+            "SELECT * FROM asset_documents WHERE domain = %s AND document_key = %s",
+            (domain, document_key),
+        )
 
-    def get_document(self, document_id: str) -> dict[str, Any] | None:
-        return self._fetchone("SELECT * FROM asset_documents WHERE id = %s", (document_id,))
+    def get_document(self, *, domain: str, document_id: str) -> dict[str, Any] | None:
+        return self._fetchone(
+            "SELECT * FROM asset_documents WHERE id = %s AND domain = %s",
+            (document_id, domain),
+        )
+
+    def get_document_lifecycle_state(
+        self,
+        *,
+        domain: str,
+        channel: str,
+        document_key: str,
+        normalized_content_hash: str,
+    ) -> dict[str, Any] | None:
+        """Return domain-local history and the published active selection.
+
+        The active release is the only source of current truth.  A newer build
+        or link that has not been published must not affect classification.
+        """
+        return self._fetchone(
+            """SELECT documents.id AS document_id,
+                      documents.domain AS document_domain,
+                      documents.document_key,
+                      history.historical_snapshot_id,
+                      history.historical_snapshot_hash,
+                      history.historical_link_id,
+                      history.historical_source_batch_id,
+                      COALESCE(history.historical_snapshot_complete, FALSE)
+                          AS historical_snapshot_complete,
+                      active.active_release_id,
+                      active.active_build_id,
+                      active.active_snapshot_id,
+                      active.active_snapshot_hash,
+                      active.active_source_batch_id,
+                      COALESCE(active.active_snapshot_complete, FALSE)
+                          AS active_snapshot_complete
+               FROM asset_documents AS documents
+               LEFT JOIN LATERAL (
+                   SELECT historical_snapshots.id AS historical_snapshot_id,
+                          historical_snapshots.normalized_content_hash
+                              AS historical_snapshot_hash,
+                          historical_links.id AS historical_link_id,
+                          historical_batches.id AS historical_source_batch_id,
+                          EXISTS (
+                              SELECT 1
+                              FROM asset_raw_segments AS historical_segments
+                              WHERE historical_segments.document_snapshot_id =
+                                    historical_snapshots.id
+                          ) AS historical_snapshot_complete
+                   FROM asset_document_snapshot_links AS historical_links
+                   JOIN asset_document_snapshots AS historical_snapshots
+                     ON historical_snapshots.id = historical_links.document_snapshot_id
+                    AND historical_snapshots.domain = %s
+                   LEFT JOIN asset_source_batches AS historical_batches
+                     ON historical_batches.id = historical_links.source_batch_id
+                    AND historical_batches.domain = %s
+                   WHERE historical_links.document_id = documents.id
+                     AND historical_snapshots.normalized_content_hash = %s
+                     AND (
+                         historical_links.source_batch_id IS NULL
+                         OR historical_batches.id IS NOT NULL
+                     )
+                   ORDER BY historical_links.linked_at DESC, historical_links.id DESC
+                   LIMIT 1
+               ) AS history ON TRUE
+               LEFT JOIN LATERAL (
+                   SELECT releases.id AS active_release_id,
+                          builds.id AS active_build_id,
+                          active_snapshots.id AS active_snapshot_id,
+                          active_snapshots.normalized_content_hash AS active_snapshot_hash,
+                          active_batches.id AS active_source_batch_id,
+                          EXISTS (
+                              SELECT 1
+                              FROM asset_raw_segments AS active_segments
+                              WHERE active_segments.document_snapshot_id = active_snapshots.id
+                          ) AS active_snapshot_complete
+                   FROM asset_publish_releases AS releases
+                   JOIN asset_builds AS builds
+                     ON builds.id = releases.build_id
+                    AND builds.domain = %s
+                   JOIN asset_build_document_snapshots AS selections
+                     ON selections.build_id = builds.id
+                    AND selections.document_id = documents.id
+                    AND selections.selection_status = 'active'
+                   JOIN asset_document_snapshots AS active_snapshots
+                     ON active_snapshots.id = selections.document_snapshot_id
+                    AND active_snapshots.domain = %s
+                   LEFT JOIN asset_source_batches AS active_batches
+                     ON active_batches.id = selections.source_batch_id
+                    AND active_batches.domain = %s
+                   WHERE releases.domain = %s
+                     AND releases.channel = %s
+                     AND releases.status = 'active'
+                     AND (
+                         selections.source_batch_id IS NULL
+                         OR active_batches.id IS NOT NULL
+                     )
+                   LIMIT 1
+               ) AS active ON TRUE
+               WHERE documents.domain = %s
+                 AND documents.document_key = %s""",
+            (
+                domain,
+                domain,
+                normalized_content_hash,
+                domain,
+                domain,
+                domain,
+                domain,
+                channel,
+                domain,
+                document_key,
+            ),
+        )
 
     # -- snapshots --
 
     def upsert_snapshot(
         self,
+        *,
+        domain: str,
         snapshot_id: str,
         normalized_content_hash: str,
         raw_content_hash: str,
@@ -304,19 +471,14 @@ class AssetCoreDB(_DB):
         tags_json: list | None = None,
         parser_profile_json: dict | None = None,
         metadata_json: dict | None = None,
-        domain: str = "default",
     ) -> str:
         now = _utcnow()
-        # 同 upsert_document：唯一键是 (domain, normalized_content_hash)——快照按域去重，
-        # 冲突键必须带 domain。
         self._execute(
             """INSERT INTO asset_document_snapshots
                    (id, domain, normalized_content_hash, raw_content_hash, mime_type, title,
-                    scope_json, tags_json, parser_profile_json, metadata_json, created_at)
+                     scope_json, tags_json, parser_profile_json, metadata_json, created_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT(domain, normalized_content_hash) DO UPDATE SET
-                   raw_content_hash = excluded.raw_content_hash,
-                   title = COALESCE(excluded.title, asset_document_snapshots.title)""",
+               ON CONFLICT(domain, normalized_content_hash) DO NOTHING""",
             (
                 snapshot_id, domain, normalized_content_hash, raw_content_hash, mime_type, title,
                 _json_dumps(scope_json), _json_dumps(tags_json),
@@ -324,31 +486,36 @@ class AssetCoreDB(_DB):
             ),
         )
         row = self._fetchone(
-            "SELECT id FROM asset_document_snapshots WHERE domain = %s AND normalized_content_hash = %s",
+            "SELECT id FROM asset_document_snapshots "
+            "WHERE domain = %s AND normalized_content_hash = %s",
             (domain, normalized_content_hash),
         )
         return row["id"] if row else snapshot_id
 
     def get_snapshot_by_hash(
-        self, normalized_content_hash: str, domain: str | None = None
+        self,
+        *,
+        domain: str,
+        normalized_content_hash: str,
     ) -> dict[str, Any] | None:
-        if domain is not None:
-            return self._fetchone(
-                "SELECT * FROM asset_document_snapshots WHERE domain = %s AND normalized_content_hash = %s",
-                (domain, normalized_content_hash),
-            )
         return self._fetchone(
-            "SELECT * FROM asset_document_snapshots WHERE normalized_content_hash = %s",
-            (normalized_content_hash,),
+            "SELECT * FROM asset_document_snapshots "
+            "WHERE domain = %s AND normalized_content_hash = %s",
+            (domain, normalized_content_hash),
         )
 
-    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
-        return self._fetchone("SELECT * FROM asset_document_snapshots WHERE id = %s", (snapshot_id,))
+    def get_snapshot(self, *, domain: str, snapshot_id: str) -> dict[str, Any] | None:
+        return self._fetchone(
+            "SELECT * FROM asset_document_snapshots WHERE id = %s AND domain = %s",
+            (snapshot_id, domain),
+        )
 
     # -- snapshot links --
 
     def insert_snapshot_link(
         self,
+        *,
+        domain: str,
         link_id: str,
         document_id: str,
         document_snapshot_id: str,
@@ -361,29 +528,62 @@ class AssetCoreDB(_DB):
         metadata_json: dict | None = None,
     ) -> str:
         now = _utcnow()
-        self._execute(
+        row = self._fetchone(
             """INSERT INTO asset_document_snapshot_links
                    (id, document_id, document_snapshot_id, source_batch_id, relative_path,
-                    source_uri, title, scope_json, tags_json, linked_at, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                     source_uri, title, scope_json, tags_json, linked_at, metadata_json)
+               SELECT %s, documents.id, snapshots.id, batches.id, %s, %s, %s, %s, %s, %s, %s
+               FROM asset_documents AS documents
+               JOIN asset_document_snapshots AS snapshots
+                 ON snapshots.id = %s AND snapshots.domain = %s
+               LEFT JOIN asset_source_batches AS batches
+                 ON batches.id = %s AND batches.domain = %s
+               WHERE documents.id = %s
+                 AND documents.domain = %s
+                 AND (%s OR batches.id IS NOT NULL)
+               RETURNING id""",
             (
-                link_id, document_id, document_snapshot_id, source_batch_id, relative_path,
-                source_uri, title, _json_dumps(scope_json), _json_dumps(tags_json), now,
-                _json_dumps(metadata_json),
+                link_id, relative_path, source_uri, title, _json_dumps(scope_json),
+                _json_dumps(tags_json), now, _json_dumps(metadata_json),
+                document_snapshot_id, domain, source_batch_id, domain,
+                document_id, domain, source_batch_id is None,
             ),
         )
+        if row is None:
+            raise ValueError("domain_mismatch")
         return link_id
 
-    def get_active_link(self, document_id: str) -> dict[str, Any] | None:
+    def get_active_link(self, *, domain: str, document_id: str) -> dict[str, Any] | None:
         return self._fetchone(
-            "SELECT * FROM asset_document_snapshot_links WHERE document_id = %s ORDER BY linked_at DESC LIMIT 1",
-            (document_id,),
+            """SELECT links.*, snapshots.normalized_content_hash
+               FROM asset_document_snapshot_links AS links
+               JOIN asset_documents AS documents
+                 ON documents.id = links.document_id AND documents.domain = %s
+               JOIN asset_document_snapshots AS snapshots
+                 ON snapshots.id = links.document_snapshot_id AND snapshots.domain = %s
+               LEFT JOIN asset_source_batches AS batches
+                 ON batches.id = links.source_batch_id
+               WHERE links.document_id = %s
+                 AND (links.source_batch_id IS NULL OR batches.domain = %s)
+               ORDER BY links.linked_at DESC
+               LIMIT 1""",
+            (domain, domain, document_id, domain),
         )
 
-    def get_links_by_snapshot(self, snapshot_id: str) -> list[dict[str, Any]]:
+    def get_links_by_snapshot(self, *, domain: str, snapshot_id: str) -> list[dict[str, Any]]:
         return self._fetchall(
-            "SELECT * FROM asset_document_snapshot_links WHERE document_snapshot_id = %s",
-            (snapshot_id,),
+            """SELECT links.*
+               FROM asset_document_snapshot_links AS links
+               JOIN asset_documents AS documents
+                 ON documents.id = links.document_id AND documents.domain = %s
+               JOIN asset_document_snapshots AS snapshots
+                 ON snapshots.id = links.document_snapshot_id AND snapshots.domain = %s
+               LEFT JOIN asset_source_batches AS batches
+                 ON batches.id = links.source_batch_id
+               WHERE links.document_snapshot_id = %s
+                 AND (links.source_batch_id IS NULL OR batches.domain = %s)
+               ORDER BY links.linked_at DESC""",
+            (domain, domain, snapshot_id, domain),
         )
 
     # -- raw segments --
@@ -615,40 +815,118 @@ class AssetCoreDB(_DB):
                summary_json = COALESCE(%s, summary_json),
                validation_json = COALESCE(%s, validation_json)
                WHERE id = %s""",
-            (status, fa, _json_dumps(summary_json), _json_dumps(validation_json), build_id),
+            (
+                status,
+                fa,
+                _json_dumps(summary_json) if summary_json is not None else None,
+                _json_dumps(validation_json) if validation_json is not None else None,
+                build_id,
+            ),
         )
 
     def get_build(self, build_id: str) -> dict[str, Any] | None:
         return self._fetchone("SELECT * FROM asset_builds WHERE id = %s", (build_id,))
 
-    def get_active_build(self, domain: str) -> dict[str, Any] | None:
+    def get_active_build(self, *, domain: str, channel: str) -> dict[str, Any] | None:
         return self._fetchone(
-            "SELECT * FROM asset_builds WHERE domain = %s AND status IN ('validated', 'published') ORDER BY created_at DESC LIMIT 1",
-            (domain,),
+            """SELECT builds.*
+               FROM asset_publish_releases AS releases
+               JOIN asset_builds AS builds
+                 ON builds.id = releases.build_id
+                AND builds.domain = releases.domain
+               WHERE releases.domain = %s
+                 AND builds.domain = %s
+                 AND releases.channel = %s
+                 AND releases.status = 'active'
+               LIMIT 1""",
+            (domain, domain, channel),
         )
+
+    def get_active_document_ids_by_batch(
+        self,
+        *,
+        domain: str,
+        channel: str,
+        source_batch_id: str,
+    ) -> list[str]:
+        """Return active documents whose current selection came from a batch."""
+        rows = self._fetchall(
+            """SELECT selections.document_id
+               FROM asset_publish_releases AS releases
+               JOIN asset_builds AS builds
+                 ON builds.id = releases.build_id
+                AND builds.domain = releases.domain
+               JOIN asset_build_document_snapshots AS selections
+                 ON selections.build_id = builds.id
+                AND selections.selection_status = 'active'
+               JOIN asset_documents AS documents
+                 ON documents.id = selections.document_id
+                AND documents.domain = builds.domain
+               JOIN asset_document_snapshots AS snapshots
+                 ON snapshots.id = selections.document_snapshot_id
+                AND snapshots.domain = builds.domain
+               JOIN asset_source_batches AS batches
+                 ON batches.id = selections.source_batch_id
+                AND batches.domain = builds.domain
+               WHERE releases.domain = %s
+                 AND builds.domain = %s
+                 AND releases.channel = %s
+                 AND releases.status = 'active'
+                 AND batches.id = %s""",
+            (domain, domain, channel, source_batch_id),
+        )
+        return [row["document_id"] for row in rows]
 
     # -- build document snapshots --
 
     def upsert_build_document_snapshot(
         self,
+        *,
         build_id: str,
         document_id: str,
         document_snapshot_id: str,
+        source_batch_id: str | None,
         selection_status: str = "active",
         reason: str = "add",
         metadata_json: dict | None = None,
     ) -> None:
-        self._execute(
+        row = self._fetchone(
             """INSERT INTO asset_build_document_snapshots
-                   (build_id, document_id, document_snapshot_id, selection_status, reason, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s)
+                   (build_id, document_id, document_snapshot_id, source_batch_id,
+                    selection_status, reason, metadata_json)
+               SELECT builds.id, documents.id, snapshots.id, batches.id, %s, %s, %s
+               FROM asset_builds AS builds
+               JOIN asset_documents AS documents
+                 ON documents.id = %s
+                AND documents.domain = builds.domain
+               JOIN asset_document_snapshots AS snapshots
+                 ON snapshots.id = %s
+                AND snapshots.domain = builds.domain
+               LEFT JOIN asset_source_batches AS batches
+                 ON batches.id = %s
+                AND batches.domain = builds.domain
+               WHERE builds.id = %s
+                 AND (%s OR batches.id IS NOT NULL)
                ON CONFLICT(build_id, document_id) DO UPDATE SET
                    document_snapshot_id = excluded.document_snapshot_id,
+                   source_batch_id = excluded.source_batch_id,
                    selection_status = excluded.selection_status,
                    reason = excluded.reason,
-                   metadata_json = excluded.metadata_json""",
-            (build_id, document_id, document_snapshot_id, selection_status, reason, _json_dumps(metadata_json)),
+                   metadata_json = excluded.metadata_json
+               RETURNING build_id""",
+            (
+                selection_status,
+                reason,
+                _json_dumps(metadata_json),
+                document_id,
+                document_snapshot_id,
+                source_batch_id,
+                build_id,
+                source_batch_id is None,
+            ),
         )
+        if row is None:
+            raise ValueError("domain_mismatch")
 
     def get_build_snapshots(self, build_id: str) -> list[dict[str, Any]]:
         return self._fetchall(
@@ -725,14 +1003,14 @@ class MiningRuntimeDB(_DB):
     def insert_run(self, data: MiningRunData) -> str:
         self._execute(
             """INSERT INTO mining_runs
-                   (id, source_batch_id, input_path, domain, channel, status, build_id,
+                   (id, source_batch_id, input_path, domain, channel, status, current_stage, build_id,
                     total_documents, new_count, updated_count, skipped_count,
                     failed_count, committed_count, started_at, finished_at,
                     error_summary, metadata_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 data.id, data.source_batch_id, data.input_path, data.domain, data.channel,
-                data.status, data.build_id,
+                data.status, data.current_stage, data.build_id,
                 data.total_documents, data.new_count, data.updated_count, data.skipped_count,
                 data.failed_count, data.committed_count, data.started_at or _utcnow(),
                 data.finished_at, data.error_summary, _json_dumps(data.metadata_json),
@@ -750,8 +1028,11 @@ class MiningRuntimeDB(_DB):
         metadata_json: dict | None = None,
         subloop_stage: str | None = None,
         ontology_version_id: str | None = None,
+        current_stage: str | None = None,
+        domain: str | None = None,
+        expected_statuses: tuple[str, ...] | None = None,
         **counters: int,
-    ) -> None:
+    ) -> bool:
         parts = ["status = %s"]
         params: list[Any] = [status]
         if finished_at is not None:
@@ -772,12 +1053,83 @@ class MiningRuntimeDB(_DB):
         if ontology_version_id is not None:
             parts.append("ontology_version_id = %s")
             params.append(ontology_version_id)
+        if current_stage is not None:
+            parts.append("current_stage = %s")
+            params.append(current_stage)
         for col in ("total_documents", "new_count", "updated_count", "skipped_count", "failed_count", "committed_count"):
             if col in counters:
                 parts.append(f"{col} = %s")
                 params.append(counters[col])
+        where = ["id = %s"]
         params.append(run_id)
-        self._execute(f"UPDATE mining_runs SET {', '.join(parts)} WHERE id = %s", tuple(params))
+        if domain is not None:
+            where.append("domain = %s")
+            params.append(domain)
+        if expected_statuses:
+            where.append("status = ANY(%s)")
+            params.append(list(expected_statuses))
+        count = self._run(
+            f"UPDATE mining_runs SET {', '.join(parts)} WHERE {' AND '.join(where)}",
+            tuple(params),
+            fetch="rowcount",
+        )
+        return bool(count)
+
+    def set_run_phase(
+        self,
+        run_id: str,
+        domain: str,
+        current_stage: str,
+        *,
+        status: str = "running",
+    ) -> bool:
+        """Advance an active run without overwriting a terminal/cancelled row."""
+        return self.update_run_status(
+            run_id,
+            status,
+            current_stage=current_stage,
+            domain=domain,
+            expected_statuses=("queued", "running"),
+        )
+
+    def finish_ingest(
+        self,
+        run_id: str,
+        domain: str,
+        total_documents: int,
+        ingest_summary: dict[str, Any],
+    ) -> bool:
+        count = self._run(
+            "UPDATE mining_runs SET status = 'running', current_stage = 'mining', "
+            "total_documents = %s, metadata_json = COALESCE(metadata_json, '{}'::jsonb) "
+            "|| %s::jsonb WHERE id = %s AND domain = %s "
+            "AND status IN ('queued', 'running')",
+            (
+                total_documents,
+                _json_dumps({"ingest_summary": ingest_summary}),
+                run_id,
+                domain,
+            ),
+            fetch="rowcount",
+        )
+        return bool(count)
+
+    def fail_run(
+        self,
+        run_id: str,
+        domain: str,
+        error_summary: str,
+        current_stage: str,
+    ) -> bool:
+        return self.update_run_status(
+            run_id,
+            "failed",
+            finished_at=_utcnow(),
+            error_summary=error_summary,
+            current_stage=current_stage,
+            domain=domain,
+            expected_statuses=("queued", "running"),
+        )
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         return self._fetchone("SELECT * FROM mining_runs WHERE id = %s", (run_id,))

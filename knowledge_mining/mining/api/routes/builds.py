@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
+from knowledge_mining.mining.api.domain_scope import require_domain
 from knowledge_mining.mining.infra.domain_pack import resolve_domain
 
 router = APIRouter(tags=["builds"])
@@ -12,21 +13,21 @@ router = APIRouter(tags=["builds"])
 async def list_builds(
     request: Request,
     status: str | None = None,
-    domain: str | None = None,
+    domain: str = Query(..., min_length=1),
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List builds."""
-    pool = request.app.state.pg_pool
+    domain = require_domain(domain)
+    pool = await request.app.state.domain_pools.async_pool(domain)
 
     conditions = []
     params: list[str] = []
     if status:
         conditions.append("status = %s")
         params.append(status)
-    if domain:
-        conditions.append("domain = %s")
-        params.append(domain)
+    conditions.append("domain = %s")
+    params.append(domain)
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -49,15 +50,20 @@ async def list_builds(
 
 
 @router.get("/api/builds/{build_id}")
-async def get_build(build_id: str, request: Request) -> dict:
+async def get_build(
+    build_id: str,
+    request: Request,
+    domain: str = Query(..., min_length=1),
+) -> dict:
     """Get build detail with document snapshots."""
-    pool = request.app.state.pg_pool
+    domain = require_domain(domain)
+    pool = await request.app.state.domain_pools.async_pool(domain)
 
     async with pool.connection() as conn:
         cur = await conn.execute(
             "SELECT id, build_code, status, build_mode, domain, source_batch_id, "
             "parent_build_id, mining_run_id, created_at, finished_at "
-            "FROM asset_builds WHERE id = %s", [build_id]
+            "FROM asset_builds WHERE id = %s AND domain = %s", [build_id, domain]
         )
         build = await cur.fetchone()
         if not build:
@@ -77,19 +83,19 @@ async def get_build(build_id: str, request: Request) -> dict:
 @router.get("/api/releases")
 async def list_releases(
     request: Request,
-    domain: str | None = None,
+    domain: str = Query(..., min_length=1),
     channel: str | None = None,
     limit: int = Query(20, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict:
     """List releases."""
-    pool = request.app.state.pg_pool
+    domain = require_domain(domain)
+    pool = await request.app.state.domain_pools.async_pool(domain)
 
     conditions = []
     params: list[str] = []
-    if domain:
-        conditions.append("domain = %s")
-        params.append(domain)
+    conditions.append("domain = %s")
+    params.append(domain)
     if channel:
         conditions.append("channel = %s")
         params.append(channel)
@@ -129,7 +135,8 @@ async def get_active_release(
     except ValueError:
         raise HTTPException(400, f"Domain is disabled: {domain}")
 
-    pool = request.app.state.pg_pool
+    domain = require_domain(domain)
+    pool = await request.app.state.domain_pools.async_pool(domain)
 
     async with pool.connection() as conn:
         cur = await conn.execute(

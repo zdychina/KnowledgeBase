@@ -22,9 +22,12 @@ import pytest
 # Fixtures
 # ---------------------------------------------------------------------------
 
-# 域配置的唯一真相源：main_control_service/config（Python 与 Java 共读同一份）
+# Main Control owns the only runtime scenario-pack tree.
 SCENARIO_PACKS_ROOT = (
-    Path(__file__).resolve().parents[2] / "main_control_service" / "config" / "scenario_packs"
+    Path(__file__).resolve().parents[2]
+    / "main_control_service"
+    / "config"
+    / "scenario_packs"
 )
 
 
@@ -65,8 +68,7 @@ class TestDomainRegistry:
         entry = resolve_domain("cloud_core_network")
         assert entry["enabled"] is True
         assert entry["scenario_pack"] == "cloud_core_network"
-        # 注意：registry 不含 database_url_env —— per-domain 分库路由尚未接通，
-        # 所有域共用 .env 的单库，靠表内 domain 列隔离。接通前不要断言该字段。
+        assert "database" in entry or "database_url_env" in entry
 
     def test_resolve_nonexistent_raises(self):
         from knowledge_mining.mining.infra.domain_pack import resolve_domain
@@ -195,11 +197,15 @@ class TestDomainEntitySchema:
         """Generic pack has no LLM templates."""
         assert len(generic_profile.llm_templates) == 0
 
-    def test_backward_compat_templates(self):
-        """TEMPLATES import still works (loads cloud_core_network by default)."""
-        from knowledge_mining.mining.infra.llm_templates import TEMPLATES
-        assert len(TEMPLATES) >= 4
-        keys = [t["template_key"] for t in TEMPLATES]
+    def test_templates_require_an_explicit_domain(self):
+        """Template loading uses the requested domain without a global default."""
+        from knowledge_mining.mining.infra.llm_templates import load_templates
+
+        templates = load_templates("civil_engineering")
+
+        assert len(templates) >= 4
+        assert all(t["knowledge_domain"] == "civil_engineering" for t in templates)
+        keys = [t["template_key"] for t in templates]
         assert "mining-question-gen" in keys
         assert "mining-segment-understanding" in keys
 
@@ -308,5 +314,5 @@ class TestBackwardCompat:
     def test_mining_config_domain_field(self):
         """MiningConfig.domain is the new primary field."""
         from knowledge_mining.mining.infra.mining_config import MiningConfig
-        cfg = MiningConfig()
+        cfg = MiningConfig(_env_file=None)
         assert cfg.domain == "cloud_core_network"

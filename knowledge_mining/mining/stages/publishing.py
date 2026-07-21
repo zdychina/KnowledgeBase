@@ -7,6 +7,7 @@ Two-phase:
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
@@ -30,6 +31,7 @@ def classify_documents(
     snapshot_decisions: list[dict[str, Any]],
     *,
     domain: str,
+    channel: str,
     detect_remove: bool = True,
 ) -> list[dict[str, Any]]:
     """Classify each document action by comparing with previous active build.
@@ -45,16 +47,18 @@ def classify_documents(
 
     Args:
         domain: Scope comparison to this domain's previous active build.
+        channel: Release channel whose active build is the comparison parent.
         detect_remove: When False, skip REMOVE detection. Use for incremental
             batch mining where each run only processes a subset of documents.
             Parent build snapshots are carried forward by assemble_build instead.
     """
-    prev_build = asset_db.get_active_build(domain)
+    prev_build = asset_db.get_active_build(domain=domain, channel=channel)
     prev_snapshots: dict[str, str] = {}  # document_id -> snapshot_id
 
     if prev_build:
         for ps in asset_db.get_build_snapshots(prev_build["id"]):
-            prev_snapshots[ps["document_id"]] = ps["document_snapshot_id"]
+            if ps["selection_status"] == "active":
+                prev_snapshots[ps["document_id"]] = ps["document_snapshot_id"]
 
     # Detect REMOVE: documents in prev build but not in current run
     # Skip when running incremental batches (each run = partial corpus)
@@ -81,7 +85,7 @@ def classify_documents(
 
         if decision.get("selection_status") == "removed":
             decision["action"] = "REMOVE"
-            decision["reason"] = "removed"
+            decision["reason"] = "remove"
         elif doc_id not in prev_snapshots:
             decision["action"] = "NEW"
             decision["reason"] = "add"
@@ -112,8 +116,9 @@ def assemble_build(
     asset_db: AssetCoreDB,
     *,
     domain: str,
+    channel: str,
     run_id: str,
-    batch_id: str | None = None,
+    batch_id: str | None,
     snapshot_decisions: list[dict[str, Any]],
 ) -> str:
     """Assemble a new build from snapshot decisions with merge semantics.
@@ -128,66 +133,114 @@ def assemble_build(
 
     Returns build_id.
     """
-    prev_build = asset_db.get_active_build(domain)
-    has_prev = prev_build is not None
-    build_mode = determine_build_mode(has_prev)
-    parent_build_id = prev_build["id"] if has_prev else None
+    with asset_db.transaction():
+        if (
+            batch_id is not None
+            and asset_db.get_source_batch(domain=domain, batch_id=batch_id) is None
+        ):
+            raise ValueError("domain_mismatch")
 
-    build_id = uuid.uuid4().hex
-    build_code = f"B-{uuid.uuid4().hex[:8].upper()}"
+        prev_build = asset_db.get_active_build(domain=domain, channel=channel)
+        has_prev = prev_build is not None
+        build_mode = determine_build_mode(has_prev)
+        parent_build_id = prev_build["id"] if has_prev else None
+        parent_snapshots = (
+            asset_db.get_build_snapshots(parent_build_id)
+            if parent_build_id is not None
+            else []
+        )
+        parent_by_document = {
+            row["document_id"]: row for row in parent_snapshots
+        }
 
-    action_counts = {}
-    for d in snapshot_decisions:
-        action = d.get("action", "NEW")
-        action_counts[action] = action_counts.get(action, 0) + 1
+        build_id = uuid.uuid4().hex
+        build_code = f"B-{uuid.uuid4().hex[:8].upper()}"
 
-    asset_db.insert_build(
-        build_id=build_id,
-        build_code=build_code,
-        status="building",
-        build_mode=build_mode,
-        domain=domain,
-        source_batch_id=batch_id,
-        parent_build_id=parent_build_id,
-        mining_run_id=run_id,
-        summary_json={
-            "snapshot_count": len([d for d in snapshot_decisions if d.get("selection_status") == "active"]),
-            "removed_count": len([d for d in snapshot_decisions if d.get("selection_status") == "removed"]),
-            "action_counts": action_counts,
-        },
-    )
+        action_counts = {}
+        for d in snapshot_decisions:
+            action = d.get("action", "NEW")
+            action_counts[action] = action_counts.get(action, 0) + 1
 
-    # Incremental merge: carry forward parent snapshots not in current decisions
-    if parent_build_id and has_prev:
-        parent_snapshots = asset_db.get_build_snapshots(parent_build_id)
-        decided_doc_ids = {d["document_id"] for d in snapshot_decisions}
-        for ps in parent_snapshots:
-            if ps["document_id"] not in decided_doc_ids:
-                asset_db.upsert_build_document_snapshot(
-                    build_id=build_id,
-                    document_id=ps["document_id"],
-                    document_snapshot_id=ps["document_snapshot_id"],
-                    selection_status="active",
-                    reason="retain",
-                )
-
-    # Add current run decisions (NEW/UPDATE/SKIP/REMOVE)
-    for decision in snapshot_decisions:
-        asset_db.upsert_build_document_snapshot(
+        asset_db.insert_build(
             build_id=build_id,
-            document_id=decision["document_id"],
-            document_snapshot_id=decision["document_snapshot_id"],
-            selection_status=decision.get("selection_status", "active"),
-            reason=decision.get("reason", "add"),
+            build_code=build_code,
+            status="building",
+            build_mode=build_mode,
+            domain=domain,
+            source_batch_id=batch_id,
+            parent_build_id=parent_build_id,
+            mining_run_id=run_id,
+            summary_json={
+                "snapshot_count": len([d for d in snapshot_decisions if d.get("selection_status") == "active"]),
+                "removed_count": len([d for d in snapshot_decisions if d.get("selection_status") == "removed"]),
+                "action_counts": action_counts,
+            },
         )
 
-    # Validate and mark as validated
-    validate_build(asset_db, build_id)
-    asset_db.update_build_status(build_id, "validated")
+        # Incremental merge: carry forward parent selections not in the run
+        # exactly as published, including removed and legacy-NULL provenance.
+        decided_doc_ids = {d["document_id"] for d in snapshot_decisions}
+        for parent in parent_snapshots:
+            if parent["document_id"] not in decided_doc_ids:
+                asset_db.upsert_build_document_snapshot(
+                    build_id=build_id,
+                    document_id=parent["document_id"],
+                    document_snapshot_id=parent["document_snapshot_id"],
+                    source_batch_id=parent.get("source_batch_id"),
+                    selection_status=parent["selection_status"],
+                    reason=parent["reason"],
+                    metadata_json=parent.get("metadata_json"),
+                )
+
+        # Add current run decisions with their effective source provenance.
+        for decision in snapshot_decisions:
+            parent = parent_by_document.get(decision["document_id"])
+            lifecycle_action = decision.get("lifecycle_action")
+            effective_action = lifecycle_action or decision.get("action", "NEW")
+            if effective_action in {"NEW", "UPDATE", "RESTORE"}:
+                source_batch_id = batch_id
+            elif effective_action == "SKIP":
+                source_batch_id = (
+                    decision["source_batch_id"]
+                    if "source_batch_id" in decision
+                    else parent.get("source_batch_id") if parent is not None else None
+                )
+            elif effective_action == "REMOVE":
+                source_batch_id = (
+                    parent.get("source_batch_id")
+                    if parent is not None
+                    else decision.get("source_batch_id")
+                )
+            else:
+                source_batch_id = batch_id
+
+            raw_metadata = decision.get("metadata_json")
+            metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+            if lifecycle_action:
+                metadata.setdefault("lifecycle_action", lifecycle_action)
+
+            asset_db.upsert_build_document_snapshot(
+                build_id=build_id,
+                document_id=decision["document_id"],
+                document_snapshot_id=decision["document_snapshot_id"],
+                source_batch_id=source_batch_id,
+                selection_status=decision.get("selection_status", "active"),
+                reason=decision.get("reason", "add"),
+                metadata_json=metadata,
+            )
+
+        # Validate and mark as validated in the same transaction as assembly.
+        validate_build(asset_db, build_id)
+        asset_db.update_build_status(build_id, "validated")
     return build_id
 
 
-def validate_build(asset_db: AssetCoreDB, build_id: str) -> None:
+def validate_build(
+    asset_db: AssetCoreDB,
+    build_id: str,
+    *,
+    allow_empty: bool = False,
+) -> None:
     """Validate that a build meets quality requirements.
 
     Checks:
@@ -210,7 +263,19 @@ def validate_build(asset_db: AssetCoreDB, build_id: str) -> None:
     snapshots = asset_db.get_build_snapshots(build_id)
     active = [s for s in snapshots if s["selection_status"] == "active"]
     if not active:
-        raise ValueError(f"Build {build_id} has no active snapshots")
+        if not allow_empty:
+            raise ValueError(f"Build {build_id} has no active snapshots")
+        summary = build.get("summary_json") or {}
+        if isinstance(summary, str):
+            try:
+                summary = json.loads(summary)
+            except json.JSONDecodeError:
+                summary = {}
+        if not isinstance(summary, dict) or summary.get("operation") != "withdrawal":
+            raise ValueError(
+                "Empty builds are only allowed for the withdrawal operation"
+            )
+        return
     for snap in active:
         count = asset_db.count_segments_by_snapshot(snap["document_snapshot_id"])
         if count == 0:
@@ -232,40 +297,46 @@ def publish_release(
 
     Returns release_id.
     """
-    build = asset_db.get_build(build_id)
-    if build is None:
-        raise ValueError(f"Build {build_id} not found")
-    if build["status"] not in ("validated", "published"):
-        raise ValueError(f"Build {build_id} status is {build['status']}, expected validated/published")
-    if build["domain"] != domain:
-        raise ValueError(
-            f"Build {build_id} belongs to domain {build['domain']!r}, "
-            f"cannot publish under domain {domain!r}"
+    with asset_db.transaction():
+        asset_db.acquire_domain_publish_lock(domain)
+
+        # Re-read both build and parent release after acquiring the domain lock.
+        build = asset_db.get_build(build_id)
+        if build is None:
+            raise ValueError(f"Build {build_id} not found")
+        if build["status"] not in ("validated", "published"):
+            raise ValueError(
+                f"Build {build_id} status is {build['status']}, "
+                "expected validated/published"
+            )
+        if build["domain"] != domain:
+            raise ValueError(
+                f"Build {build_id} belongs to domain {build['domain']!r}, "
+                f"cannot publish under domain {domain!r}"
+            )
+
+        prev_release = asset_db.get_active_release(domain, channel)
+        prev_release_id = prev_release["id"] if prev_release else None
+
+        release_id = uuid.uuid4().hex
+        release_code = f"R-{uuid.uuid4().hex[:8].upper()}"
+
+        asset_db.insert_release(
+            release_id=release_id,
+            release_code=release_code,
+            build_id=build_id,
+            domain=domain,
+            channel=channel,
+            status="staging",
+            previous_release_id=prev_release_id,
+            released_by=released_by,
+            release_notes=release_notes,
         )
 
-    # Get previous active release for chain (scoped to this domain+channel)
-    prev_release = asset_db.get_active_release(domain, channel)
-    prev_release_id = prev_release["id"] if prev_release else None
+        # Retire the old release and activate the new one on the same connection.
+        asset_db.activate_release(release_id)
 
-    release_id = uuid.uuid4().hex
-    release_code = f"R-{uuid.uuid4().hex[:8].upper()}"
-
-    asset_db.insert_release(
-        release_id=release_id,
-        release_code=release_code,
-        build_id=build_id,
-        domain=domain,
-        channel=channel,
-        status="staging",
-        previous_release_id=prev_release_id,
-        released_by=released_by,
-        release_notes=release_notes,
-    )
-
-    # Activate: retire old, activate new (scoped to domain+channel inside activate_release)
-    asset_db.activate_release(release_id)
-
-    return release_id
+        return release_id
 
 
 def demo_quality_summary(asset_db: AssetCoreDB, build_id: str) -> dict[str, Any]:
