@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, StringConstraints
 
 
 # --- health_check output ---
@@ -23,9 +25,15 @@ class EntityRef(BaseModel):
     normalized_name: str = ""
 
 
+DomainId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
+
+
 class SearchInput(BaseModel):
     query: str
-    domain: str = "cloud_core_network"
+    domain: DomainId
     scope: dict | None = None
     entities: list[EntityRef] | None = None
     debug: bool = False

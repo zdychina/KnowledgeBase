@@ -12,11 +12,20 @@ Host/port via MCP_HOST / MCP_PORT env vars, or --host / --port CLI flags.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Cloud Core Knowledge MCP Server")
+    # Timestamped logs for server-side debugging. FastMCP runs its own uvicorn
+    # for HTTP transport, so we can only set the root logger format here; that
+    # still dates all application/library log records.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    parser = argparse.ArgumentParser(description="Multi-domain Knowledge MCP Server")
     parser.add_argument(
         "--transport",
         choices=["stdio", "streamable-http", "sse"],

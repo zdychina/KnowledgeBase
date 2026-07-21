@@ -1,0 +1,90 @@
+{
+  "info": {
+    "name": "KB Serving API (MCP backend)",
+    "description": "测试 MCP 后端查询服务（agent_serving）。client.py 实际调用的就是这两个接口：GET /health 与 POST /api/v1/search。baseUrl 默认指向远程服务器 121.89.90.178:8081，可在 Variables 里改成 localhost:8081 验证本地服务。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://121.89.90.178:8081",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "对应 client.health_check()。返回 200 + {status, version} 说明服务存活。连不上 = 服务没起或端口/IP 不对。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('has status field', () => pm.expect(pm.response.json()).to.have.property('status'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search (minimal)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"核心网测试\",\n  \"domain\": \"cloud_core_network\",\n  \"debug\": false\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/search",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "search"]
+        },
+        "description": "对应 client.search_knowledge()。query 必填；domain 默认 cloud_core_network；debug 控制是否返回调试信息。"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search (full: scope + entities + debug)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"query\": \"AMF 注册流程\",\n  \"domain\": \"cloud_core_network\",\n  \"debug\": true,\n  \"scope\": {\n    \"document_type\": \"spec\"\n  },\n  \"entities\": [\n    {\n      \"type\": \"network_function\",\n      \"name\": \"AMF\",\n      \"normalized_name\": \"amf\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/search",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "search"]
+        },
+        "description": "完整请求体，含可选的 scope（过滤条件 dict）和 entities（实体引用数组，字段 type/name/normalized_name）。"
+      }
+    }
+  ]
+}

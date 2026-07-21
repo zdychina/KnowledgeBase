@@ -15,7 +15,7 @@ from mcp_server.schemas import (
 
 logger = logging.getLogger(__name__)
 
-BACKEND_URL = os.environ.get("SERVING_URL", "http://127.0.0.1:8081").rstrip("/")
+BACKEND_URL = os.environ.get("SERVING_URL", "http://121.89.90.178:8081").rstrip("/")
 HEALTH_TIMEOUT = float(os.environ.get("HEALTH_TIMEOUT", "10.0"))
 SEARCH_TIMEOUT = float(os.environ.get("SEARCH_TIMEOUT", "120.0"))
 
