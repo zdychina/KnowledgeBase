@@ -1,50 +1,130 @@
-# CoreMasterKB All-in-One
+# CoreMasterKB 一体化部署配置
 #
-# Usage:
-#   docker compose up -d            # 启动
-#   docker compose logs -f          # 看日志
-#   docker compose exec app bash    # 进入容器手动操作
-#   docker compose down             # 停止
+# 使用方法：
+#   docker compose up -d            # 启动服务
+#   docker compose logs -f          # 持续查看服务日志
+#   docker compose exec app bash    # 进入应用容器
+#   docker compose down             # 停止并删除服务容器
+#
+# 如果服务器不支持 Docker Compose V2，
+# 请将命令中的 "docker compose" 替换为 "docker-compose"。
 
 services:
   app:
-    # ── 镜像来源（二选一）──────────────────────────────────
-    # 本地开发：用 build 从源码构建
+    # 镜像来源：
+    # 本地环境通过源代码构建镜像。
     build:
       context: .
       dockerfile: docker/Dockerfile
-    # 服务器部署：用 image 直接加载
-    # image: coremasterkb-app:latest
 
+    # 服务器部署时，使用从 cmkb.tar 加载的镜像。
+    image: coremasterkb-app:latest
+
+    # 容器名称
     container_name: cmkb
+
+    # 加载环境变量文件。
+    # 下方 volumes 中也会将同一个 .env 文件挂载到容器内。
+    # 使用 deploy-server.sh --apply-config 重新创建容器时，
+    # 环境变量视图和容器内文件都会同时更新。
+    env_file:
+      - .env
+
+    # deploy-server.sh 会将 CMKB_ORDERED_STARTUP 设置为 1。
+    # 此时 Supervisor 启动后，所有子服务默认先保持停止状态，
+    # 部署脚本会在依赖检查通过后，再按顺序启动各个子服务。
+    #
+    # 如果直接执行 docker compose up，
+    # 则保留镜像中原本的自动启动行为。
+    command:
+      - /bin/bash
+      - -c
+      - |
+        if printenv CMKB_ORDERED_STARTUP | grep -qx '1'; then
+          sed -i 's/^autostart=true/autostart=false/' /etc/supervisor/conf.d/cmkb.conf
+        fi
+        exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf -n
+
+    # 宿主机端口与容器端口映射
     ports:
-      - "80:80"       # nginx (kb-ui)
-      - "8900:8900"   # llm_service
-      - "8901:8901"   # knowledge_mining
-      - "8910:8910"   # main_control_service
-      - "8081:8081"   # agent_serving_java
-      - "9000:9000"   # mcp_server
+      - "${CMKB_UI_PORT:-8080}:80"         # Nginx，对外提供知识库前端页面
+      - "${CMKB_LLM_PORT:-8900}:8900"      # 大模型服务 llm_service
+      - "${CMKB_MINING_PORT:-8901}:8901"   # 知识挖掘服务 knowledge_mining
+      - "${CMKB_CONTROL_PORT:-8910}:8910"  # 主控服务 main_control_service
+      - "${CMKB_SERVING_PORT:-8081}:8081"  # 在线检索服务 agent_serving_java
+      - "${CMKB_MCP_PORT:-9000}:9000"      # MCP 服务 mcp_server
+
     volumes:
+      # Docker 命名卷，用于持久化上传文件。
       - uploads:/app/uploads
+
+      # Docker 命名卷，用于持久化主控服务数据。
       - control_data:/app/data
-      # ── 挂载代码和配置（服务器部署用）──────────────────────
-      # 本地开发可以注释掉下面这些，直接用镜像内置代码
-      # 服务器上取消注释，修改宿主机文件后 supervisorctl restart 即可生效
+
+      # 将服务器宿主机上的代码和配置目录挂载到容器内。
+      #
+      # 本地仅测试镜像内置代码时，可以注释掉下面这些挂载项。
+      #
+      # 修改这些宿主机文件后，可执行以下命令应用配置：
+      # bash deploy-server.sh --apply-config
       - ./.env:/app/.env
-      # 域配置（domain_registry.yaml + scenario_packs/）随 main_control_service 挂载，
-      # Python 与 Java 共读同一份，不再单独挂根目录副本。
       - ./knowledge_mining:/app/knowledge_mining
       - ./llm_service:/app/llm_service
       - ./main_control_service:/app/main_control_service
       - ./mcp_server:/app/mcp_server
       - ./databases:/app/databases
+
     environment:
-      - PG_POOL_MIN=5
-      - PG_POOL_MAX=30
+      # 是否启用按依赖顺序启动服务。
+      # 0：使用 Supervisor 默认自动启动行为。
+      # 1：先停止所有子服务，再由部署脚本按顺序启动。
+      CMKB_ORDERED_STARTUP: "${CMKB_ORDERED_STARTUP:-0}"
+
+      # 主控服务配置目录
+      MAIN_CONTROL_CONFIG_DIR: /app/main_control_service/config
+
+      # 领域注册配置文件路径
+      DOMAIN_REGISTRY_PATH: /app/main_control_service/config/domain_registry.yaml
+
+      # 场景包配置目录
+      SCENARIO_PACKS_DIR: /app/main_control_service/config/scenario_packs
+
+    # 加入 CoreMasterKB 专用 Docker 网络
+    networks:
+      - cmkb_net
+
+    # 保持标准输入开启，方便交互式操作。
     stdin_open: true
+
+    # 为容器分配伪终端。
     tty: true
+
+    # 容器异常退出或 Docker 重启后自动拉起；
+    # 手动停止的容器不会自动重启。
     restart: unless-stopped
 
+# Docker 命名卷定义
 volumes:
+  # 上传文件持久化卷
   uploads:
+
+  # 主控服务数据持久化卷
   control_data:
+
+# Docker 网络定义
+networks:
+  cmkb_net:
+    # 实际创建的 Docker 网络名称。
+    # 可以通过 CMKB_DOCKER_NETWORK 环境变量覆盖。
+    name: ${CMKB_DOCKER_NETWORK:-cmkb_net}
+
+    # 使用桥接网络模式
+    driver: bridge
+
+    # 自定义容器网络地址范围
+    ipam:
+      config:
+        # 默认使用 172.30.30.0/24 网段。
+        # 可以通过 CMKB_DOCKER_SUBNET 环境变量覆盖。
+        - subnet: ${CMKB_DOCKER_SUBNET:-172.30.30.0/24}
+

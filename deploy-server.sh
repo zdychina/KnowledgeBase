@@ -515,10 +515,16 @@ apply_config_only() {
 }
 
 deploy_from_image() {
-    [ -f "$IMAGE_TAR" ] || die "未找到镜像归档文件：$IMAGE_TAR"
-
-    echo "=== 正在加载镜像：$IMAGE_TAR ==="
-    docker load -i "$IMAGE_TAR"
+    # 当前目录有镜像归档就加载；没有则直接使用已存在的本地镜像
+    # （例如从 GHCR 拉取后 retag 成 $IMAGE_NAME 的场景）。
+    if [ -f "$IMAGE_TAR" ]; then
+        echo "=== 正在加载镜像：$IMAGE_TAR ==="
+        docker load -i "$IMAGE_TAR"
+    elif docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+        echo "=== 未找到 $IMAGE_TAR，使用已存在的本地镜像：$IMAGE_NAME ==="
+    else
+        die "既无镜像归档 $IMAGE_TAR，本地也没有镜像 $IMAGE_NAME。请先放置 tar，或 docker pull 后 retag 成 $IMAGE_NAME。"
+    fi
 
     cleanup_tmp_container
     docker create --name "$TMP_CONTAINER_NAME" "$IMAGE_NAME" >/dev/null
