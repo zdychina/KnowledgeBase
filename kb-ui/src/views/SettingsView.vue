@@ -25,6 +25,9 @@
         <el-tab-pane label="代码同步" name="sync">
           <CodeSyncTab />
         </el-tab-pane>
+        <el-tab-pane label="服务日志" name="logs">
+          <ServiceLogsTab />
+        </el-tab-pane>
       </el-tabs>
     </div>
   </div>
@@ -38,6 +41,7 @@ import DomainManageTab from '@/components/settings/DomainManageTab.vue'
 import DomainDetailTab from '@/components/settings/DomainDetailTab.vue'
 import ReloadConfigTab from '@/components/settings/ReloadConfigTab.vue'
 import CodeSyncTab from '@/components/settings/CodeSyncTab.vue'
+import ServiceLogsTab from '@/components/settings/ServiceLogsTab.vue'
 
 const activeTab = ref('system')
 const store = useControlPlaneStore()

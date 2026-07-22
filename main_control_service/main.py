@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from main_control_service.config import MainControlSettings
 from main_control_service.ip_whitelist import IpWhitelistMiddleware
@@ -169,6 +169,53 @@ def create_app(
             "file_count": result.file_count,
             **({"error": result.error} if result.error else {}),
         }
+
+    # ------------------------------------------------------------------
+    # Service logs — read-only tail of /app/logs (written by supervisor)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/v1/logs")
+    def list_service_logs() -> dict:
+        from main_control_service.logs import list_logs, log_dir
+
+        return {
+            "log_dir": str(log_dir()),
+            "files": [
+                {
+                    "name": f.name,
+                    "size_bytes": f.size_bytes,
+                    "modified_at": f.modified_at,
+                    "rotated_count": f.rotated_count,
+                }
+                for f in list_logs()
+            ],
+        }
+
+    @app.get("/api/v1/logs/{name}")
+    def read_service_log(
+        name: str,
+        lines: int = 200,
+        q: str | None = None,
+        level: str | None = None,
+    ) -> Response:
+        from main_control_service.logs import tail_log
+
+        content = tail_log(name, lines=lines, keyword=q, level=level)
+        if content is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": "log_not_found", "name": name},
+            )
+        return JSONResponse(
+            content={
+                "name": content.name,
+                "lines": content.lines,
+                "returned_lines": content.returned_lines,
+                "size_bytes": content.size_bytes,
+                "truncated": content.truncated,
+                "filtered": content.filtered,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Reverse proxy — domain-aware routing to backend services

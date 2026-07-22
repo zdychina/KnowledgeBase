@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useControlPlaneApi } from '@/api/controlPlane'
-import type { CodeSyncResult } from '@/api/controlPlane'
+import type { CodeSyncResult, LogContent, LogFileInfo, LogQuery } from '@/api/controlPlane'
 
 export const useControlPlaneStore = defineStore('control-plane', () => {
   const api = useControlPlaneApi()
@@ -30,6 +30,13 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
   const syncing = ref(false)
   const syncResult = ref<CodeSyncResult | null>(null)
   const error = ref('')
+
+  // ── Service logs ──
+  const logFiles = ref<LogFileInfo[]>([])
+  const logDir = ref('')
+  const selectedLogName = ref('')
+  const logContent = ref<LogContent | null>(null)
+  const logLoading = ref(false)
 
   const systemConfigDirty = computed(() => systemConfigText.value !== systemConfigOriginal.value)
   const domainYamlDirty = computed(() => domainYamlText.value !== domainYamlOriginal.value)
@@ -183,6 +190,34 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
     }
   }
 
+  // ── Service log actions ──
+  async function loadLogFiles() {
+    try {
+      const result = await api.listLogs()
+      logFiles.value = result.files
+      logDir.value = result.log_dir
+      // 首次进入自动选中第一个，省一次点击
+      if (!selectedLogName.value && result.files.length) {
+        selectedLogName.value = result.files[0].name
+      }
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '读取日志列表失败'
+    }
+  }
+
+  async function loadLogContent(query: LogQuery = {}) {
+    if (!selectedLogName.value) return
+    logLoading.value = true
+    try {
+      logContent.value = await api.readLog(selectedLogName.value, query)
+    } catch (err) {
+      logContent.value = null
+      error.value = err instanceof Error ? err.message : '读取日志失败'
+    } finally {
+      logLoading.value = false
+    }
+  }
+
   return {
     systemConfigNames,
     selectedSystemConfigName,
@@ -216,5 +251,12 @@ export const useControlPlaneStore = defineStore('control-plane', () => {
     saveScenarioYaml,
     reloadService,
     syncCode,
+    logFiles,
+    logDir,
+    selectedLogName,
+    logContent,
+    logLoading,
+    loadLogFiles,
+    loadLogContent,
   }
 })

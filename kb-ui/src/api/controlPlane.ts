@@ -76,6 +76,17 @@ export function useControlPlaneApi() {
       const { data } = await client.post('/api/v1/code-sync')
       return data
     },
+
+    // ── Service logs ──
+    async listLogs(): Promise<LogListResult> {
+      const { data } = await client.get('/api/v1/logs')
+      return data
+    },
+
+    async readLog(name: string, params: LogQuery = {}): Promise<LogContent> {
+      const { data } = await client.get(`/api/v1/logs/${name}`, { params })
+      return data
+    },
   }
 }
 
@@ -100,4 +111,35 @@ export interface CodeSyncResult {
   updated_dirs?: string[]
   file_count?: number
   error?: string
+}
+
+export interface LogFileInfo {
+  name: string
+  size_bytes: number
+  modified_at: string | null
+  /** 轮转备份份数（mining.log.1 …），当前文件不计入 */
+  rotated_count: number
+}
+
+export interface LogListResult {
+  log_dir: string
+  files: LogFileInfo[]
+}
+
+export interface LogQuery {
+  lines?: number
+  /** 关键字，大小写不敏感 */
+  q?: string
+  /** 级别下限：选 WARNING 会同时包含 ERROR/CRITICAL */
+  level?: string
+}
+
+export interface LogContent {
+  name: string
+  lines: string[]
+  returned_lines: number
+  size_bytes: number
+  /** true = 只扫描了文件尾部若干 MB，更早的内容不在结果里 */
+  truncated: boolean
+  filtered: boolean
 }
