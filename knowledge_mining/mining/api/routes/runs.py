@@ -17,8 +17,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
-# Mutex to prevent concurrent mining runs
-_run_lock = threading.Lock()
+# Mutex to prevent concurrent mining runs —— 每个域一把，域之间互不阻塞。
+# 曾经是全局一把锁，任意一个域在挖掘就把其余域全部 409 掉。
+_run_locks: dict[str, threading.Lock] = {}
+_run_locks_guard = threading.Lock()
+
+
+def _domain_run_lock(domain: str) -> threading.Lock:
+    """Return (creating on first use) the mining mutex for one domain."""
+    with _run_locks_guard:
+        lock = _run_locks.get(domain)
+        if lock is None:
+            lock = _run_locks[domain] = threading.Lock()
+        return lock
 
 
 # ── Request / Response models ──
@@ -75,9 +86,14 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
 
     llm_base_url = body.llm_base_url or cfg.llm_service_url
 
-    # Prevent concurrent mining runs
-    if not _run_lock.acquire(blocking=False):
-        raise HTTPException(409, "A mining run is already in progress. Please wait for it to complete.")
+    # Prevent concurrent mining runs within the same domain
+    run_lock = _domain_run_lock(resolved_domain)
+    if not run_lock.acquire(blocking=False):
+        raise HTTPException(
+            409,
+            f"A mining run is already in progress for domain '{resolved_domain}'. "
+            "Please wait for it to complete.",
+        )
 
     run_id = uuid.uuid4().hex
     started_at = datetime.now(timezone.utc).isoformat()
@@ -90,7 +106,7 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
                 [run_id, body.input_path, resolved_domain, "queued", "queued", started_at],
             )
     except Exception:
-        _run_lock.release()
+        run_lock.release()
         raise
 
     def _mark_thread_failure(error: Exception) -> None:
@@ -123,7 +139,7 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
             logger.error("Mining run failed: %s", e, exc_info=True)
             _mark_thread_failure(e)
         finally:
-            _run_lock.release()
+            run_lock.release()
 
     # Pre-create run to get run_id — but the actual run() creates its own.
     # We start the thread and query the run table after.
@@ -139,7 +155,7 @@ async def create_run(body: CreateRunRequest, request: Request) -> dict:
                     [_utcnow(), str(exc)[:500], run_id, resolved_domain],
                 )
         finally:
-            _run_lock.release()
+            run_lock.release()
         raise HTTPException(500, f"Unable to start mining run: {exc}") from exc
 
     return {
@@ -949,9 +965,10 @@ async def resume_run(
 
     publish_partial = body.publish_on_partial_failure if body else False
 
-    # 防并发：和初始挖掘共用一把锁，避免续跑与新挖掘互相踩。
-    if not _run_lock.acquire(blocking=False):
-        raise HTTPException(409, "已有挖掘任务在进行中，请稍候再试")
+    # 防并发：和初始挖掘共用本域那把锁，避免续跑与新挖掘互相踩（跨域不互斥）。
+    run_lock = _domain_run_lock(resume_domain)
+    if not run_lock.acquire(blocking=False):
+        raise HTTPException(409, f"域 {resume_domain} 已有挖掘任务在进行中，请稍候再试")
 
     def _resume_in_thread():
         try:
@@ -963,7 +980,7 @@ async def resume_run(
         except Exception as e:
             logger.error("Resume run failed: %s", e, exc_info=True)
         finally:
-            _run_lock.release()
+            run_lock.release()
 
     threading.Thread(target=_resume_in_thread, daemon=True).start()
     return {"run_id": run_id, "status": "resuming", "message": "已开始继续挖掘，请稍候查看进度"}

@@ -88,13 +88,13 @@ async def test_create_run_inserts_real_queued_row_before_thread_start(monkeypatc
     )
     body = runs.CreateRunRequest(input_path="C:/incoming", domain="odn")
 
-    if runs._run_lock.locked():
-        runs._run_lock.release()
+    if runs._domain_run_lock("odn").locked():
+        runs._domain_run_lock("odn").release()
     try:
         response = await runs.create_run(body, request)
     finally:
-        if runs._run_lock.locked():
-            runs._run_lock.release()
+        if runs._domain_run_lock("odn").locked():
+            runs._domain_run_lock("odn").release()
 
     assert started == [True]
     assert response["run_id"] != "pending"
@@ -410,16 +410,16 @@ async def test_queued_insert_failure_releases_lock_and_never_starts_thread(monke
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
         domain_pools=_DomainPools(Pool()), db_config=SimpleNamespace(),
     )))
-    if runs._run_lock.locked():
-        runs._run_lock.release()
+    if runs._domain_run_lock("odn").locked():
+        runs._domain_run_lock("odn").release()
 
     with pytest.raises(RuntimeError, match="insert unavailable"):
         await runs.create_run(
             runs.CreateRunRequest(input_path="C:/incoming", domain="odn"), request
         )
 
-    assert runs._run_lock.acquire(blocking=False) is True
-    runs._run_lock.release()
+    assert runs._domain_run_lock("odn").acquire(blocking=False) is True
+    runs._domain_run_lock("odn").release()
 
 
 @pytest.mark.asyncio
@@ -447,8 +447,8 @@ async def test_thread_start_failure_marks_same_queued_id_failed_and_releases_loc
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
         domain_pools=_DomainPools(Pool()), db_config=SimpleNamespace(),
     )))
-    if runs._run_lock.locked():
-        runs._run_lock.release()
+    if runs._domain_run_lock("odn").locked():
+        runs._domain_run_lock("odn").release()
 
     with pytest.raises(Exception, match="Unable to start mining run"):
         await runs.create_run(
@@ -460,8 +460,8 @@ async def test_thread_start_failure_marks_same_queued_id_failed_and_releases_loc
     assert failed_update[1][2] == inserted_id
     assert "domain = %s" in failed_update[0]
     assert "status = 'queued'" in failed_update[0]
-    assert runs._run_lock.acquire(blocking=False) is True
-    runs._run_lock.release()
+    assert runs._domain_run_lock("odn").acquire(blocking=False) is True
+    runs._domain_run_lock("odn").release()
 
 
 @pytest.mark.asyncio
@@ -510,21 +510,77 @@ async def test_queued_run_can_be_cancelled_before_worker_enters_ingest(monkeypat
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
         domain_pools=_DomainPools(pool), db_config=SimpleNamespace(),
     )))
-    if runs._run_lock.locked():
-        runs._run_lock.release()
+    if runs._domain_run_lock("odn").locked():
+        runs._domain_run_lock("odn").release()
     try:
         created = await runs.create_run(
             runs.CreateRunRequest(input_path="C:/incoming", domain="odn"), request
         )
         cancelled = await runs.cancel_run(created["run_id"], request, "odn")
     finally:
-        if runs._run_lock.locked():
-            runs._run_lock.release()
+        if runs._domain_run_lock("odn").locked():
+            runs._domain_run_lock("odn").release()
 
     assert worker_called == [False]
     assert cancelled["status"] == "cancelled"
     assert row["status"] == "cancelled"
     assert row["current_stage"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_run_mutex_is_per_domain_not_global(monkeypatch):
+    """一个域在挖掘不应阻塞其他域；同域内仍然互斥。"""
+
+    class _AnyDomainPools:
+        def __init__(self, pool):
+            self.pool = pool
+
+        async def async_pool(self, domain):
+            return self.pool
+
+    class FakeThread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            pass  # 永不结束 —— 模拟挖掘中，锁保持占用
+
+    monkeypatch.setattr(runs.threading, "Thread", FakeThread)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        domain_pools=_AnyDomainPools(_Pool()), db_config=SimpleNamespace(),
+    )))
+
+    busy = runs._domain_run_lock("odn")
+    other = runs._domain_run_lock("generic")
+    for lock in (busy, other):
+        if lock.locked():
+            lock.release()
+
+    try:
+        # odn 起一次挖掘 —— 占住 odn 的锁
+        await runs.create_run(
+            runs.CreateRunRequest(input_path="C:/incoming", domain="odn"), request
+        )
+        assert busy.locked() is True
+
+        # 同域再提交 → 409
+        with pytest.raises(Exception) as excinfo:
+            await runs.create_run(
+                runs.CreateRunRequest(input_path="C:/incoming", domain="odn"), request
+            )
+        assert excinfo.value.status_code == 409
+        assert "odn" in excinfo.value.detail
+
+        # 另一个域不受影响
+        response = await runs.create_run(
+            runs.CreateRunRequest(input_path="C:/incoming", domain="generic"), request
+        )
+        assert response["status"] == "queued"
+        assert other.locked() is True
+    finally:
+        for lock in (busy, other):
+            if lock.locked():
+                lock.release()
 
 
 def test_submission_contract_has_no_latest_run_or_pending_response():
