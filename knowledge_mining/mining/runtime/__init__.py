@@ -145,8 +145,26 @@ class RuntimeTracker:
             rd_id, status="failed", error_message=error_message, finished_at=_utcnow(),
         )
 
-    def skip_document(self, rd_id: str) -> None:
-        self._db.update_run_document(rd_id, status="skipped", finished_at=_utcnow())
+    def skip_document(
+        self, rd_id: str, reason: str | None = None, detail: str | None = None,
+    ) -> None:
+        """标记文档被跳过。
+
+        reason 是稳定的机器码（见 pipeline 的 _classify_parse_skip），detail 是给人看
+        的明细（异常文本、file_type 等）。两者写进 metadata_json，供 UI 展示
+        「为什么跳过」——否则用户只能看到一个没有信息量的"跳过"。
+        """
+        patch: dict[str, Any] = {}
+        if reason:
+            patch["skip_reason"] = reason
+        if detail:
+            patch["skip_reason_detail"] = detail
+        self._db.update_run_document(
+            rd_id,
+            status="skipped",
+            finished_at=_utcnow(),
+            metadata_patch=patch or None,
+        )
 
     # -- Stage events with timing --
 

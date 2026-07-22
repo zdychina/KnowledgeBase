@@ -106,22 +106,33 @@ class PassthroughParser:
 class PdfParser:
     """Structural parser for PDF using pdfminer.six layout API."""
 
+    def __init__(self) -> None:
+        # 解析失败时不抛异常（文档记为"跳过"而非"失败"），但把原因留在这里，
+        # 供 parse_stage 取走写进 run document —— 否则用户只能看到笼统的"跳过"。
+        self.last_error: str | None = None
+
     def parse(
         self, content: str, file_name: str, context: dict[str, Any],
     ) -> SectionNode | None:
         file_path = (context or {}).get("file_path")
         if not file_path:
             logger.warning("PdfParser: no file_path in context for %s", file_name)
+            self.last_error = "no file_path in parse context"
             return None
         try:
             return parse_pdf_to_section_tree(file_path, doc_title=file_name)
         except Exception as e:
             logger.warning("PdfParser failed for %s: %s", file_path, e)
+            self.last_error = f"{type(e).__name__}: {e}"
             return None
 
 
 class DocxParser:
     """Structural parser for DOCX using python-docx."""
+
+    def __init__(self) -> None:
+        # 同 PdfParser：失败不抛，原因留给 parse_stage 取走。
+        self.last_error: str | None = None
 
     def parse(
         self, content: str, file_name: str, context: dict[str, Any],
@@ -129,11 +140,13 @@ class DocxParser:
         file_path = (context or {}).get("file_path")
         if not file_path:
             logger.warning("DocxParser: no file_path in context for %s", file_name)
+            self.last_error = "no file_path in parse context"
             return None
         try:
             return parse_docx_to_section_tree(file_path, doc_title=file_name)
         except Exception as e:
             logger.warning("DocxParser failed for %s: %s", file_path, e)
+            self.last_error = f"{type(e).__name__}: {e}"
             return None
 
 

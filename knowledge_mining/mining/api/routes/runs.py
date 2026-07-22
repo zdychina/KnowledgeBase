@@ -337,7 +337,10 @@ async def get_run_documents(
             doc["duration_ms"] = duration_lookup.get(doc["id"])
             # file_size: 摄取时存进 metadata_json 的原始文件字节大小（JSONB → dict）
             meta = doc.pop("metadata_json", None) or {}
-            doc["file_size"] = meta.get("file_size") if isinstance(meta, dict) else None
+            if not isinstance(meta, dict):
+                meta = {}
+            doc["file_size"] = meta.get("file_size")
+            doc["skip_reason"] = meta.get("skip_reason")
             documents.append(doc)
 
     return {
@@ -466,7 +469,8 @@ async def get_run_document(
         cur = await conn.execute(
             "SELECT d.id, d.run_id, d.document_key, d.action, d.status, "
             "d.document_id, d.document_snapshot_id, d.error_message, "
-            "d.raw_content_hash, d.normalized_content_hash, d.started_at, d.finished_at "
+            "d.raw_content_hash, d.normalized_content_hash, d.started_at, d.finished_at, "
+            "d.metadata_json "
             "FROM mining_run_documents d "
             "WHERE d.id = %s AND d.run_id = %s",
             [doc_id, run_id],
@@ -476,6 +480,16 @@ async def get_run_document(
             raise HTTPException(404, f"Document {doc_id} not found in run {run_id}")
 
         result = dict(doc)
+        # 跳过原因：SKIP/RESTORE 由 run job 在登记时写入，管线内跳过由 tracker 写入。
+        meta = result.pop("metadata_json", None) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        result["skip_reason"] = meta.get("skip_reason")
+        # 明细：解析器异常文本、不支持的 file_type 等；预处理失败在登记时就写好了。
+        result["skip_reason_detail"] = (
+            meta.get("skip_reason_detail") or meta.get("preprocess_error")
+        )
+        result["file_size"] = meta.get("file_size")
         # Compute document_name
         dk = result.get("document_key", "")
         result["document_name"] = dk.replace("doc:/", "", 1) if dk.startswith("doc:/") else dk

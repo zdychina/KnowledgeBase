@@ -1176,6 +1176,7 @@ class MiningRuntimeDB(_DB):
         finished_at: str | None = None,
         metadata_json: dict | None = None,
         action: str | None = None,
+        metadata_patch: dict | None = None,
     ) -> None:
         parts: list[str] = []
         params: list[Any] = []
@@ -1200,6 +1201,10 @@ class MiningRuntimeDB(_DB):
         if metadata_json is not None:
             parts.append("metadata_json = %s")
             params.append(_json_dumps(metadata_json))
+        if metadata_patch:
+            # 浅合并：只覆盖 patch 里的键，保留 file_size 等摄取期写入的字段。
+            parts.append("metadata_json = COALESCE(metadata_json, '{}'::jsonb) || %s::jsonb")
+            params.append(_json_dumps(metadata_patch))
         if not parts:
             return
         params.append(rd_id)

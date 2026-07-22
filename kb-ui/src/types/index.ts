@@ -74,6 +74,13 @@ export interface MiningRunDocument {
   current_stage?: string | null
   duration_ms?: number | null
   file_size?: number | null
+  /**
+   * 跳过原因码：unchanged | restored | preprocess_failed | parser_failed
+   * | unsupported_type | empty_file | no_segments | parse_no_tree
+   */
+  skip_reason?: string | null
+  /** 跳过原因明细（异常文本 / file_type），仅部分原因码有 */
+  skip_reason_detail?: string | null
   started_at?: string
   finished_at?: string
   document_snapshot_id?: string | null

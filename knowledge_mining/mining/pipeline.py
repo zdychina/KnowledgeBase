@@ -46,6 +46,9 @@ class DocumentContext:
     seg_ids: dict[str, str] = field(default_factory=dict)
     retrieval_units: tuple[RetrievalUnitData, ...] = ()
     error: str | None = None
+    # 解析器"软失败"的原因（返回 None 而非抛异常）。与 error 不同：error → 文档记
+    # 为失败；parse_error 只是让"跳过"能说清是为什么跳过。
+    parse_error: str | None = None
     run_document_id: str | None = None
     sequence_id: int = 0
 
@@ -67,6 +70,7 @@ class DocumentContext:
             "seg_ids": self.seg_ids,
             "retrieval_units": self.retrieval_units,
             "error": self.error,
+            "parse_error": self.parse_error,
             "run_document_id": self.run_document_id,
             "sequence_id": self.sequence_id,
             "action": self.action,
@@ -389,6 +393,9 @@ def parse_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     if parser is None:
         return ctx
     tree = parser.parse(raw.content, raw.file_name, {"file_path": raw.file_path})
+    if tree is None:
+        # 解析器软失败：把它记下的原因带出来（PdfParser / DocxParser 才有）。
+        return ctx.with_updates(parse_error=getattr(parser, "last_error", None))
     return ctx.with_updates(tree=tree)
 
 
@@ -504,6 +511,40 @@ def embedding_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContex
     return ctx
 
 
+#: 有真正解析器的 file_type。其余一律落到 PassthroughParser（恒返回 None）。
+_PARSEABLE_FILE_TYPES = frozenset({"markdown", "txt", "pdf", "docx"})
+
+#: 这些类型的 content 天然为空（解析器直接读 file_path），不能据此判"空文件"。
+_FILE_BACKED_TYPES = frozenset({"docx"})
+
+
+def _classify_parse_skip(ctx: DocumentContext) -> tuple[str, str | None]:
+    """把"解析没产出树"细分成可区分的跳过原因码 + 明细。
+
+    顺序有讲究：预处理失败会同时导致 content 为空，若先判空文件就会把"系统没能
+    处理它"误报成"这文件本来就没内容"——这两类对用户的意义完全相反。
+    """
+    raw = ctx.raw_file
+    if raw is None:
+        return "parse_no_tree", None
+
+    meta = raw.metadata_json if isinstance(raw.metadata_json, dict) else {}
+    pre_err = meta.get("preprocess_error")
+    if pre_err:
+        return "preprocess_failed", str(pre_err)
+
+    if ctx.parse_error:
+        return "parser_failed", ctx.parse_error
+
+    if raw.file_type not in _PARSEABLE_FILE_TYPES:
+        return "unsupported_type", raw.file_type
+
+    if raw.file_type not in _FILE_BACKED_TYPES and not (raw.content or "").strip():
+        return "empty_file", None
+
+    return "parse_no_tree", None
+
+
 def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext:
     """Stage 7: Write all results to DB (serial, 1 worker for thread safety).
 
@@ -536,7 +577,8 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
     # Skip if no parse tree
     if ctx.tree is None:
         if tracker and rd_id:
-            tracker.skip_document(rd_id)
+            reason, detail = _classify_parse_skip(ctx)
+            tracker.skip_document(rd_id, reason=reason, detail=detail)
             try:
                 cfg.runtime_db.commit()
             except Exception:
@@ -555,7 +597,7 @@ def db_write_stage(ctx: DocumentContext, cfg: PipelineConfig) -> DocumentContext
         # segments" build failure). Skip it; the runtime ledger records it.
         if not segments:
             if tracker and rd_id:
-                tracker.skip_document(rd_id)
+                tracker.skip_document(rd_id, reason="no_segments")
                 try:
                     cfg.runtime_db.commit()
                 except Exception:

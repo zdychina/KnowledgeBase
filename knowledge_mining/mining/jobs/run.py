@@ -899,16 +899,24 @@ def _run_pipeline(
             }
 
         run_document_metadata: dict[str, Any] = {"file_size": doc.file_size}
+        # 摄取期预处理失败（PDF 抽文本 / HTML→md / CHM 解包 / doc→docx）只被记进
+        # RawFileData.metadata_json，而这类文档不会建快照 —— 不在这里带上，原因就
+        # 只剩日志里有，库里查不到。
+        _pre_err = (doc.metadata_json or {}).get("preprocess_error")
+        if _pre_err:
+            run_document_metadata["preprocess_error"] = str(_pre_err)
         if lifecycle_action == "SKIP":
             # Persist the published selection's provenance so resume can rebuild
             # the same decision after the in-memory list has been lost.
             run_document_metadata["source_batch_id"] = lifecycle_state.get(
                 "active_source_batch_id"
             )
+            run_document_metadata["skip_reason"] = "unchanged"
         elif lifecycle_action == "RESTORE":
             run_document_metadata.update({
                 "lifecycle_action": "RESTORE",
                 "source_batch_id": batch_id,
+                "skip_reason": "restored",
             })
 
         tracker.register_document(MiningRunDocumentData(

@@ -34,6 +34,19 @@
         {{ miningStore.currentDocument.error_message }}
       </div>
 
+      <!-- Skip Reason Banner -->
+      <div
+        v-if="skipReasonText"
+        class="doc-detail__skip-banner"
+        :class="{ 'doc-detail__skip-banner--faulty': skipIsFaulty }"
+      >
+        <el-icon><WarningFilled v-if="skipIsFaulty" /><InfoFilled v-else /></el-icon>
+        <div class="skip-banner__body">
+          <div><strong>跳过原因：</strong>{{ skipReasonText }}</div>
+          <div v-if="skipReasonDetail" class="skip-banner__detail">{{ skipReasonDetail }}</div>
+        </div>
+      </div>
+
       <!-- Stage Timeline -->
       <div class="doc-detail__section">
         <h4 class="section-label">阶段时间线</h4>
@@ -192,7 +205,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { ArrowLeft, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import { useMiningStore } from '@/stores/mining'
 import { useMiningApi } from '@/api/mining'
 import StatusBadge from '@/components/common/StatusBadge.vue'
@@ -285,6 +298,54 @@ const docDuration = computed(() => {
   if (diff < 60) return `${diff}s`
   if (diff < 3600) return `${Math.floor(diff / 60)}m ${diff % 60}s`
   return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m`
+})
+
+// 跳过原因：后端在 mining_run_documents.metadata_json.skip_reason 里记录机器码，
+// 这里翻译成中文。老数据没有该字段 → 按状态给出兜底说明。
+const SKIP_REASON_LABELS: Record<string, string> = {
+  // 复用已有成果 —— 正常，无需处理
+  unchanged: '内容与已发布快照一致（哈希未变），复用原快照，未重新挖掘',
+  restored: '内容与历史快照一致，直接恢复该快照，未重新挖掘',
+  // 系统没能处理它 —— 属于故障，需排查
+  preprocess_failed: '摄取时格式转换失败（PDF 抽取 / HTML 转换 / 压缩包解包 / doc 转 docx），未能取到正文',
+  parser_failed: '文件解析失败（可能已加密、损坏或格式异常），未生成快照',
+  unsupported_type: '该文件类型没有对应的解析器，未生成快照',
+  // 文件本身没内容 —— 通常无需处理
+  empty_file: '文件内容为空或未抽取到文本（如扫描件 PDF），未生成快照',
+  no_segments: '分段结果为空，未生成快照',
+  // 兜底：解析未产出内容但不属于以上任何一种
+  parse_no_tree: '解析未产出内容，未生成快照',
+}
+
+/** 系统故障类原因 → 横幅标红，与"正常复用/空文件"区分开 */
+const SKIP_REASON_FAULTY = new Set(['preprocess_failed', 'parser_failed', 'unsupported_type'])
+
+const isSkippedDoc = computed(() => {
+  const doc = miningStore.currentDocument
+  if (!doc) return false
+  return doc.status === 'skipped' || String(doc.action).toUpperCase() === 'SKIP'
+})
+
+const skipReasonText = computed(() => {
+  const doc = miningStore.currentDocument
+  if (!doc || !isSkippedDoc.value) return ''
+  const code = doc.skip_reason
+  if (code) return SKIP_REASON_LABELS[code] || code
+  // 老数据没有 skip_reason 字段 → 只能按状态给泛化说明
+  return doc.status === 'skipped'
+    ? '该文档未产出可入库的内容（解析为空或分段为空）'
+    : '内容未发生变化，复用已发布快照'
+})
+
+const skipReasonDetail = computed(() => {
+  const doc = miningStore.currentDocument
+  if (!doc || !isSkippedDoc.value) return ''
+  return doc.skip_reason_detail || ''
+})
+
+const skipIsFaulty = computed(() => {
+  const code = miningStore.currentDocument?.skip_reason
+  return !!code && SKIP_REASON_FAULTY.has(code)
 })
 
 // ── Formatters ──
@@ -492,6 +553,36 @@ watch(relPage, loadArtifacts)
   border-radius: var(--kb-radius-sm);
   font-size: 13px;
   border-left: 3px solid var(--kb-danger);
+}
+
+/* Skip banner */
+.doc-detail__skip-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--kb-border-light);
+  color: var(--kb-text-secondary);
+  padding: 12px 18px;
+  border-radius: var(--kb-radius-sm);
+  font-size: 13px;
+  border-left: 3px solid var(--kb-text-tertiary);
+}
+
+/* 系统没能处理它 —— 与"正常复用/空文件"区别对待 */
+.doc-detail__skip-banner--faulty {
+  background: var(--kb-warning-soft, var(--kb-border-light));
+  color: var(--kb-warning);
+  border-left-color: var(--kb-warning);
+}
+
+.skip-banner__body { flex: 1; min-width: 0; }
+
+.skip-banner__detail {
+  margin-top: 4px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  color: var(--kb-text-tertiary);
+  word-break: break-word;
 }
 
 /* Section */
