@@ -86,4 +86,7 @@ agent_serving_zdy/target/
 # === Docker build artifacts ===
 cmkb.tar
 
+# === 运行时日志（docker-compose 把 ./logs 挂进容器 /app/logs）===
+logs/
+
 # === Main control service config ===

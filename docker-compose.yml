@@ -67,6 +67,10 @@ services:
       #
       # 修改这些宿主机文件后，可执行以下命令应用配置：
       # bash deploy-server.sh --apply-config
+      # 各服务日志（按服务分文件，supervisor 负责轮转）。
+      # 挂到宿主机是为了：容器重建后日志不丢，且能直接 tail / grep / scp。
+      - ./logs:/app/logs
+
       - ./.env:/app/.env
       - ./knowledge_mining:/app/knowledge_mining
       - ./llm_service:/app/llm_service
@@ -102,6 +106,16 @@ services:
     # 容器异常退出或 Docker 重启后自动拉起；
     # 手动停止的容器不会自动重启。
     restart: unless-stopped
+
+    # 容器日志轮转。
+    # 6 个子服务的 stdout 都汇到 PID 1，由 Docker 的 json-file 驱动接收。
+    # json-file 默认不轮转，长期运行会把宿主机磁盘写满，因此必须显式限制：
+    # 单文件 50MB × 保留 5 份 = 该容器日志最多占用 250MB。
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 # Docker 命名卷定义
 volumes:

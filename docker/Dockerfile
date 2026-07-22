@@ -87,7 +87,9 @@ RUN rm -f /etc/nginx/sites-enabled/default \
     && ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 COPY docker/supervisord.conf /etc/supervisor/conf.d/cmkb.conf
 
-RUN mkdir -p /app/uploads /app/data/main_control_service
+# /app/logs 通常由 docker-compose 的 ./logs 挂载覆盖；这里仍然建出来，
+# 保证不挂卷直接 docker run 时 supervisor 也能写日志（否则会启动失败）。
+RUN mkdir -p /app/uploads /app/data/main_control_service /app/logs
 
 EXPOSE 80 8900 8901 8910 8081 9000
 
