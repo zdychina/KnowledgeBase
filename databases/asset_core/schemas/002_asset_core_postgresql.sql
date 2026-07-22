@@ -230,6 +230,14 @@ CREATE INDEX IF NOT EXISTS idx_asset_retrieval_units_search_vector_gin
 CREATE INDEX IF NOT EXISTS idx_asset_retrieval_units_text_trgm_gin
     ON asset_retrieval_units USING GIN (text gin_trgm_ops);
 
+-- Containment index for the entity-graph route:
+--   AssetRetrievalUnitMapper.selectByEntityRefs → `entity_refs_json::jsonb @> ?::jsonb`
+-- (the ::jsonb cast is a no-op on this already-JSONB column, so the planner can
+-- still use this index). Added by 9de9fe1, dropped accidentally by d945a00 when
+-- the domain dimension was introduced, restored here.
+CREATE INDEX IF NOT EXISTS idx_asset_ru_entity_refs_gin
+    ON asset_retrieval_units USING GIN (entity_refs_json);
+
 CREATE TABLE IF NOT EXISTS asset_retrieval_embeddings (
     id                 TEXT PRIMARY KEY,
     retrieval_unit_id  TEXT NOT NULL REFERENCES asset_retrieval_units(id) ON DELETE CASCADE,

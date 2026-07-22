@@ -5,6 +5,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +37,8 @@ public class DomainPoolManager {
 
     private final DomainRegistry domainRegistry;
     private final DataSource defaultDataSource;
+    /** Applied to each resolved DataSource so serving-owned tables exist in every routed DB. */
+    private final DomainSchemaEnsurer schemaEnsurer;
 
     /** domain → resolved DataSource (may be the default for unconfigured domains). */
     private final Map<String, DataSource> pools = new ConcurrentHashMap<>();
@@ -44,10 +47,19 @@ public class DomainPoolManager {
     /** Dedicated Hikari pools we own so we can close them. */
     private final Map<String, HikariDataSource> ownedPools = new ConcurrentHashMap<>();
 
+    /** Test-friendly constructor: no schema is ensured on the resolved DataSources. */
     public DomainPoolManager(DomainRegistry domainRegistry,
                              @Qualifier("defaultDataSource") DataSource defaultDataSource) {
+        this(domainRegistry, defaultDataSource, DomainSchemaEnsurer.NOOP);
+    }
+
+    @Autowired
+    public DomainPoolManager(DomainRegistry domainRegistry,
+                             @Qualifier("defaultDataSource") DataSource defaultDataSource,
+                             DomainSchemaEnsurer schemaEnsurer) {
         this.domainRegistry = domainRegistry;
         this.defaultDataSource = defaultDataSource;
+        this.schemaEnsurer = schemaEnsurer;
     }
 
     /**
@@ -66,6 +78,7 @@ public class DomainPoolManager {
 
         if (db == null || !db.isUsable()) {
             poolSignatures.put(domain, DEFAULT_SIGNATURE);
+            ensureSchema(defaultDataSource, domain);
             return defaultDataSource;
         }
 
@@ -73,7 +86,20 @@ public class DomainPoolManager {
         HikariDataSource ds = createHikariPool(domain, db);
         ownedPools.put(domain, ds);
         poolSignatures.put(domain, db.signature());
+        ensureSchema(ds, domain);
         return ds;
+    }
+
+    /**
+     * Create serving-owned tables in the resolved DB. Never propagates: a domain whose
+     * optional tables cannot be created must still serve reads.
+     */
+    private void ensureSchema(DataSource dataSource, String domain) {
+        try {
+            schemaEnsurer.ensure(dataSource, domain);
+        } catch (Exception e) {
+            log.warn("Schema ensure failed for domain '{}': {}", domain, e.getMessage());
+        }
     }
 
     /**

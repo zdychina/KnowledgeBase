@@ -174,7 +174,16 @@ python import_db.py     # TRUNCATE 后逐条 INSERT
 
 `db_tables.py` 的 `EXPORT_TABLES` 顺序与 DROP **正好相反**（父表先，TRUNCATE 时 `reversed()`）。其中 `OPTIONAL_TABLES`（`operator_paradigm*`）由 Java 的 `ParadigmSchemaInitializer` 在启动时建、Python 侧不建，所以 Java 没跑过的库里不存在——export/import 会跳过它们，改这两个脚本时别把这个保护去掉（`import_db.py` 把所有表拼进**一条** TRUNCATE，少一张表整条都会失败）。
 
-权威 schema 是 Python 侧 `databases/*/schemas/*.sql`（由 `pg_schema.py` 按序执行，ontology 必须最后——它的 FK 指向 `asset_*`）。`agent_serving_java/src/main/resources/db/init.sql` 是**已腐坏的同构副本**：它声明 `embedding_vector TEXT`，而所有向量查询用的是 `embedding_vector_vec vector(1024)`，该列在 init.sql 里根本不存在。照它建库，所有 dense 检索报 `column does not exist`。
+权威 schema 是 Python 侧 `databases/*/schemas/*.sql`（由 `pg_schema.py` 按序执行，ontology 必须最后——它的 FK 指向 `asset_*`）。曾经并存的 `agent_serving_java/src/main/resources/db/init.sql` 是一份腐坏的同构副本（基于 SQLite 时代的 `001_asset_core.sql`，声明 `embedding_vector TEXT` 而没有 mapper 实际使用的 `embedding_vector_vec vector(1024)`），无任何代码执行它，**已删除**——在旧文档或旧分支里看到它时不要照着建库。
+
+Java 侧现在只保留自己拥有的表的 DDL，全部会自动执行：
+
+| 目录 | 表 | 执行者 |
+|---|---|---|
+| `db/operator/` | `operator_paradigm*` | `ParadigmSchemaInitializer`（非路由的 `defaultDataSource`） |
+| `db/serving/` | `serving_query_logs` / `serving_query_cache` | `ServingRuntimeSchemaInitializer` + `DomainPoolManager` 建池时（**按域路由，每个域建进自己的库**） |
+
+`db/migrate_v1_to_zdy.sql` / `db/migrate_v2_semantic_cache.sql` 是人工执行的历史迁移，内容已分别被 `databases/asset_core/schemas/002_*.sql` 末尾的幂等升级段和 `db/serving/002_*.sql` 覆盖，不会自动执行。
 
 ### 部署
 

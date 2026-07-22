@@ -19,7 +19,7 @@ EXPORT_TABLES = [
     "mining_runs",
     "mining_run_documents",
     "mining_run_stage_events",
-    # serving_runtime
+    # serving_runtime（检索服务运行态）——见 OPTIONAL_TABLES
     "serving_query_logs",
     "serving_query_cache",
     # asset_core
@@ -51,10 +51,15 @@ EXPORT_TABLES = [
     "operator_paradigm_version",
 ]
 
-# 可能不存在的表：由 agent_serving_java 的 ParadigmSchemaInitializer 在启动时建，
-# Python 侧 reset_db.py 不建。因此 Java 从未启动过的库里没有这两张表，
-# export/import 必须容忍其缺失，否则会在纯挖掘库上直接报错。
+# 可能不存在的表：全部由 agent_serving_java 自己创建，Python 侧 reset_db.py 不建。
+#   - operator_paradigm*        ParadigmSchemaInitializer，启动时建在非路由的 defaultDataSource 上
+#   - serving_query_logs/cache  ServingRuntimeSchemaInitializer，启动时建默认库、
+#                               并在 DomainPoolManager 每次建池时建到该域自己的库上
+# 因此 Java 从未启动过的库里没有这几张表，export/import 必须容忍其缺失，
+# 否则会在纯挖掘库上直接报错。
 OPTIONAL_TABLES = {
     "operator_paradigm",
     "operator_paradigm_version",
+    "serving_query_logs",
+    "serving_query_cache",
 }

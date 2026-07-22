@@ -100,13 +100,23 @@ ALL_TRIGGERS = [
 ]
 
 # ── 要执行的建表 SQL 文件（按顺序） ─────────────────────────
-# ontology 建表放最后：它的外键指向 asset_* 和 mining_runs，必须等那些表先建好
-# （与 knowledge_mining 的 ensure_schema 应用顺序一致）。
+# 顺序与 knowledge_mining 的 ensure_schema（mining/infra/pg_schema.py）保持一致：
+#   asset_core 002 先建（它装 pg_trgm / vector 扩展），
+#   mining_runtime 002/003/004 增量迁移紧随其后，
+#   asset_core 003（domain 隔离）在 002 之后，
+#   ontology 必须最后——它的外键指向 asset_* 和 mining_runs。
+#
+# 不含 serving_query_logs / serving_query_cache 与 operator_paradigm*：那些是
+# agent_serving_java 自有表，由它自己在启动/建池时创建
+# （ServingRuntimeSchemaInitializer / ParadigmSchemaInitializer）。它们写在按域路由的
+# DataSource 上，这个脚本只连 .env 那一个库，本来也覆盖不全。见 db_tables.OPTIONAL_TABLES。
 SCHEMA_FILES = [
     REPO_ROOT / "databases" / "agent_llm_runtime" / "schemas" / "002_agent_llm_runtime_postgresql.sql",
+    REPO_ROOT / "databases" / "asset_core" / "schemas" / "002_asset_core_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "002_mining_runtime_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "003_mining_runtime_domain.sql",
-    REPO_ROOT / "databases" / "asset_core" / "schemas" / "002_asset_core_postgresql.sql",
+    REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "004_mining_runtime_run_stage.sql",
+    REPO_ROOT / "databases" / "asset_core" / "schemas" / "003_asset_core_domain_isolation.sql",
     REPO_ROOT / "databases" / "ontology" / "schemas" / "001_ontology_concept_postgresql.sql",
 ]
 

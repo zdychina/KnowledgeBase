@@ -1,6 +1,6 @@
 # Databases
 
-本目录统一放 CoreMasterKB 当前三类数据库契约。
+本目录统一放 CoreMasterKB 的数据库契约。
 
 ## 目录结构
 
@@ -9,7 +9,27 @@ databases/
   asset_core/         # Mining 写、Serving 读的知识资产库
   mining_runtime/     # Mining 自身运行态与断点续跑状态库
   agent_llm_runtime/  # 独立 LLM 服务运行态库
+  ontology/           # 本体概念层（FK 指向 asset_* / mining_runs，DDL 必须最后执行）
 ```
+
+## 不在本目录的表：serving 自有表
+
+`agent_serving_java` 自己读写、自己建表的几张表**不放这里**，DDL 在
+`agent_serving_java/src/main/resources/db/` 下：
+
+| 表 | DDL | 建表时机 |
+|---|---|---|
+| `operator_paradigm` / `operator_paradigm_version` | `db/operator/001_operator_paradigm.sql` | `ParadigmSchemaInitializer`，启动时建在非路由的 `defaultDataSource` 上 |
+| `serving_query_logs` | `db/serving/001_serving_query_logs.sql` | `ServingRuntimeSchemaInitializer` |
+| `serving_query_cache` | `db/serving/002_serving_query_cache.sql` | 同上 |
+
+后两张表走 `@Primary` 的 `DomainRoutingDataSource`，所以**每个域会写进自己的库**
+（`domain_registry.yaml` 里那个域的 `database:` 块）。因此它们不能由 `reset_db.py` 建——
+那个脚本只连 `.env` 指向的单个库，域一旦分库就覆盖不到。改为
+`DomainPoolManager` 每次建池时调 `DomainSchemaEnsurer` 补齐。
+
+`db_tables.py` 把这几张表列进 `OPTIONAL_TABLES`，所以 Java 从未启动过的纯挖掘库上
+`export_db.py` / `import_db.py` 会跳过它们。
 
 ## 当前决定
 

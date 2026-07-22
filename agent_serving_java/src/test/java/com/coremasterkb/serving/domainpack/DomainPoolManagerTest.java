@@ -8,6 +8,7 @@ import javax.sql.DataSource;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -79,6 +80,51 @@ class DomainPoolManagerTest {
             DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs);
 
             assertThat(mgr.getDataSource("nonexistent")).isSameAs(defaultDs);
+        }
+    }
+
+    @Nested
+    @DisplayName("serving-owned schema ensure")
+    class SchemaEnsure {
+        @Test
+        @DisplayName("ensurer runs against the DataSource the domain actually resolved to")
+        void ensuresResolvedDataSource() {
+            when(registry.isLoaded()).thenReturn(true);
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(null)));
+            DomainSchemaEnsurer ensurer = mock(DomainSchemaEnsurer.class);
+
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, ensurer);
+            mgr.getDataSource("cloud_core_network");
+
+            verify(ensurer).ensure(defaultDs, "cloud_core_network");
+        }
+
+        @Test
+        @DisplayName("ensurer runs once per pool creation, not once per request")
+        void ensuresOnlyOnPoolCreation() {
+            when(registry.isLoaded()).thenReturn(true);
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(null)));
+            DomainSchemaEnsurer ensurer = mock(DomainSchemaEnsurer.class);
+
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, ensurer);
+            mgr.getDataSource("cloud_core_network");
+            mgr.getDataSource("cloud_core_network");
+
+            verify(ensurer, times(1)).ensure(defaultDs, "cloud_core_network");
+        }
+
+        @Test
+        @DisplayName("a failing ensurer never breaks pool resolution")
+        void survivesFailingEnsurer() {
+            when(registry.isLoaded()).thenReturn(true);
+            when(registry.findEntry("cloud_core_network")).thenReturn(Optional.of(entryWith(null)));
+            DomainSchemaEnsurer ensurer = mock(DomainSchemaEnsurer.class);
+            doThrow(new RuntimeException("relation does not exist"))
+                    .when(ensurer).ensure(any(), anyString());
+
+            DomainPoolManager mgr = new DomainPoolManager(registry, defaultDs, ensurer);
+
+            assertThat(mgr.getDataSource("cloud_core_network")).isSameAs(defaultDs);
         }
     }
 
