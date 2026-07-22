@@ -245,13 +245,15 @@ app = create_app()
 if __name__ == "__main__":
     import copy
     import logging
+    import os
 
     import uvicorn
     from uvicorn.config import LOGGING_CONFIG
 
     _DATEFMT = "%Y-%m-%d %H:%M:%S"
+    _LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
-        level=logging.INFO,
+        level=_LOG_LEVEL,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt=_DATEFMT,
     )
@@ -262,6 +264,8 @@ if __name__ == "__main__":
         '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
     )
     _log_config["formatters"]["access"]["datefmt"] = _DATEFMT
+    for _logger in _log_config.get("loggers", {}).values():
+        _logger["level"] = _LOG_LEVEL
 
     cfg = MainControlSettings()
     uvicorn.run(

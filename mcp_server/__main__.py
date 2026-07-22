@@ -21,7 +21,7 @@ def main() -> None:
     # for HTTP transport, so we can only set the root logger format here; that
     # still dates all application/library log records.
     logging.basicConfig(
-        level=logging.INFO,
+        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )

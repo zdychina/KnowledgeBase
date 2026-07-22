@@ -17,6 +17,12 @@ spring:
 mybatis:
   mapper-locations: classpath:mapper/*.xml
 
+# 与 Python 各服务共用同一个 LOG_LEVEL 环境变量（默认 INFO）。
+# 只调本项目的包，避免 DEBUG 时被 Spring/Hikari 的内部日志淹没。
+logging:
+  level:
+    com.coremasterkb: ${LOG_LEVEL:INFO}
+
 serving:
   # 配置来源：serving 启动时从 main_control 拉取 per-domain 配置（GET /api/v1/serving-config），
   # 并可经 POST /api/v1/admin/reload-config 热重载。

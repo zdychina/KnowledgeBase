@@ -18,12 +18,13 @@ from uvicorn.config import LOGGING_CONFIG  # noqa: E402
 from knowledge_mining.mining.api.app import app  # noqa: E402
 
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
+_LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 
 def _timestamped_log_config() -> dict:
     """Application + uvicorn logging with timestamps (see llm_service for rationale)."""
     logging.basicConfig(
-        level=logging.INFO,
+        level=_LOG_LEVEL,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         datefmt=_DATEFMT,
     )
@@ -34,6 +35,8 @@ def _timestamped_log_config() -> dict:
         '%(asctime)s %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
     )
     cfg["formatters"]["access"]["datefmt"] = _DATEFMT
+    for _logger in cfg.get("loggers", {}).values():
+        _logger["level"] = _LOG_LEVEL
     return cfg
 
 
