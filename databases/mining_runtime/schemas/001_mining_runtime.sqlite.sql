@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS mining_runs (
         status IN ('queued', 'running', 'completed', 'interrupted', 'failed', 'cancelled',
                    'awaiting_review')
     ),
+    current_stage    TEXT NOT NULL DEFAULT 'queued' CHECK (
+        current_stage IN ('queued', 'ingest', 'mining', 'review', 'publishing', 'done')
+    ),
     build_id         TEXT,
     total_documents  INTEGER NOT NULL DEFAULT 0,
     new_count        INTEGER NOT NULL DEFAULT 0,
@@ -55,6 +58,7 @@ CREATE TABLE IF NOT EXISTS mining_run_stage_events (
     run_document_id  TEXT REFERENCES mining_run_documents(id) ON DELETE CASCADE,
     stage            TEXT NOT NULL CHECK (
         stage IN (
+            'ingest',
             'parse',
             'segment',
             'enrich',

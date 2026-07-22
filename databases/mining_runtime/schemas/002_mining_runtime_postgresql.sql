@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS mining_runs (
         status IN ('queued', 'running', 'completed', 'interrupted', 'failed', 'cancelled',
                    'awaiting_review')
     ),
+    current_stage    TEXT NOT NULL DEFAULT 'queued' CHECK (
+        current_stage IN ('queued', 'ingest', 'mining', 'review', 'publishing', 'done')
+    ),
     domain           TEXT NOT NULL DEFAULT 'default',
     channel          TEXT NOT NULL DEFAULT 'prod',
     build_id         TEXT,
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS mining_run_stage_events (
     run_document_id  TEXT REFERENCES mining_run_documents(id) ON DELETE CASCADE,
     stage            TEXT NOT NULL CHECK (
         stage IN (
+            'ingest',
             'parse', 'segment', 'enrich', 'entity_extract', 'resolve', 'discourse', 'retrieval_units',
             'embedding', 'db_write',
             'entity_relations', 'graph_write', 'ontology_induction', 'graph_write_final',

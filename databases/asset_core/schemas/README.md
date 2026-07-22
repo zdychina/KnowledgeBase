@@ -1,6 +1,6 @@
 # Asset Core Schema
 
-> 当前版本：v1.1  
+> 当前版本：v1.2
 > SQLite 契约：`databases/asset_core/schemas/001_asset_core.sqlite.sql`  
 > Generic SQL 基线：`databases/asset_core/schemas/001_asset_core.sql`
 
@@ -123,3 +123,28 @@ Serving 永远只读当前 channel 的 active release。
 决定“哪个 build 当前正式对外生效”。
 
 如果这三张表的语义稳定，这套资产库主链就稳定。 
+
+## Domain 隔离与升级
+
+新建数据库中，`asset_documents` 的身份唯一性是
+`(domain, document_key)`，`asset_document_snapshots` 的内容复用边界是
+`(domain, normalized_content_hash)`。不同 domain 可以使用相同文档键或内容哈希，
+同一 domain 内仍保持唯一。
+
+PostgreSQL 会在基础 schema、runtime schema 之后，以单个事务执行
+`003_asset_core_domain_isolation.sql`。迁移根据 source batch、build、release 和
+mining run 的来源回填旧数据：唯一 domain 保留实际值，多 domain 来源使用
+`__legacy_shared__`，没有来源使用 `__legacy_unscoped__`。build selection 仅在
+同 domain、同 document/snapshot 且不晚于 build 创建时间的最近 link 唯一时，
+回填 `source_batch_id`；歧义数据保持 `NULL`。
+
+每个 `(domain, channel)` 最多有一个 active release。Generic SQL 与 SQLite 文件
+只定义新建库基线；SQLite 不执行 PostgreSQL 的旧数据来源推断与回填迁移。
+
+`003_asset_core_domain_isolation.sql` 会在一个事务中更新历史资产并重建约束，执行时
+会持有相关表锁。生产升级应安排维护窗口，并在部署会话中配置合适的
+`lock_timeout`，避免长时间等待业务事务；超时后可安全重试整段迁移。
+
+迁移只自动解析本次新增 domain 列后仍为 `NULL` 的历史资产。`default` 同时也是合法
+运行时 domain，因此已存在的 `domain='default'` 会原样保留；无法判定来源的非标准
+部分迁移状态需要在升级前人工审计，不能仅凭字段值自动改写。

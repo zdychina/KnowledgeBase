@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
             'other'
         )
     ),
+    domain        TEXT NOT NULL DEFAULT 'default',
     description   TEXT,
     created_by    TEXT,
     created_at    TEXT NOT NULL,
@@ -32,7 +33,8 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
 
 CREATE TABLE IF NOT EXISTS asset_documents (
     id             TEXT PRIMARY KEY,
-    document_key   TEXT NOT NULL UNIQUE,
+    domain         TEXT NOT NULL,
+    document_key   TEXT NOT NULL,
     document_name  TEXT,
     document_type  TEXT CHECK (
         document_type IS NULL OR
@@ -53,7 +55,8 @@ CREATE TABLE IF NOT EXISTS asset_documents (
         )
     ),
     metadata_json  TEXT NOT NULL DEFAULT '{}',
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    UNIQUE (domain, document_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_documents_type
@@ -61,7 +64,8 @@ CREATE INDEX IF NOT EXISTS idx_asset_documents_type
 
 CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     id                      TEXT PRIMARY KEY,
-    normalized_content_hash TEXT NOT NULL UNIQUE,
+    domain                  TEXT NOT NULL,
+    normalized_content_hash TEXT NOT NULL,
     raw_content_hash        TEXT NOT NULL,
     mime_type               TEXT NOT NULL CHECK (
         mime_type IN (
@@ -80,7 +84,8 @@ CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     tags_json               TEXT NOT NULL DEFAULT '[]',
     parser_profile_json     TEXT NOT NULL DEFAULT '{}',
     metadata_json           TEXT NOT NULL DEFAULT '{}',
-    created_at              TEXT NOT NULL
+    created_at              TEXT NOT NULL,
+    UNIQUE (domain, normalized_content_hash)
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_document_snapshots_raw_hash
@@ -319,6 +324,7 @@ CREATE TABLE IF NOT EXISTS asset_builds (
         status IN ('building', 'validated', 'failed', 'published', 'archived')
     ),
     build_mode       TEXT NOT NULL CHECK (build_mode IN ('full', 'incremental')),
+    domain           TEXT NOT NULL DEFAULT 'default',
     source_batch_id  TEXT REFERENCES asset_source_batches(id) ON DELETE SET NULL,
     parent_build_id  TEXT REFERENCES asset_builds(id) ON DELETE SET NULL,
     mining_run_id    TEXT,
@@ -338,6 +344,7 @@ CREATE TABLE IF NOT EXISTS asset_build_document_snapshots (
     build_id              TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE CASCADE,
     document_id           TEXT NOT NULL REFERENCES asset_documents(id) ON DELETE CASCADE,
     document_snapshot_id  TEXT NOT NULL REFERENCES asset_document_snapshots(id) ON DELETE RESTRICT,
+    source_batch_id       TEXT REFERENCES asset_source_batches(id) ON DELETE SET NULL,
     selection_status      TEXT NOT NULL CHECK (selection_status IN ('active', 'removed')),
     reason                TEXT NOT NULL CHECK (reason IN ('add', 'update', 'retain', 'remove')),
     metadata_json         TEXT NOT NULL DEFAULT '{}',
@@ -347,10 +354,14 @@ CREATE TABLE IF NOT EXISTS asset_build_document_snapshots (
 CREATE INDEX IF NOT EXISTS idx_asset_build_document_snapshots_snapshot
     ON asset_build_document_snapshots(document_snapshot_id);
 
+CREATE INDEX IF NOT EXISTS idx_asset_build_document_snapshots_batch
+    ON asset_build_document_snapshots(source_batch_id);
+
 CREATE TABLE IF NOT EXISTS asset_publish_releases (
     id                   TEXT PRIMARY KEY,
     release_code         TEXT NOT NULL UNIQUE,
     build_id             TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE RESTRICT,
+    domain               TEXT NOT NULL DEFAULT 'default',
     channel              TEXT NOT NULL,
     status               TEXT NOT NULL CHECK (status IN ('staging', 'active', 'retired', 'failed')),
     previous_release_id  TEXT REFERENCES asset_publish_releases(id) ON DELETE SET NULL,
@@ -361,8 +372,8 @@ CREATE TABLE IF NOT EXISTS asset_publish_releases (
     metadata_json        TEXT NOT NULL DEFAULT '{}'
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_channel_active
-    ON asset_publish_releases(channel)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_channel_active
+    ON asset_publish_releases(domain, channel)
     WHERE status = 'active';
 
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_build

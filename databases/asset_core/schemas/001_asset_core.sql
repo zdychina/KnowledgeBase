@@ -21,16 +21,19 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
 
 CREATE TABLE IF NOT EXISTS asset_documents (
     id             TEXT PRIMARY KEY,
-    document_key   TEXT NOT NULL UNIQUE,
+    domain         TEXT NOT NULL,
+    document_key   TEXT NOT NULL,
     document_name  TEXT,
     document_type  TEXT,
     metadata_json  TEXT NOT NULL DEFAULT '{}',
-    created_at     TEXT NOT NULL
+    created_at     TEXT NOT NULL,
+    UNIQUE (domain, document_key)
 );
 
 CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     id                      TEXT PRIMARY KEY,
-    normalized_content_hash TEXT NOT NULL UNIQUE,
+    domain                  TEXT NOT NULL,
+    normalized_content_hash TEXT NOT NULL,
     raw_content_hash        TEXT NOT NULL,
     mime_type               TEXT NOT NULL,
     title                   TEXT,
@@ -38,7 +41,8 @@ CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     tags_json               TEXT NOT NULL DEFAULT '[]',
     parser_profile_json     TEXT NOT NULL DEFAULT '{}',
     metadata_json           TEXT NOT NULL DEFAULT '{}',
-    created_at              TEXT NOT NULL
+    created_at              TEXT NOT NULL,
+    UNIQUE (domain, normalized_content_hash)
 );
 
 CREATE TABLE IF NOT EXISTS asset_document_snapshot_links (
@@ -143,6 +147,7 @@ CREATE TABLE IF NOT EXISTS asset_build_document_snapshots (
     build_id              TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE CASCADE,
     document_id           TEXT NOT NULL REFERENCES asset_documents(id) ON DELETE CASCADE,
     document_snapshot_id  TEXT NOT NULL REFERENCES asset_document_snapshots(id) ON DELETE RESTRICT,
+    source_batch_id       TEXT REFERENCES asset_source_batches(id) ON DELETE SET NULL,
     selection_status      TEXT NOT NULL,
     reason                TEXT NOT NULL,
     metadata_json         TEXT NOT NULL DEFAULT '{}',
@@ -197,8 +202,15 @@ CREATE INDEX IF NOT EXISTS idx_asset_builds_status
 CREATE INDEX IF NOT EXISTS idx_asset_build_document_snapshots_snapshot
     ON asset_build_document_snapshots(document_snapshot_id);
 
+CREATE INDEX IF NOT EXISTS idx_asset_build_document_snapshots_batch
+    ON asset_build_document_snapshots(source_batch_id);
+
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_build
     ON asset_publish_releases(build_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_channel_active
+    ON asset_publish_releases(domain, channel)
+    WHERE status = 'active';
 
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_channel_status
     ON asset_publish_releases(domain, channel, status);

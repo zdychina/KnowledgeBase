@@ -34,8 +34,7 @@ CREATE TABLE IF NOT EXISTS asset_source_batches (
 
 CREATE TABLE IF NOT EXISTS asset_documents (
     id             TEXT PRIMARY KEY,
-    -- 按域隔离：同一 document_key 可在不同域各存一份，唯一键是 (domain, document_key)。
-    domain         TEXT NOT NULL DEFAULT 'default',
+    domain         TEXT NOT NULL,
     document_key   TEXT NOT NULL,
     document_name  TEXT,
     document_type  TEXT CHECK (
@@ -48,19 +47,15 @@ CREATE TABLE IF NOT EXISTS asset_documents (
     ),
     metadata_json  JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at     TEXT NOT NULL,
-    CONSTRAINT uq_asset_documents_domain_key UNIQUE (domain, document_key)
+    UNIQUE (domain, document_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_documents_type
     ON asset_documents(document_type);
 
-CREATE INDEX IF NOT EXISTS idx_asset_documents_domain
-    ON asset_documents(domain);
-
 CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     id                      TEXT PRIMARY KEY,
-    -- 快照按域去重：唯一键是 (domain, normalized_content_hash)。
-    domain                  TEXT NOT NULL DEFAULT 'default',
+    domain                  TEXT NOT NULL,
     normalized_content_hash TEXT NOT NULL,
     raw_content_hash        TEXT NOT NULL,
     mime_type               TEXT NOT NULL CHECK (
@@ -77,7 +72,7 @@ CREATE TABLE IF NOT EXISTS asset_document_snapshots (
     parser_profile_json     JSONB NOT NULL DEFAULT '{}'::jsonb,
     metadata_json           JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at              TEXT NOT NULL,
-    CONSTRAINT uq_asset_document_snapshots_domain_hash UNIQUE (domain, normalized_content_hash)
+    UNIQUE (domain, normalized_content_hash)
 );
 
 CREATE INDEX IF NOT EXISTS idx_asset_document_snapshots_raw_hash
@@ -284,14 +279,21 @@ CREATE TABLE IF NOT EXISTS asset_build_document_snapshots (
     build_id              TEXT NOT NULL REFERENCES asset_builds(id) ON DELETE CASCADE,
     document_id           TEXT NOT NULL REFERENCES asset_documents(id) ON DELETE CASCADE,
     document_snapshot_id  TEXT NOT NULL REFERENCES asset_document_snapshots(id) ON DELETE RESTRICT,
+    source_batch_id       TEXT REFERENCES asset_source_batches(id) ON DELETE SET NULL,
     selection_status      TEXT NOT NULL CHECK (selection_status IN ('active', 'removed')),
     reason                TEXT NOT NULL CHECK (reason IN ('add', 'update', 'retain', 'remove')),
     metadata_json         JSONB NOT NULL DEFAULT '{}'::jsonb,
     PRIMARY KEY (build_id, document_id)
 );
 
+ALTER TABLE asset_build_document_snapshots
+    ADD COLUMN IF NOT EXISTS source_batch_id TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_asset_build_document_snapshots_snapshot
     ON asset_build_document_snapshots(document_snapshot_id);
+
+CREATE INDEX IF NOT EXISTS idx_asset_build_document_snapshots_batch
+    ON asset_build_document_snapshots(source_batch_id);
 
 CREATE TABLE IF NOT EXISTS asset_publish_releases (
     id                   TEXT PRIMARY KEY,
@@ -352,28 +354,6 @@ CREATE TRIGGER trg_populate_embedding_vector
 ALTER TABLE asset_source_batches
     ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
 
--- asset_documents / asset_document_snapshots 的 domain 化在 d945a00 被遗漏（其余表都做了），
--- 导致 mining 的 upsert（ON CONFLICT(domain, ...)）在只做过旧迁移的库上报
--- "no unique or exclusion constraint matching the ON CONFLICT specification"。下面补齐。
-ALTER TABLE asset_documents
-    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
-
-ALTER TABLE asset_document_snapshots
-    ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
-
--- 旧的单列唯一（UNIQUE(document_key) / UNIQUE(normalized_content_hash)）改为按域复合唯一。
-DROP INDEX IF EXISTS asset_documents_document_key_key;
-DROP INDEX IF EXISTS asset_document_snapshots_normalized_content_hash_key;
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_documents_domain_key
-    ON asset_documents(domain, document_key);
-
-CREATE INDEX IF NOT EXISTS idx_asset_documents_domain
-    ON asset_documents(domain);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_document_snapshots_domain_hash
-    ON asset_document_snapshots(domain, normalized_content_hash);
-
 ALTER TABLE asset_builds
     ADD COLUMN IF NOT EXISTS domain TEXT NOT NULL DEFAULT 'default';
 
@@ -383,21 +363,56 @@ ALTER TABLE asset_publish_releases
 ALTER TABLE asset_publish_releases
     ALTER COLUMN channel SET DEFAULT 'prod';
 
-DROP INDEX IF EXISTS uq_asset_publish_releases_channel_active;
-DROP INDEX IF EXISTS idx_asset_publish_releases_channel_status;
-DROP INDEX IF EXISTS uq_asset_publish_releases_domain_channel_active;
-DROP INDEX IF EXISTS idx_asset_publish_releases_domain_channel_status;
-
 CREATE INDEX IF NOT EXISTS idx_asset_source_batches_domain
     ON asset_source_batches(domain);
 
 CREATE INDEX IF NOT EXISTS idx_asset_builds_domain_status
     ON asset_builds(domain, status);
 
--- channel is a reserved field with default prod -- uniqueness is enforced per-domain only
-CREATE UNIQUE INDEX IF NOT EXISTS uq_asset_publish_releases_domain_active
-    ON asset_publish_releases(domain)
-    WHERE status = 'active';
+-- At most one active release exists for each domain/channel pair. Recognize
+-- an existing equivalent index by semantics. 003 replaces incompatible
+-- legacy indexes (including one occupying the canonical name).
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index AS indexes
+        JOIN pg_class AS index_relations ON index_relations.oid = indexes.indexrelid
+        JOIN pg_class AS table_relations ON table_relations.oid = indexes.indrelid
+        WHERE indexes.indrelid = 'asset_publish_releases'::regclass
+          AND index_relations.relnamespace = table_relations.relnamespace
+          AND indexes.indisunique
+          AND indexes.indisvalid
+          AND ARRAY(
+              SELECT attributes.attname
+              FROM unnest(indexes.indkey::smallint[]) WITH ORDINALITY
+                AS keys(attnum, position)
+              JOIN pg_attribute AS attributes
+                ON attributes.attrelid = indexes.indrelid
+               AND attributes.attnum = keys.attnum
+              WHERE keys.position <= indexes.indnkeyatts
+              ORDER BY keys.position
+          ) = ARRAY['domain', 'channel']::name[]
+          AND regexp_replace(
+              lower(pg_get_expr(indexes.indpred, indexes.indrelid)),
+              '[[:space:]()]|::text',
+              '',
+              'g'
+          ) = 'status=''active'''
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM pg_class AS index_relations
+        JOIN pg_class AS table_relations
+          ON table_relations.oid = 'asset_publish_releases'::regclass
+        WHERE index_relations.relnamespace = table_relations.relnamespace
+          AND index_relations.relname = 'uq_asset_publish_releases_domain_channel_active'
+    ) THEN
+        CREATE UNIQUE INDEX uq_asset_publish_releases_domain_channel_active
+            ON asset_publish_releases(domain, channel)
+            WHERE status = 'active';
+    END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_asset_publish_releases_domain_status
     ON asset_publish_releases(domain, status);

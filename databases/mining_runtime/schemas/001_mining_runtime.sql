@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS mining_runs (
     source_batch_id  TEXT,
     input_path       TEXT NOT NULL,
     status           TEXT NOT NULL,
+    current_stage    TEXT NOT NULL DEFAULT 'queued',
     build_id         TEXT,
     total_documents  INTEGER NOT NULL DEFAULT 0,
     new_count        INTEGER NOT NULL DEFAULT 0,
