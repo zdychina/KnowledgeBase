@@ -22,8 +22,3 @@ serving:
   default-domain: cloud_core_network
   llm:
     base-url: ""
-  embedding:
-    model: embedding-3
-    dimensions: 1024
-  rerank:
-    model: rerank-pro
