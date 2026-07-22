@@ -49,7 +49,18 @@ CONNINFO = (
 )
 
 # ── 所有要 DROP 的表（按依赖顺序，子表先删） ─────────────────
+# 注：用 DROP TABLE ... CASCADE，顺序容错；但仍按依赖从子到父排，便于阅读。
 ALL_TABLES = [
+    # ontology 概念层（FK 指向 asset_* / mining_runs，必须先于它们删）
+    "ontology_evidence_nodes",
+    "ontology_candidates",
+    "asset_segment_entity_mentions",   # 段↔实体桥接表，定义在 ontology DDL 文件里
+    "ontology_entity_relations",
+    "ontology_alias_dictionary",
+    "ontology_entities",
+    "ontology_relation_types",
+    "ontology_node_types",
+    "ontology_versions",
     # agent_llm_runtime（LLM 服务）
     "agent_llm_events",
     "agent_llm_results",
@@ -62,21 +73,6 @@ ALL_TABLES = [
     "mining_run_stage_events",
     "mining_run_documents",
     "mining_runs",
-    # serving_runtime（检索服务）
-    "serving_query_cache",
-    "serving_query_logs",
-    # ontology（本体概念层）——须先于 asset_core 删除：
-    # FK 指向 asset_document_snapshots / asset_raw_segments，
-    # 而 DROP ... CASCADE 只删外键约束，不删引用方的表本身。
-    "ontology_candidates",
-    "asset_segment_entity_mentions",
-    "ontology_evidence_nodes",
-    "ontology_alias_dictionary",
-    "ontology_entity_relations",
-    "ontology_entities",
-    "ontology_relation_types",
-    "ontology_node_types",
-    "ontology_versions",
     # asset_core（资产核心）
     "asset_retrieval_embeddings",
     "asset_retrieval_units",
@@ -104,14 +100,13 @@ ALL_TRIGGERS = [
 ]
 
 # ── 要执行的建表 SQL 文件（按顺序） ─────────────────────────
+# ontology 建表放最后：它的外键指向 asset_* 和 mining_runs，必须等那些表先建好
+# （与 knowledge_mining 的 ensure_schema 应用顺序一致）。
 SCHEMA_FILES = [
-    REPO_ROOT / "databases" / "serving_runtime" / "schemas" / "001_serving_runtime_postgresql.sql",
-    REPO_ROOT / "databases" / "serving_runtime" / "schemas" / "002_serving_query_cache.sql",
     REPO_ROOT / "databases" / "agent_llm_runtime" / "schemas" / "002_agent_llm_runtime_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "002_mining_runtime_postgresql.sql",
     REPO_ROOT / "databases" / "mining_runtime" / "schemas" / "003_mining_runtime_domain.sql",
     REPO_ROOT / "databases" / "asset_core" / "schemas" / "002_asset_core_postgresql.sql",
-    # ontology 必须最后：FK 指向 asset_*，且会给 mining_runs 补 subloop_stage / ontology_version_id 两列
     REPO_ROOT / "databases" / "ontology" / "schemas" / "001_ontology_concept_postgresql.sql",
 ]
 
