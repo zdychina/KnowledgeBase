@@ -1,6 +1,8 @@
 package com.coremasterkb.serving.application;
 
 import com.coremasterkb.serving.domain.*;
+import com.coremasterkb.serving.mapper.result.ExpandedSegmentRow;
+import com.coremasterkb.serving.mapper.result.SegmentWithMetaRow;
 import com.coremasterkb.serving.repository.AssetRepository;
 import com.coremasterkb.serving.retrieval.GraphExpander;
 import org.junit.jupiter.api.BeforeEach;
@@ -120,6 +122,94 @@ class ContextAssemblerTest {
             assertThat(pack.query()).isNotNull();
             assertThat(pack.query().original()).isEqualTo("SMF配置");
             assertThat(pack.query().intent()).isEqualTo("concept_lookup");
+        }
+    }
+
+    @Nested
+    @DisplayName("item deduplication")
+    class ItemDeduplication {
+
+        /**
+         * selectWithMeta LEFT JOINs asset_document_snapshot_links (1:N), so a segment whose
+         * snapshot has multiple links comes back as several rows sharing the same id. Those
+         * duplicate rows must not become duplicate context items.
+         */
+        @Test
+        @DisplayName("fan-out rows for one segment id yield a single context item")
+        void joinFanOutIsDeduped() {
+            var understanding = new QueryUnderstanding("业务感知", "concept_lookup", null, null, null, null,
+                    EvidenceNeed.empty(), null, "rule", null);
+            var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
+            var plan = new RetrievalRoutePlan(null, null, null, null,
+                    new AssemblyConfig(false, false, 10, 10, 2, List.of()), null);
+
+            // Candidate whose underlying source is seg1.
+            var candidate = new RetrievalCandidate("u1", 0.85, "bm25",
+                    Map.of("source_segment_id", "seg1", "text", "seed text"), null);
+
+            // Same seg1 returned 3× (one row per snapshot link path) — the JOIN fan-out.
+            when(repo.resolveSegmentsByIds(any(), any())).thenReturn(List.of(
+                    seg("seg1", "业务感知定义_1.md"),
+                    seg("seg1", "业务感知功能描述/业务感知定义_1.md"),
+                    seg("seg1", "另一目录/业务感知定义_1.md")));
+            when(repo.getRelationsForSegments(any(), any(), any())).thenReturn(List.of());
+            when(repo.getDocumentSources(any(), any())).thenReturn(List.of());
+
+            var pack = assembler.assemble("业务感知", understanding, scope, List.of(candidate), plan);
+
+            long seg1Count = pack.items().stream()
+                    .filter(i -> "seg1".equals(i.id()))
+                    .count();
+            assertThat(seg1Count).isEqualTo(1);
+            assertThat(pack.items().stream().map(ContextItem::id).distinct().count())
+                    .isEqualTo(pack.items().size());
+        }
+
+        /**
+         * A segment reached both as a direct source (role=context) and via graph expansion
+         * (role=support) must appear once; the first occurrence (context) wins.
+         */
+        @Test
+        @DisplayName("segment reached via both source and expansion is deduped, context wins")
+        void sourceAndExpansionOverlapIsDeduped() {
+            var understanding = new QueryUnderstanding("业务感知", "concept_lookup", null, null, null, null,
+                    EvidenceNeed.empty(), null, "rule", null);
+            var scope = new ActiveScope("rel", "build", List.of("snap1"), Map.of());
+            var plan = new RetrievalRoutePlan(null, null, null, null,
+                    new AssemblyConfig(true, true, 10, 10, 2, List.of("elaborates")), null);
+
+            var candidate = new RetrievalCandidate("u1", 0.85, "bm25",
+                    Map.of("source_segment_id", "seg1", "text", "seed text"), null);
+
+            when(repo.resolveSegmentsByIds(any(), any()))
+                    .thenReturn(List.of(seg("seg1", "业务感知定义_1.md")));
+            // Expansion returns the very same seg1 (cross-list duplicate).
+            when(graphExpander.expand(any(), anyInt(), any(), anyInt(), any()))
+                    .thenReturn(List.of(new ExpandedSegmentRow(
+                            seg("seg1", "业务感知定义_1.md"), 1, "seg1", "elaborates")));
+            when(repo.getRelationsForSegments(any(), any(), any())).thenReturn(List.of());
+            when(repo.getDocumentSources(any(), any())).thenReturn(List.of());
+
+            var pack = assembler.assemble("业务感知", understanding, scope, List.of(candidate), plan);
+
+            var seg1Items = pack.items().stream()
+                    .filter(i -> "seg1".equals(i.id()))
+                    .toList();
+            assertThat(seg1Items).hasSize(1);
+            assertThat(seg1Items.get(0).role()).isEqualTo("context");
+        }
+
+        private SegmentWithMetaRow seg(String id, String relativePath) {
+            var row = new SegmentWithMetaRow();
+            row.setId(id);
+            row.setDocumentSnapshotId("snap1");
+            row.setRawText("业务感知是指对用户数据报文进行解析。");
+            row.setBlockType("paragraph");
+            row.setSemanticRole("definition");
+            row.setSnapshotTitle("业务感知定义");
+            row.setDocumentId("doc1");
+            row.setRelativePath(relativePath);
+            return row;
         }
     }
 }

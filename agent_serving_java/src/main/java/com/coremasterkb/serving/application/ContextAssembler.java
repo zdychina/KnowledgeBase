@@ -259,6 +259,17 @@ public class ContextAssembler {
         allItems.addAll(sourceItems);
         allItems.addAll(expandedItems);
 
+        // Deduplicate items by id (keep first occurrence: seed > context > support).
+        // Backstop for the JOIN fan-out and for segments reached via both source and expansion.
+        Set<String> seenItemIds = new HashSet<>();
+        List<ContextItem> dedupedItems = new ArrayList<>(allItems.size());
+        for (var item : allItems) {
+            if (item.id() == null || seenItemIds.add(item.id())) {
+                dedupedItems.add(item);
+            }
+        }
+        allItems = dedupedItems;
+
         AssemblyConfig assembly = routePlan.assembly() != null ? routePlan.assembly() : AssemblyConfig.defaults();
         int maxItems = assembly.maxItems() + assembly.maxExpanded();
         if (allItems.size() > maxItems) {
@@ -547,7 +558,13 @@ public class ContextAssembler {
 
     private List<ContextItem> buildSourceItems(List<SegmentWithMetaRow> segments) {
         List<ContextItem> items = new ArrayList<>();
+        // Dedupe by segment id: selectWithMeta LEFT JOINs asset_document_snapshot_links (1:N),
+        // so a segment whose snapshot has multiple links fans out into duplicate rows.
+        Set<String> seenSegIds = new HashSet<>();
         for (var seg : segments) {
+            if (seg.getId() != null && !seenSegIds.add(seg.getId())) {
+                continue;
+            }
             Map<String, Object> metadata = new LinkedHashMap<>();
             metadata.put("discourse_role", discourseRoleOf(seg.getMetadataJson()));
             items.add(new ContextItem(
