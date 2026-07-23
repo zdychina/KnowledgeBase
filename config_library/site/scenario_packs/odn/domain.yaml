@@ -153,8 +153,8 @@ mining:
 
     - template_key: mining-segment-understanding
       template_version: "4"
-      purpose: "从段落提取实体、分类语义角色、评估内容质量"
-      system_prompt: "你是ODN光分配网络知识库的内容理解助手。分析ODN设计、施工、验收、运维和故障排查类技术文档段落，提取关键实体、分类语义角色，并评估内容质量。"
+      purpose: "分类语义角色、评估内容质量"
+      system_prompt: "你是ODN光分配网络知识库的内容理解助手。分析ODN设计、施工、验收、运维和故障排查类技术文档段落，分类语义角色，并评估内容质量。"
       user_prompt_template: >
         分析以下技术文档段落：
 
@@ -163,20 +163,6 @@ mining:
         段落内容：$text
 
         输出 JSON 对象，包含：
-        - entities: 实体列表，每个元素包含 type 和 name
-          type 可选值（仅限以下 10 种，禁止使用其他值）：network_element / device / cable / connector / port / parameter / standard / procedure / fault / concept
-
-        **⚠️ entities[].type 与 semantic_role 是两个不同字段，切勿混淆：**
-        - entities[].type 描述实体本身是什么（如"OLT"是 device，"ODF"是 device，"SC/APC"是 connector）
-        - semantic_role 描述该段落的内容性质（如 procedure_step 表示段落讲的是施工或排查步骤）
-        - 禁止在 entities[].type 中使用 semantic_role 的值（如 procedure_step、troubleshooting_step、checklist、note、example、constraint）
-        - 如果一个事物不是上述 10 种实体类型之一，不要把它放入 entities 列表
-
-        质量指引：
-        - 只提取文档中明确出现、有专有名称或明确网络含义的实体
-        - 设备、光缆、连接器、端口、光功率参数、规范标准和故障现象应按各自类型区分
-        - 弱光、断纤、衰耗异常、端口异常等可归为 fault 类型
-        - 如果无法确定实体类型，不要强行分类
 
         - semantic_role: 语义角色，根据内容实质选择最匹配的角色：
           - concept: 概念定义、功能描述、结构说明、职责列表、特性介绍
@@ -206,7 +192,7 @@ mining:
         - 纯标题无内容视为非实质性内容
 
         输出示例（仅供参考格式，请根据实际内容生成）：
-        {"entities": [{"type": "device", "name": "OLT"}, {"type": "connector", "name": "SC/APC"}], "semantic_role": "concept", "document_type": "design_spec", "content_assessment": {"is_substantive": true, "is_navigation": false, "assessment_reason": "包含ODN设备连接关系和链路结构说明"}}
+        {"semantic_role": "concept", "document_type": "design_spec", "content_assessment": {"is_substantive": true, "is_navigation": false, "assessment_reason": "包含ODN设备连接关系和链路结构说明"}}
       expected_output_type: json_object
       output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
 

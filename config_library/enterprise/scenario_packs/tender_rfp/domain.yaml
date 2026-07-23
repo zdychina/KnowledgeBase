@@ -194,17 +194,16 @@ mining:
 
     - template_key: mining-segment-understanding
       template_version: "1"
-      purpose: "识别招投标段落实体、语义角色、文档类型和内容质量"
+      purpose: "识别招投标段落的语义角色、文档类型和内容质量（实体抽取已移至本体线，本模板不再产出 entities）"
       system_prompt: "你是政企招投标文档分析助手。必须准确区分强制、可选和条件性要求，并保留否定、条件、例外、责任主体及来源语境。"
       user_prompt_template: >
         章节：$section_title
         内容类型：$block_type
         原文：$text
-        提取文中明确出现的实体；实体type只能使用当前场景ontology定义的类型。
         semantic_role必须从当前场景semantic_roles中选择最匹配的一项。
         document_type必须从当前场景document_types中选择。
         强制要求使用mandatory_requirement，可选要求使用optional_requirement，带前提的要求使用conditional_requirement；不得把招标方责任改成供应商责任。
-        输出JSON对象，包含entities、semantic_role、document_type、content_assessment。
+        输出JSON对象，包含semantic_role、document_type、content_assessment。
       expected_output_type: json_object
       output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
 

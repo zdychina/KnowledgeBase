@@ -152,8 +152,8 @@ mining:
 
     - template_key: mining-segment-understanding
       template_version: "4"
-      purpose: "从段落提取实体、分类语义角色、评估内容质量"
-      system_prompt: "你是civil_engineering工程知识库的内容理解助手。分析施工、设计、验收、材料和安全类技术文档段落，提取关键实体、分类语义角色，并评估内容质量。"
+      purpose: "分类语义角色、评估内容质量"
+      system_prompt: "你是civil_engineering工程知识库的内容理解助手。分析施工、设计、验收、材料和安全类技术文档段落，分类语义角色，并评估内容质量。"
       user_prompt_template: >
         分析以下技术文档段落：
 
@@ -162,20 +162,6 @@ mining:
         段落内容：$text
 
         输出 JSON 对象，包含：
-        - entities: 实体列表，每个元素包含 type 和 name
-          type 可选值（仅限以下 9 种，禁止使用其他值）：structure / site / component / material / parameter / standard / procedure / risk / concept
-
-        **⚠️ entities[].type 与 semantic_role 是两个不同字段，切勿混淆：**
-        - entities[].type 描述实体本身是什么（如"基础"是 structure，"混凝土"是 material，"GB 50010"是 standard）
-        - semantic_role 描述该段落的内容性质（如 procedure_step 表示段落讲的是施工步骤）
-        - 禁止在 entities[].type 中使用 semantic_role 的值（如 procedure_step、troubleshooting_step、checklist、note、example、constraint）
-        - 如果一个事物不是上述 9 种实体类型之一，不要把它放入 entities 列表
-
-        质量指引：
-        - 只提取文档中明确出现、有专有名称或明确工程含义的实体
-        - 构件、部位、场地、材料、规范编号和关键参数应按各自类型区分
-        - 质量风险、安全隐患或验收不合格项可归为 risk 类型
-        - 如果无法确定实体类型，不要强行分类
 
         - semantic_role: 语义角色，根据内容实质选择最匹配的角色：
           - concept: 概念定义、功能描述、结构说明、职责列表、特性介绍
@@ -204,7 +190,7 @@ mining:
         - 纯标题无内容视为非实质性内容
 
         输出示例（仅供参考格式，请根据实际内容生成）：
-        {"entities": [{"type": "structure", "name": "基础"}, {"type": "material", "name": "混凝土"}], "semantic_role": "procedure_step", "document_type": "construction_plan", "content_assessment": {"is_substantive": true, "is_navigation": false, "assessment_reason": "包含基础混凝土施工步骤和质量控制要求"}}
+        {"semantic_role": "procedure_step", "document_type": "construction_plan", "content_assessment": {"is_substantive": true, "is_navigation": false, "assessment_reason": "包含基础混凝土施工步骤和质量控制要求"}}
       expected_output_type: json_object
       output_schema_json: '{"type":"object","properties":{"entities":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"name":{"type":"string"}},"required":["type","name"],"additionalProperties":false}},"semantic_role":{"type":"string"},"document_type":{"type":"string"},"content_assessment":{"type":"object","properties":{"is_substantive":{"type":"boolean"},"is_navigation":{"type":"boolean"},"assessment_reason":{"type":"string"}},"required":["is_substantive","is_navigation"],"additionalProperties":false}},"required":["entities","semantic_role","document_type","content_assessment"],"additionalProperties":false}'
 
