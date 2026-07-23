@@ -215,6 +215,8 @@ Java / 前端改动必须重新 build 镜像（无 volume 挂载）；Python 改
 
 **新增算子只需打 `@Component`**，`OperatorRegistry` 靠构造注入自动收集，type 重复会启动失败。前端按算子的 `paramSchemaJson`（JSON Schema draft-07）自动渲染参数表单，加参数只改后端 schema、前端零改动。
 
+**`AssetRawSegmentMapper.selectWithMeta` 会按 snapshot 链接数放大行。** 它 `LEFT JOIN asset_document_snapshot_links`（1:N，同一文档被索引成多个 `relative_path` 时有多行），SQL 无 `DISTINCT`，所以同一个 `raw_segment` id 会返回多行。`ContextAssembler` 已在两处按 id 去重（`buildSourceItems` + `assemble` 组装 `allItems` 后的统一兜底，保留首次出现：seed > context > support），契约由 `ContextAssemblerTest.ItemDeduplication` 锁住。**任何新消费 `selectWithMeta` 结果的代码（如 `GraphExpander`）都要自己去重**，别假设行已唯一。
+
 ---
 
 ## 一段能解释很多疑惑的历史
@@ -238,6 +240,7 @@ Java / 前端改动必须重新 build 镜像（无 volume 挂载）；Python 改
 |---|---|
 | `agent_serving_java/docs/ontology-retrieval-explained.md` | ✅ **准确**，与源码逐行对得上，可直接信 |
 | `agent_serving_java/docs/检索范式使用说明.md` | ✅ 质量高。小偏差：算子实际 19 个（漏列 `entity_graph`） |
+| `agent_serving_java/docs/TODO-known-issues.md` | ✅ serving 侧「已确认未修复」问题台账，逐条给了根因/触发边界/修法。当前记录：语义缓存污染（降级/空结果被写入 `serving_query_cache`，恢复后仍命中返回空）——修前先看这份 |
 | `llm_service/README.md` / `ARCHITECTURE.md` / `QUICKSTART.md` | ⚠️ 主体质量高（PostgreSQL 迁移、双路径语义都写对了），但**配置章节大面积照理想设计而非实际代码书写**。最致命：配置键实际是 `provider_type` 不是 `provider.type`，写错会静默 fallback 到 openai_compatible。另有一类系统性漂移——文档定稿早于 `4dee50a`，仍在「记录已被修复的 bug」 |
 | `agent_serving_java/docs/code_guide.md`、`pipeline-0X-*.md` | ❌ 过时，**且有一部分写的是 v4 的 `agent_serving_zdy`**（见上文「一段能解释很多疑惑的历史」）——所以它描述的东西可能既非虚构、也不在当前代码里。pipeline 实际 14+ 阶段不是 10；`pipeline-03` 描述的 intent 驱动路由是**死代码**（`BUILTIN_ROUTES` 赋值后从未被读取），实际按 query complexity 分层 |
 | `knowledge_mining/README.md`、`docs/stage-*.md` | ❌ 描述的是**已被删除的 SQLite 时代架构**，整条本体线零文档 |
